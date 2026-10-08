@@ -31,6 +31,9 @@ class TestUIEndpoints(unittest.TestCase):
         self.assertIn("Job Application Accelerator", body)
         self.assertIn("sync-btn", body)
         self.assertIn("user-stack-input", body)
+        self.assertIn("skill-chips-container", body)
+        self.assertIn("filter-by-skills-btn", body)
+        self.assertIn("skills-only-checkbox", body)
         self.assertIn("pipeline-hub-header", body)
         self.assertIn("btn-export-csv", body)
         self.assertIn("toast-container", body)
@@ -45,6 +48,9 @@ class TestUIEndpoints(unittest.TestCase):
         self.assertIn("generateTailoredPitch", body_js)
         self.assertIn("copyTailoredPitch", body_js)
         self.assertIn("PIPELINE_STAGES", body_js)
+        self.assertIn("PRESET_SKILLS", body_js)
+        self.assertIn("renderSkillChips", body_js)
+        self.assertIn("toggleSkill", body_js)
 
         # test style.css
         env_css = {"REQUEST_METHOD": "GET", "PATH_INFO": "/static/style.css", "QUERY_STRING": "", "wsgi.input": None}
@@ -55,6 +61,8 @@ class TestUIEndpoints(unittest.TestCase):
         self.assertIn(".pipeline-hub-header", body_css)
         self.assertIn(".btn-pitch", body_css)
         self.assertIn(".toast-message", body_css)
+        self.assertIn(".skill-chip", body_css)
+        self.assertIn(".btn-filter-skills", body_css)
 
 if __name__ == "__main__":
     unittest.main()

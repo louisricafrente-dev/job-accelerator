@@ -6,12 +6,34 @@ let currentDateFilter = 'all';
 let hasSalaryOnly = false;
 let remoteOnly = false;
 let hideSenior = false;
+let filterBySkillsOnly = false;
 let searchQuery = '';
 let jobsList = [];
 let selectedIndex = 0;
 let searchDebounceTimer = null;
 let currentStats = {};
 let userStack = localStorage.getItem('job_accel_user_stack') || 'React, Python, TypeScript, Node.js, SQL, Junior';
+
+const PRESET_SKILLS = [
+  'Junior / Entry',
+  'Python',
+  'React',
+  'TypeScript',
+  'JavaScript',
+  'Node.js',
+  'SQL',
+  'Django',
+  'FastAPI',
+  'Next.js',
+  'Frontend',
+  'Backend',
+  'Full Stack',
+  'Data / AI',
+  'PHP / Laravel',
+  'Flutter',
+  'AWS',
+  'Docker'
+];
 
 const PIPELINE_STAGES = [
   { key: 'applied', label: '📝 Applied', short: 'Applied' },
@@ -27,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const stackInput = document.getElementById('user-stack-input');
   if (stackInput) stackInput.value = userStack;
 
+  renderSkillChips();
   loadStats();
   loadJobs();
   setupKeyboardNavigation();
@@ -92,6 +115,11 @@ async function loadJobs() {
       jobs = jobs.filter(j => j.experience_level !== 'Senior / Lead');
     }
 
+    // Client-side Filter by Selected Skills
+    if (filterBySkillsOnly && userStack.trim()) {
+      jobs = jobs.filter(j => getSkillsMatch(j).count > 0);
+    }
+
     jobsList = jobs;
     selectedIndex = 0;
     renderJobs();
@@ -103,28 +131,193 @@ async function loadJobs() {
 
 // Skills matching calculator
 function getSkillsMatch(job) {
-  if (!userStack.trim()) return { count: 0, matched: [] };
+  if (!userStack || !userStack.trim()) return { count: 0, matched: [] };
   const tokens = userStack.split(',').map(s => s.trim()).filter(Boolean);
-  const targetText = `${job.title} ${job.role_category} ${job.notes || ''}`.toLowerCase();
+  const targetText = `${job.title} ${job.company || ''} ${job.location || ''} ${job.role_category || ''} ${job.experience_level || ''} ${job.notes || ''}`.toLowerCase();
 
   const matched = [];
   for (const token of tokens) {
-    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(^|\\W)${escaped}(\\W|$)`, 'i');
-    if (regex.test(targetText)) {
+    const subParts = token.includes('/') ? token.split('/').map(p => p.trim()) : [token];
+    let isMatch = false;
+
+    for (const part of subParts) {
+      if (!part) continue;
+      const cleanPart = part.toLowerCase();
+      if (cleanPart === 'full stack' && (targetText.includes('fullstack') || targetText.includes('full stack'))) {
+        isMatch = true;
+        break;
+      }
+      if (cleanPart === 'node.js' && (targetText.includes('node.js') || targetText.includes('nodejs') || targetText.includes('node '))) {
+        isMatch = true;
+        break;
+      }
+      const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(^|\\W)${escaped}(\\W|$)`, 'i');
+      if (regex.test(targetText)) {
+        isMatch = true;
+        break;
+      }
+    }
+
+    if (isMatch) {
       matched.push(token);
     }
   }
   return { count: matched.length, matched };
 }
 
-// Handle changes to user's tech stack & skills
-function handleStackChange() {
+// Chip & Stack helpers
+function getActiveSkills() {
+  if (!userStack || !userStack.trim()) return [];
+  return userStack.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function renderSkillChips() {
+  const container = document.getElementById('skill-chips-container');
+  if (!container) return;
+
+  const activeList = getActiveSkills();
+  const activeSet = new Set(activeList.map(s => s.toLowerCase()));
+
+  const allSkills = [...PRESET_SKILLS];
+  for (const s of activeList) {
+    if (!allSkills.some(p => p.toLowerCase() === s.toLowerCase())) {
+      allSkills.push(s);
+    }
+  }
+
+  container.innerHTML = allSkills.map(skill => {
+    const isActive = activeSet.has(skill.toLowerCase());
+    return `
+      <button type="button" 
+              class="skill-chip ${isActive ? 'active' : ''}" 
+              data-skill="${escapeHtml(skill)}" 
+              onclick="toggleSkill('${escapeHtml(skill)}')"
+              title="${isActive ? 'Click to deselect ' + skill : 'Click to select ' + skill}">
+        <span class="chip-icon">${isActive ? '✓' : '+'}</span>
+        <span class="chip-text">${escapeHtml(skill)}</span>
+      </button>
+    `;
+  }).join('');
+
+  updateFilterButtonState();
+}
+
+function toggleSkill(skill) {
+  let activeList = getActiveSkills();
+  const lower = skill.toLowerCase();
+  const existingIdx = activeList.findIndex(s => s.toLowerCase() === lower);
+
+  if (existingIdx >= 0) {
+    activeList.splice(existingIdx, 1);
+  } else {
+    activeList.push(skill);
+  }
+
+  userStack = activeList.join(', ');
+  const input = document.getElementById('user-stack-input');
+  if (input) input.value = userStack;
+  localStorage.setItem('job_accel_user_stack', userStack);
+
+  renderSkillChips();
+  if (filterBySkillsOnly) {
+    loadJobs();
+  } else {
+    renderJobs();
+    updateSearchCount(jobsList.length);
+  }
+}
+
+function handleStackInputChange() {
   const input = document.getElementById('user-stack-input');
   if (input) {
     userStack = input.value;
     localStorage.setItem('job_accel_user_stack', userStack);
+    renderSkillChips();
+    if (filterBySkillsOnly) {
+      loadJobs();
+    } else {
+      renderJobs();
+      updateSearchCount(jobsList.length);
+    }
+  }
+}
+
+function handleStackChange() {
+  handleStackInputChange();
+}
+
+function selectAllSkills() {
+  userStack = PRESET_SKILLS.join(', ');
+  const input = document.getElementById('user-stack-input');
+  if (input) input.value = userStack;
+  localStorage.setItem('job_accel_user_stack', userStack);
+  renderSkillChips();
+  if (filterBySkillsOnly) {
+    loadJobs();
+  } else {
     renderJobs();
+    updateSearchCount(jobsList.length);
+  }
+  showToast('✓ All preset skills selected!');
+}
+
+function clearAllSkills() {
+  userStack = '';
+  const input = document.getElementById('user-stack-input');
+  if (input) input.value = '';
+  localStorage.setItem('job_accel_user_stack', '');
+  renderSkillChips();
+  if (filterBySkillsOnly) {
+    loadJobs();
+  } else {
+    renderJobs();
+    updateSearchCount(jobsList.length);
+  }
+  showToast('✕ Skills cleared.');
+}
+
+function toggleFilterBySkills() {
+  filterBySkillsOnly = !filterBySkillsOnly;
+  updateFilterButtonState();
+  loadJobs();
+}
+
+function toggleSkillsOnly(checkbox) {
+  filterBySkillsOnly = checkbox.checked;
+  updateFilterButtonState();
+  loadJobs();
+}
+
+function updateFilterButtonState() {
+  const btn = document.getElementById('filter-by-skills-btn');
+  const txt = document.getElementById('filter-skills-text');
+  const checkbox = document.getElementById('skills-only-checkbox');
+
+  if (checkbox) checkbox.checked = filterBySkillsOnly;
+  if (btn) {
+    if (filterBySkillsOnly) {
+      btn.classList.add('active');
+      if (txt) txt.textContent = 'Filtering by Skills (ON)';
+    } else {
+      btn.classList.remove('active');
+      if (txt) txt.textContent = 'Filter Feed by Skills';
+    }
+  }
+}
+
+function applySkillsToSearch() {
+  const activeList = getActiveSkills();
+  if (activeList.length === 0) {
+    showToast('⚠️ No skills selected! Click some toggles first.');
+    return;
+  }
+  const searchInput = document.getElementById('search-input');
+  if (searchInput) {
+    searchInput.value = activeList.slice(0, 3).join(' ');
+    searchQuery = searchInput.value.trim();
+    loadJobs();
+    showToast(`🔍 Searching for: ${searchQuery}`);
   }
 }
 
@@ -385,8 +578,8 @@ async function triggerSync() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keywords })
     });
-    const data = await res.json();
-    alert(`Sync completed across 12 boards! Added: ${data.added} new jobs (Skipped ${data.skipped} duplicates).`);
+    const kwText = keywords && keywords.length > 0 ? ` for [${keywords.join(', ')}]` : '';
+    alert(`Sync completed across 12 boards${kwText}! Added: ${data.added} new jobs (Skipped ${data.skipped} duplicates).`);
     loadStats();
     loadJobs();
   } catch (err) {
@@ -522,7 +715,13 @@ function updatePillActive(groupId, elem) {
 }
 
 function updateSearchCount(count) {
-  document.getElementById('search-count').textContent = `${count} jobs`;
+  const el = document.getElementById('search-count');
+  if (!el) return;
+  if (filterBySkillsOnly) {
+    el.textContent = `${count} matching skills`;
+  } else {
+    el.textContent = `${count} jobs`;
+  }
 }
 
 function escapeHtml(str) {

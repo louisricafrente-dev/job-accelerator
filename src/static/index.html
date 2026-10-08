@@ -24,12 +24,37 @@
     </div>
     <div class="sync-config-row">
       <div class="sync-config-container">
-        <label for="user-stack-input" class="sync-kw-label">🎯 My Tech Stack & Target Skills:</label>
-        <input type="text" id="user-stack-input" value="React, Python, TypeScript, Node.js, SQL, Junior" placeholder="Enter skills & target keywords to scrape & match (e.g. React, Python, SQL, Junior)..." oninput="handleStackChange()">
-        <button id="sync-btn" class="btn-sync" onclick="triggerSync()" title="Scrape 12 job boards using your tech stack">
-          <span class="spin-icon" id="sync-spinner">🔄</span>
-          <span id="sync-text">Sync 12 Boards</span>
-        </button>
+        <div class="sync-config-top">
+          <div class="sync-input-group">
+            <label for="user-stack-input" class="sync-kw-label">🎯 Target Skills & Tech Stack:</label>
+            <input type="text" id="user-stack-input" value="React, Python, TypeScript, Node.js, SQL, Junior" placeholder="Click skill toggles below or type custom skills (comma-separated)..." oninput="handleStackInputChange()">
+          </div>
+          <div class="sync-btn-group">
+            <button id="filter-by-skills-btn" class="btn-filter-skills" onclick="toggleFilterBySkills()" title="Toggle: Show only jobs matching my selected skills">
+              <span id="filter-skills-icon">🎯</span>
+              <span id="filter-skills-text">Filter Feed by Skills</span>
+            </button>
+            <button id="sync-btn" class="btn-sync" onclick="triggerSync()" title="Scrape 12 job boards using selected target skills">
+              <span class="spin-icon" id="sync-spinner">🔄</span>
+              <span id="sync-text">Sync 12 Boards</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Toggleable Skill Chips Bar -->
+        <div class="skill-chips-row">
+          <div class="chips-label-group">
+            <span class="chips-label">⚡ Quick Toggles:</span>
+            <span class="chips-subtitle">Click to toggle skills for live matching & board sync</span>
+          </div>
+          <div class="skill-chips-container" id="skill-chips-container">
+            <!-- Dynamic toggle pills populated via JS -->
+          </div>
+          <div class="chips-controls">
+            <button type="button" class="btn-chip-action" onclick="selectAllSkills()" title="Select all preset skills">Select All</button>
+            <button type="button" class="btn-chip-action" onclick="clearAllSkills()" title="Clear selected skills">Clear All</button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -41,6 +66,9 @@
       <div class="search-box">
         <span class="search-icon">🔍</span>
         <input type="text" id="search-input" placeholder="Search keywords, tech stack, or company (type '/' to focus)..." autocomplete="off" oninput="handleSearchInput()">
+        <button type="button" class="btn-quick-search-skills" onclick="applySkillsToSearch()" title="Copy active target skills into search">
+          ⚡ Search My Skills
+        </button>
         <span id="search-count" class="search-count"></span>
       </div>
 
@@ -92,6 +120,10 @@
 
         <!-- Quick Toggles -->
         <div class="filter-group quick-toggles">
+          <label class="toggle-control">
+            <input type="checkbox" id="skills-only-checkbox" onchange="toggleSkillsOnly(this)">
+            <span class="toggle-label">🎯 Target Skills Only</span>
+          </label>
           <label class="toggle-control">
             <input type="checkbox" id="salary-only-checkbox" onchange="toggleSalaryOnly(this)">
             <span class="toggle-label">💰 Has Salary</span>
