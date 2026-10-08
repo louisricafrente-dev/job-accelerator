@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Application Accelerator</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <div class="brand-title">
+          <span class="icon">⚡</span>
+          <h1>Job Application Accelerator</h1>
+        </div>
+        <p class="tagline">High-velocity multi-platform aggregator across 12 boards</p>
+      </div>
+      <div class="stats-bar">
+        <div class="stat-pill"><span class="num" id="stat-new">0</span> <span class="lbl">New</span></div>
+        <div class="stat-pill"><span class="num" id="stat-saved">0</span> <span class="lbl">Saved</span></div>
+        <div class="stat-pill success"><span class="num" id="stat-applied">0</span> <span class="lbl">Applied</span></div>
+        <button id="sync-btn" class="btn-sync" onclick="triggerSync()">
+          <span class="spin-icon" id="sync-spinner">🔄</span>
+          <span id="sync-text">Sync Latest</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="main-layout">
+    <!-- Controls Bar -->
+    <section class="controls-panel">
+      <!-- Search row -->
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search-input" placeholder="Search keywords, tech stack, or company (type '/' to focus)..." autocomplete="off" oninput="handleSearchInput()">
+        <span id="search-count" class="search-count"></span>
+      </div>
+
+      <!-- Filters grid -->
+      <div class="filters-grid">
+        <!-- Status View -->
+        <div class="filter-group">
+          <span class="group-label">Status</span>
+          <div class="pill-group" id="status-group">
+            <button class="pill active" data-val="new" onclick="setStatus('new', this)">📥 Inbox</button>
+            <button class="pill" data-val="saved" onclick="setStatus('saved', this)">⭐ Saved</button>
+            <button class="pill" data-val="applied" onclick="setStatus('applied', this)">✅ Applied</button>
+            <button class="pill" data-val="ignored" onclick="setStatus('ignored', this)">✕ Ignored</button>
+          </div>
+        </div>
+
+        <!-- Experience Level Filter (Requested by user) -->
+        <div class="filter-group">
+          <span class="group-label">Experience Level</span>
+          <div class="pill-group" id="level-group">
+            <button class="pill active" data-val="All" onclick="setLevel('All', this)">All</button>
+            <button class="pill level-junior-btn" data-val="Junior / Entry" onclick="setLevel('Junior / Entry', this)">🌱 Junior / Entry</button>
+            <button class="pill level-mid-btn" data-val="Mid-Level" onclick="setLevel('Mid-Level', this)">⚡ Mid-Level</button>
+            <button class="pill level-senior-btn" data-val="Senior / Lead" onclick="setLevel('Senior / Lead', this)">👑 Senior</button>
+          </div>
+        </div>
+
+        <!-- Role Filter -->
+        <div class="filter-group">
+          <span class="group-label">Target Role</span>
+          <div class="pill-group" id="role-group">
+            <button class="pill active" data-val="All" onclick="setRole('All', this)">All Roles</button>
+            <button class="pill" data-val="Web/Software Dev" onclick="setRole('Web/Software Dev', this)">💻 Web/Software</button>
+            <button class="pill" data-val="Data/AI/ML" onclick="setRole('Data/AI/ML', this)">🧠 Data & AI</button>
+          </div>
+        </div>
+
+        <!-- Quick Toggles -->
+        <div class="filter-group quick-toggles">
+          <label class="toggle-control">
+            <input type="checkbox" id="hide-senior-checkbox" onchange="toggleHideSenior(this)">
+            <span class="toggle-label">Hide Senior Jobs</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Keyboard Shortcuts Hint Bar -->
+    <div class="shortcuts-bar">
+      <span><strong>Keyboard Mode:</strong> <kbd>J</kbd> Next &bull; <kbd>K</kbd> Prev &bull; <kbd>A</kbd> / <kbd>Enter</kbd> Apply Now &bull; <kbd>S</kbd> Save &bull; <kbd>X</kbd> Ignore &bull; <kbd>/</kbd> Search</span>
+    </div>
+
+    <!-- Job Cards Feed -->
+    <div id="job-feed" class="job-feed">
+      <div class="loading-state">Loading job listings...</div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
