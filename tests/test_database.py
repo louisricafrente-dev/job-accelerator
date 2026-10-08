@@ -105,5 +105,21 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["company"], "Acme Corp")
 
+    def test_filter_has_salary(self):
+        job1 = Job(title="Dev 1", company="A", location="PH", platform="LinkedIn", tier=1, job_url="https://j1", salary="₱50,000")
+        job2 = Job(title="Dev 2", company="B", location="PH", platform="LinkedIn", tier=1, job_url="https://j2", salary="")
+        insert_jobs(self.db_path, [job1, job2])
+        res = get_jobs(self.db_path, has_salary=True)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["title"], "Dev 1")
+
+    def test_filter_remote_only(self):
+        job1 = Job(title="Remote Dev", company="A", location="Remote Worldwide", platform="LinkedIn", tier=1, job_url="https://j3")
+        job2 = Job(title="Onsite Dev", company="B", location="Makati Office", platform="LinkedIn", tier=1, job_url="https://j4")
+        insert_jobs(self.db_path, [job1, job2])
+        res = get_jobs(self.db_path, remote_only=True)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["title"], "Remote Dev")
+
 if __name__ == "__main__":
     unittest.main()

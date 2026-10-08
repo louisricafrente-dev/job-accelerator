@@ -112,10 +112,42 @@ body {
   align-items: center;
   gap: 6px;
   transition: opacity 0.2s;
+  white-space: nowrap;
 }
 
 .btn-sync:hover {
   opacity: 0.9;
+}
+
+.sync-config-row {
+  max-width: 1200px;
+  margin: 14px auto 0 auto;
+}
+
+.sync-config-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background-color: #0b111a;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 6px 14px;
+}
+
+.sync-kw-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--accent-blue);
+  white-space: nowrap;
+}
+
+#sync-keywords-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #e2e8f0;
+  font-size: 0.88rem;
 }
 
 /* Layout */
@@ -234,6 +266,9 @@ body {
 .quick-toggles {
   margin-left: auto;
   align-self: flex-end;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .toggle-control {

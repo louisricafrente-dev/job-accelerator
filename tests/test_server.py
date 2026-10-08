@@ -81,5 +81,18 @@ class TestServer(unittest.TestCase):
         data = self._request("GET", "/api/jobs", "date_filter=today")
         self.assertIn("jobs", data)
 
+    def test_get_jobs_filtered_by_salary_and_remote(self):
+        data_sal = self._request("GET", "/api/jobs", "has_salary=1")
+        self.assertIn("jobs", data_sal)
+        data_rem = self._request("GET", "/api/jobs", "remote_only=1")
+        self.assertIn("jobs", data_rem)
+        self.assertEqual(data_rem["count"], 1)
+        self.assertEqual(data_rem["jobs"][0]["location"], "Remote")
+
+    def test_sync_with_custom_keywords(self):
+        res = self._request("POST", "/api/sync", body={"keywords": ["python", "junior"]})
+        self.assertIn("added", res)
+        self.assertIn("platforms", res)
+
 if __name__ == "__main__":
     unittest.main()

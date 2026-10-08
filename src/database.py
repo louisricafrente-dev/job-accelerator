@@ -82,6 +82,8 @@ def get_jobs(
     tier: Optional[int] = None,
     search: Optional[str] = None,
     date_filter: Optional[str] = None,
+    has_salary: bool = False,
+    remote_only: bool = False,
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
@@ -102,6 +104,10 @@ def get_jobs(
     if tier:
         clauses.append("tier = ?")
         params.append(tier)
+    if has_salary:
+        clauses.append("(salary IS NOT NULL AND salary != '')")
+    if remote_only:
+        clauses.append("(location LIKE '%remote%' OR location LIKE '%wfh%' OR location LIKE '%worldwide%')")
     if search:
         words = [w.strip() for w in search.strip().split() if w.strip()]
         for word in words:

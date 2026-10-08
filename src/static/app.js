@@ -3,6 +3,8 @@ let currentStatus = 'new';
 let currentLevel = 'All';
 let currentRole = 'All';
 let currentDateFilter = 'all';
+let hasSalaryOnly = false;
+let remoteOnly = false;
 let hideSenior = false;
 let searchQuery = '';
 let jobsList = [];
@@ -42,6 +44,8 @@ async function loadJobs() {
       search: searchQuery,
       date_filter: currentDateFilter
     });
+    if (hasSalaryOnly) params.set('has_salary', '1');
+    if (remoteOnly) params.set('remote_only', '1');
 
     const res = await fetch(`/api/jobs?${params.toString()}`);
     const data = await res.json();
@@ -173,15 +177,22 @@ async function triggerSync() {
   const btn = document.getElementById('sync-btn');
   const spinner = document.getElementById('sync-spinner');
   const txt = document.getElementById('sync-text');
+  const kwInput = document.getElementById('sync-keywords-input');
+  const rawKws = kwInput ? kwInput.value.trim() : '';
+  const keywords = rawKws ? rawKws.split(',').map(s => s.trim()).filter(Boolean) : null;
 
   btn.disabled = true;
   spinner.style.animation = 'spin 1s linear infinite';
   txt.textContent = 'Syncing...';
 
   try {
-    const res = await fetch('/api/sync', { method: 'POST' });
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keywords })
+    });
     const data = await res.json();
-    alert(`Sync completed! Added: ${data.added} new jobs (Skipped ${data.skipped} duplicates).`);
+    alert(`Sync completed across 12 boards! Added: ${data.added} new jobs (Skipped ${data.skipped} duplicates).`);
     loadStats();
     loadJobs();
   } catch (err) {
@@ -189,7 +200,7 @@ async function triggerSync() {
   } finally {
     btn.disabled = false;
     spinner.style.animation = '';
-    txt.textContent = 'Sync Latest';
+    txt.textContent = 'Sync 12 Boards';
   }
 }
 
@@ -283,6 +294,16 @@ function formatPostingDate(dateStr) {
 
 function toggleHideSenior(checkbox) {
   hideSenior = checkbox.checked;
+  loadJobs();
+}
+
+function toggleSalaryOnly(checkbox) {
+  hasSalaryOnly = checkbox.checked;
+  loadJobs();
+}
+
+function toggleRemoteOnly(checkbox) {
+  remoteOnly = checkbox.checked;
   loadJobs();
 }
 

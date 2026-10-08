@@ -20,9 +20,15 @@
         <div class="stat-pill"><span class="num" id="stat-new">0</span> <span class="lbl">New</span></div>
         <div class="stat-pill"><span class="num" id="stat-saved">0</span> <span class="lbl">Saved</span></div>
         <div class="stat-pill success"><span class="num" id="stat-applied">0</span> <span class="lbl">Applied</span></div>
+      </div>
+    </div>
+    <div class="sync-config-row">
+      <div class="sync-config-container">
+        <label for="sync-keywords-input" class="sync-kw-label">⚙️ Sync Keywords (12 Boards):</label>
+        <input type="text" id="sync-keywords-input" value="React, Python, Junior, Full Stack, Data Analyst, Machine Learning" placeholder="Enter comma-separated keywords to scrape (e.g. React, Python, Junior, SQL)...">
         <button id="sync-btn" class="btn-sync" onclick="triggerSync()">
           <span class="spin-icon" id="sync-spinner">🔄</span>
-          <span id="sync-text">Sync Latest</span>
+          <span id="sync-text">Sync 12 Boards</span>
         </button>
       </div>
     </div>
@@ -87,8 +93,16 @@
         <!-- Quick Toggles -->
         <div class="filter-group quick-toggles">
           <label class="toggle-control">
+            <input type="checkbox" id="salary-only-checkbox" onchange="toggleSalaryOnly(this)">
+            <span class="toggle-label">💰 Has Salary</span>
+          </label>
+          <label class="toggle-control">
+            <input type="checkbox" id="remote-only-checkbox" onchange="toggleRemoteOnly(this)">
+            <span class="toggle-label">🏠 Remote Only</span>
+          </label>
+          <label class="toggle-control">
             <input type="checkbox" id="hide-senior-checkbox" onchange="toggleHideSenior(this)">
-            <span class="toggle-label">Hide Senior Jobs</span>
+            <span class="toggle-label">Hide Senior</span>
           </label>
         </div>
       </div>

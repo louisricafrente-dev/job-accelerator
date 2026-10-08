@@ -22,6 +22,8 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         tier_str = bottle.request.query.get("tier", "")
         search = bottle.request.query.get("search", "")
         date_filter = bottle.request.query.get("date_filter", "all")
+        has_salary = bottle.request.query.get("has_salary", "0") in ("1", "true", "True")
+        remote_only = bottle.request.query.get("remote_only", "0") in ("1", "true", "True")
         tier = int(tier_str) if tier_str.isdigit() else None
 
         jobs = get_jobs(
@@ -32,6 +34,8 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             tier=tier,
             search=search,
             date_filter=date_filter,
+            has_salary=has_salary,
+            remote_only=remote_only,
             limit=200
         )
         bottle.response.content_type = "application/json"
@@ -52,9 +56,13 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         bottle.response.content_type = "application/json"
         return json.dumps(stats)
 
-    @app.route("/api/sync", method="POST")
+    @app.route("/api/sync", method=["POST", "OPTIONS"])
     def api_sync():
-        stats = aggregator.run_sync()
+        data = bottle.request.json or {}
+        keywords = data.get("keywords")
+        if isinstance(keywords, str):
+            keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+        stats = aggregator.run_sync(queries=keywords if keywords else None)
         bottle.response.content_type = "application/json"
         return json.dumps(stats)
 
