@@ -15,24 +15,67 @@ let currentStats = {};
 let userStack = localStorage.getItem('job_accel_user_stack') || 'React, Python, TypeScript, Node.js, SQL, Junior';
 
 const PRESET_SKILLS = [
+  // Core Disciplines & Levels
   'Junior / Entry',
-  'Python',
-  'React',
-  'TypeScript',
-  'JavaScript',
-  'Node.js',
-  'SQL',
-  'Django',
-  'FastAPI',
-  'Next.js',
   'Frontend',
   'Backend',
   'Full Stack',
+  'Mobile App',
+  'DevOps / Cloud',
+  'QA / Testing',
   'Data / AI',
+
+  // Core Languages & Systems
+  'Python',
+  'JavaScript',
+  'TypeScript',
+  'Java',
+  'C# / .NET',
+  'Go / Golang',
   'PHP / Laravel',
+  'Ruby on Rails',
+  'C / C++',
+  'Rust',
+
+  // Modern Web & Frameworks
+  'React',
+  'Next.js',
+  'Vue',
+  'Angular',
+  'Node.js',
+  'Django',
+  'FastAPI',
+  'Spring Boot',
+
+  // Mobile App Dev
   'Flutter',
+  'React Native',
+  'iOS / Swift',
+  'Android / Kotlin',
+
+  // Cloud, DevOps & Databases
   'AWS',
-  'Docker'
+  'Azure',
+  'GCP',
+  'Docker',
+  'Kubernetes',
+  'CI / CD',
+  'SQL',
+  'PostgreSQL',
+  'MongoDB',
+  'Redis',
+
+  // QA & Testing
+  'Selenium',
+  'Cypress',
+  'Playwright',
+  'Automation Testing',
+
+  // Emerging & Data
+  'Machine Learning',
+  'Data Engineering',
+  'Cybersecurity',
+  'Web3 / Blockchain'
 ];
 
 const PIPELINE_STAGES = [

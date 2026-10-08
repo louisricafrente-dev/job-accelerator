@@ -111,8 +111,61 @@ def get_jobs(
         clauses.append("status = ?")
         params.append(status)
     if role_category and role_category != "All":
-        clauses.append("(role_category = ? OR role_category = 'Both')")
-        params.append(role_category)
+        rc = role_category.strip()
+        if rc == "Frontend":
+            frontend_pats = ["%frontend%", "%front-end%", "%react%", "%vue%", "%angular%", "%ui dev%", "%web designer%", "%svelte%"]
+            sub_clauses = ["(role_category = 'Frontend' OR role_category = 'Both')"]
+            for pat in frontend_pats:
+                sub_clauses.append("lower(title) LIKE ?")
+                params.append(pat)
+            clauses.append(f"({' OR '.join(sub_clauses)})")
+        elif rc == "Backend":
+            backend_pats = ["%backend%", "%back-end%", "%python%", "%node%", "%django%", "%fastapi%", "%golang%", "%go developer%", "%java%", "%.net%", "%c#%", "%php%", "%laravel%", "%ruby%", "%api developer%"]
+            sub_clauses = ["(role_category = 'Backend' OR role_category = 'Both')"]
+            for pat in backend_pats:
+                sub_clauses.append("lower(title) LIKE ?")
+                params.append(pat)
+            clauses.append(f"({' OR '.join(sub_clauses)})")
+        elif rc == "Full Stack":
+            fs_pats = ["%full stack%", "%fullstack%", "%full-stack%"]
+            sub_clauses = ["(role_category = 'Full Stack' OR role_category = 'Both')"]
+            for pat in fs_pats:
+                sub_clauses.append("lower(title) LIKE ?")
+                params.append(pat)
+            clauses.append(f"({' OR '.join(sub_clauses)})")
+        elif rc == "Mobile":
+            mob_pats = ["%mobile%", "%android%", "%ios%", "%flutter%", "%react native%", "%swift%", "%kotlin%"]
+            sub_clauses = ["(role_category = 'Mobile' OR role_category = 'Both')"]
+            for pat in mob_pats:
+                sub_clauses.append("lower(title) LIKE ?")
+                params.append(pat)
+            clauses.append(f"({' OR '.join(sub_clauses)})")
+        elif rc in ("DevOps / Cloud", "DevOps", "Cloud"):
+            devops_pats = ["%devops%", "%cloud%", "%aws%", "%azure%", "%gcp%", "%sre%", "%site reliability%", "%kubernetes%", "%docker%", "%infrastructure%"]
+            sub_clauses = ["(role_category = 'DevOps / Cloud' OR role_category = 'Both')"]
+            for pat in devops_pats:
+                sub_clauses.append("lower(title) LIKE ?")
+                params.append(pat)
+            clauses.append(f"({' OR '.join(sub_clauses)})")
+        elif rc in ("QA / Testing", "QA", "Testing"):
+            qa_pats = ["%qa%", "%quality assurance%", "%tester%", "%testing%", "%sdet%", "%automation test%"]
+            sub_clauses = ["(role_category = 'QA / Testing' OR role_category = 'Both')"]
+            for pat in qa_pats:
+                sub_clauses.append("lower(title) LIKE ?")
+                params.append(pat)
+            clauses.append(f"({' OR '.join(sub_clauses)})")
+        elif rc in ("Data/AI/ML", "Data & AI"):
+            data_pats = ["%data%", "%ai%", "%machine learning%", "%analytics%", "%nlp%", "%deep learning%", "%bi developer%"]
+            sub_clauses = ["(role_category = 'Data/AI/ML' OR role_category = 'Both')"]
+            for pat in data_pats:
+                sub_clauses.append("lower(title) LIKE ?")
+                params.append(pat)
+            clauses.append(f"({' OR '.join(sub_clauses)})")
+        elif rc == "Web/Software Dev":
+            clauses.append("(role_category = 'Web/Software Dev' OR role_category = 'Both' OR role_category != 'Data/AI/ML')")
+        else:
+            clauses.append("(role_category = ? OR role_category = 'Both' OR lower(title) LIKE ?)")
+            params.extend([rc, f"%{rc.lower()}%"])
     if experience_level and experience_level != "All":
         clauses.append("experience_level = ?")
         params.append(experience_level)

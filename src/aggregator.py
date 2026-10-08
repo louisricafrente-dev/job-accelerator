@@ -16,8 +16,11 @@ from src.models import Job
 
 DEFAULT_QUERIES = [
     "software engineer", "frontend developer", "backend developer",
-    "full stack developer", "data analyst", "machine learning",
-    "junior developer", "python developer", "web developer"
+    "full stack developer", "mobile developer", "flutter developer",
+    "devops engineer", "cloud engineer", "qa engineer", "automation tester",
+    "data analyst", "data engineer", "machine learning",
+    "junior developer", "python developer", "react developer",
+    "node developer", "java developer", ".net developer"
 ]
 
 def get_default_connectors() -> List[BaseConnector]:

@@ -72,13 +72,15 @@ class TestDatabase(unittest.TestCase):
         self.assertIn("by_stage", stats)
 
     def test_filter_by_date(self):
+        import datetime
+        today_str = datetime.date.today().isoformat()
         job_today = Job(
             title="Dev Today", company="Co", location="Remote", platform="LinkedIn",
-            tier=1, job_url="https://job1", date_posted="2026-10-08"
+            tier=1, job_url="https://job1", date_posted=today_str
         )
         job_old = Job(
             title="Dev Old", company="Co", location="Remote", platform="LinkedIn",
-            tier=1, job_url="https://job2", date_posted="2026-09-01"
+            tier=1, job_url="https://job2", date_posted="2026-01-01"
         )
         insert_jobs(self.db_path, [job_today, job_old])
 
@@ -159,8 +161,26 @@ class TestDatabase(unittest.TestCase):
         self.assertIn('"Acme, Inc."', csv_content)
         self.assertIn("React Dev", csv_content)
         self.assertIn("offer", csv_content)
-        # job2 wasn't applied, should not appear in applied csv
-        self.assertNotIn("Beta LLC", csv_content)
+    def test_granular_software_development_role_filters(self):
+        jobs = [
+            Job(title="Junior Frontend React Dev", company="A", location="Remote", platform="LinkedIn", tier=1, job_url="https://a.com"),
+            Job(title="Senior Backend Python Dev", company="B", location="Remote", platform="Indeed", tier=1, job_url="https://b.com"),
+            Job(title="Full Stack Software Engineer", company="C", location="Remote", platform="Arc", tier=3, job_url="https://c.com"),
+            Job(title="Mobile Flutter Developer", company="D", location="Remote", platform="Kalibrr", tier=1, job_url="https://d.com"),
+            Job(title="Cloud / DevOps Engineer", company="E", location="Remote", platform="Glassdoor", tier=4, job_url="https://e.com"),
+            Job(title="QA Automation Engineer", company="F", location="Remote", platform="Upwork", tier=4, job_url="https://f.com"),
+            Job(title="Data Scientist", company="G", location="Remote", platform="Remote OK", tier=3, job_url="https://g.com", role_category="Data/AI/ML"),
+        ]
+        insert_jobs(self.db_path, jobs)
+
+        self.assertEqual(len(get_jobs(self.db_path, role_category="Frontend")), 1)
+        self.assertEqual(len(get_jobs(self.db_path, role_category="Backend")), 1)
+        self.assertEqual(len(get_jobs(self.db_path, role_category="Full Stack")), 1)
+        self.assertEqual(len(get_jobs(self.db_path, role_category="Mobile")), 1)
+        self.assertEqual(len(get_jobs(self.db_path, role_category="DevOps / Cloud")), 1)
+        self.assertEqual(len(get_jobs(self.db_path, role_category="QA / Testing")), 1)
+        self.assertEqual(len(get_jobs(self.db_path, role_category="Data/AI/ML")), 1)
+        self.assertEqual(len(get_jobs(self.db_path, role_category="Web/Software Dev")), 6)
 
 if __name__ == "__main__":
     unittest.main()

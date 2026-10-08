@@ -21,7 +21,10 @@ WEB_PATTERNS = [
     r"\bfull[- ]?stack\b", r"\bsoftware (?:engineer|dev|developer)\b",
     r"\bweb (?:dev|developer)\b", r"\bpython (?:dev|developer|engineer)\b",
     r"\breact\b", r"\bnode(?:\.js)?\b",
-    r"\bjavascript\b", r"\btypescript\b", r"\bgolang\b", r"\bjava\b", r"\bc#\b", r"\b\.net\b"
+    r"\bjavascript\b", r"\btypescript\b", r"\bgolang\b", r"\bjava\b", r"\bc#\b", r"\b\.net\b",
+    r"\bmobile\b", r"\bandroid\b", r"\bios\b", r"\bflutter\b", r"\breact native\b",
+    r"\bdevops\b", r"\bcloud\b", r"\baws\b", r"\bsre\b", r"\bsite reliability\b", r"\bkubernetes\b", r"\bdocker\b",
+    r"\bqa\b", r"\bquality assurance\b", r"\btester\b", r"\btesting\b", r"\bsdet\b"
 ]
 
 DATA_AI_PATTERNS = [
