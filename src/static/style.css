@@ -135,44 +135,13 @@ body {
 }
 
 .sync-kw-label {
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   font-weight: 700;
-  color: var(--accent-blue);
+  color: var(--accent-green);
   white-space: nowrap;
 }
 
-#sync-keywords-input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  color: #e2e8f0;
-  font-size: 0.88rem;
-}
-
-.user-config-row {
-  max-width: 1200px;
-  margin: 8px auto 0 auto;
-}
-
-.user-config-container {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background-color: #0d1624;
-  border: 1px solid #1e3a5f;
-  border-radius: 8px;
-  padding: 6px 14px;
-}
-
-.skills-label {
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: #34d399;
-  white-space: nowrap;
-}
-
-#my-skills-input {
+#user-stack-input {
   flex: 1;
   background: transparent;
   border: none;

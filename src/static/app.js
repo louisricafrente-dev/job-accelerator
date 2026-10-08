@@ -11,7 +11,7 @@ let jobsList = [];
 let selectedIndex = 0;
 let searchDebounceTimer = null;
 let currentStats = {};
-let mySkills = localStorage.getItem('job_accel_my_skills') || 'React, Python, TypeScript, Node.js, SQL';
+let userStack = localStorage.getItem('job_accel_user_stack') || 'React, Python, TypeScript, Node.js, SQL, Junior';
 
 const PIPELINE_STAGES = [
   { key: 'applied', label: '📝 Applied', short: 'Applied' },
@@ -24,8 +24,8 @@ const PIPELINE_STAGES = [
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-  const skillsInput = document.getElementById('my-skills-input');
-  if (skillsInput) skillsInput.value = mySkills;
+  const stackInput = document.getElementById('user-stack-input');
+  if (stackInput) stackInput.value = userStack;
 
   loadStats();
   loadJobs();
@@ -103,8 +103,8 @@ async function loadJobs() {
 
 // Skills matching calculator
 function getSkillsMatch(job) {
-  if (!mySkills.trim()) return { count: 0, matched: [] };
-  const tokens = mySkills.split(',').map(s => s.trim()).filter(Boolean);
+  if (!userStack.trim()) return { count: 0, matched: [] };
+  const tokens = userStack.split(',').map(s => s.trim()).filter(Boolean);
   const targetText = `${job.title} ${job.role_category} ${job.notes || ''}`.toLowerCase();
 
   const matched = [];
@@ -118,12 +118,12 @@ function getSkillsMatch(job) {
   return { count: matched.length, matched };
 }
 
-// Handle changes to user's skills
-function handleSkillsChange() {
-  const input = document.getElementById('my-skills-input');
+// Handle changes to user's tech stack & skills
+function handleStackChange() {
+  const input = document.getElementById('user-stack-input');
   if (input) {
-    mySkills = input.value;
-    localStorage.setItem('job_accel_my_skills', mySkills);
+    userStack = input.value;
+    localStorage.setItem('job_accel_user_stack', userStack);
     renderJobs();
   }
 }
@@ -144,9 +144,11 @@ function getDaysSince(dateStr) {
 // 1-Click Tailored Pitch Generator
 function generateTailoredPitch(job) {
   const match = getSkillsMatch(job);
+  // Filter out non-technical modifier words (junior, senior, etc.) from pitch text
+  const techTokens = match.matched.filter(t => !/^(junior|senior|mid|entry|lead|intern|full stack|developer|engineer)$/i.test(t));
   let techSummary = 'modern full-stack web development and reliable backend architectures';
-  if (match.matched.length > 0) {
-    techSummary = match.matched.slice(0, 3).join(', ');
+  if (techTokens.length > 0) {
+    techSummary = techTokens.slice(0, 3).join(', ');
   } else if (job.role_category === 'Data/AI/ML') {
     techSummary = 'Python, data analytics, and machine learning pipelines';
   }
@@ -369,8 +371,8 @@ async function triggerSync() {
   const btn = document.getElementById('sync-btn');
   const spinner = document.getElementById('sync-spinner');
   const txt = document.getElementById('sync-text');
-  const kwInput = document.getElementById('sync-keywords-input');
-  const rawKws = kwInput ? kwInput.value.trim() : '';
+  const stackInput = document.getElementById('user-stack-input');
+  const rawKws = stackInput ? stackInput.value.trim() : '';
   const keywords = rawKws ? rawKws.split(',').map(s => s.trim()).filter(Boolean) : null;
 
   btn.disabled = true;

@@ -30,7 +30,7 @@ class TestUIEndpoints(unittest.TestCase):
             res.close()
         self.assertIn("Job Application Accelerator", body)
         self.assertIn("sync-btn", body)
-        self.assertIn("my-skills-input", body)
+        self.assertIn("user-stack-input", body)
         self.assertIn("pipeline-hub-header", body)
         self.assertIn("btn-export-csv", body)
         self.assertIn("toast-container", body)

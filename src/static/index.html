@@ -24,18 +24,12 @@
     </div>
     <div class="sync-config-row">
       <div class="sync-config-container">
-        <label for="sync-keywords-input" class="sync-kw-label">⚙️ Sync Keywords (12 Boards):</label>
-        <input type="text" id="sync-keywords-input" value="React, Python, Junior, Full Stack, Data Analyst, Machine Learning" placeholder="Enter comma-separated keywords to scrape (e.g. React, Python, Junior, SQL)...">
-        <button id="sync-btn" class="btn-sync" onclick="triggerSync()">
+        <label for="user-stack-input" class="sync-kw-label">🎯 My Tech Stack & Target Skills:</label>
+        <input type="text" id="user-stack-input" value="React, Python, TypeScript, Node.js, SQL, Junior" placeholder="Enter skills & target keywords to scrape & match (e.g. React, Python, SQL, Junior)..." oninput="handleStackChange()">
+        <button id="sync-btn" class="btn-sync" onclick="triggerSync()" title="Scrape 12 job boards using your tech stack">
           <span class="spin-icon" id="sync-spinner">🔄</span>
           <span id="sync-text">Sync 12 Boards</span>
         </button>
-      </div>
-    </div>
-    <div class="user-config-row">
-      <div class="user-config-container">
-        <label for="my-skills-input" class="skills-label">🎯 My Tech Skills (Match & Pitch):</label>
-        <input type="text" id="my-skills-input" value="React, Python, TypeScript, Node.js, SQL" placeholder="Enter your key skills (e.g. React, Python, SQL, Django, AWS)..." oninput="handleSkillsChange()">
       </div>
     </div>
   </header>
