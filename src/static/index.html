@@ -32,6 +32,12 @@
         </button>
       </div>
     </div>
+    <div class="user-config-row">
+      <div class="user-config-container">
+        <label for="my-skills-input" class="skills-label">🎯 My Tech Skills (Match & Pitch):</label>
+        <input type="text" id="my-skills-input" value="React, Python, TypeScript, Node.js, SQL" placeholder="Enter your key skills (e.g. React, Python, SQL, Django, AWS)..." oninput="handleSkillsChange()">
+      </div>
+    </div>
   </header>
 
   <div class="main-layout">
@@ -113,11 +119,35 @@
       <span><strong>Keyboard Mode:</strong> <kbd>J</kbd> Next &bull; <kbd>K</kbd> Prev &bull; <kbd>A</kbd> / <kbd>Enter</kbd> Apply Now &bull; <kbd>S</kbd> Save &bull; <kbd>X</kbd> Ignore &bull; <kbd>/</kbd> Search</span>
     </div>
 
+    <!-- Dedicated Applications Tracker Hub (Active when Applied tab is selected) -->
+    <div id="pipeline-hub-header" class="pipeline-hub-header" style="display: none;">
+      <div class="pipeline-hub-top">
+        <div class="pipeline-hub-info">
+          <div class="pipeline-title-group">
+            <span class="hub-icon">💼</span>
+            <h2>My Applications Tracker Hub</h2>
+          </div>
+          <p class="pipeline-desc">Manage stages, schedule timely follow-ups, and keep recruiter notes per company.</p>
+        </div>
+        <div class="pipeline-hub-actions">
+          <a href="/api/jobs/export/csv?status=applied" class="btn-export-csv" download="my_job_applications.csv">
+            📥 Export to CSV / Excel
+          </a>
+        </div>
+      </div>
+      <div class="pipeline-stages-summary" id="pipeline-stages-summary">
+        <!-- Dynamic stage breakdown badges rendered here -->
+      </div>
+    </div>
+
     <!-- Job Cards Feed -->
     <div id="job-feed" class="job-feed">
       <div class="loading-state">Loading job listings...</div>
     </div>
   </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
 
   <script src="/static/app.js"></script>
 </body>

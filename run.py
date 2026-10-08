@@ -3,6 +3,13 @@ import sys
 import webbrowser
 import threading
 import time
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from src.database import init_db, get_stats
 from src.seed import seed_sample_data
 from src.server import create_app

@@ -1,7 +1,7 @@
 import os
 import json
 import bottle
-from src.database import get_jobs, update_job_status, get_stats
+from src.database import get_jobs, update_job_status, get_stats, export_jobs_csv
 from src.aggregator import Aggregator
 
 def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
@@ -13,6 +13,14 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         bottle.response.headers["Access-Control-Allow-Origin"] = "*"
         bottle.response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         bottle.response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+
+    @app.route("/api/jobs/export/csv", method="GET")
+    def api_export_csv():
+        status = bottle.request.query.get("status", "applied")
+        csv_text = export_jobs_csv(db_path, status=status)
+        bottle.response.content_type = "text/csv; charset=utf-8"
+        bottle.response.headers["Content-Disposition"] = 'attachment; filename="job_applications.csv"'
+        return csv_text
 
     @app.route("/api/jobs", method="GET")
     def api_get_jobs():
@@ -44,9 +52,18 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     @app.route("/api/jobs/<job_id:int>/status", method=["POST", "PUT"])
     def api_update_status(job_id: int):
         data = bottle.request.json or {}
-        new_status = data.get("status", "applied")
+        new_status = data.get("status")
         notes = data.get("notes")
-        success = update_job_status(db_path, job_id, new_status, notes)
+        pipeline_stage = data.get("stage") or data.get("pipeline_stage")
+        follow_up_date = data.get("follow_up_date")
+        success = update_job_status(
+            db_path=db_path,
+            job_id=job_id,
+            status=new_status,
+            notes=notes,
+            pipeline_stage=pipeline_stage,
+            follow_up_date=follow_up_date
+        )
         bottle.response.content_type = "application/json"
         return json.dumps({"success": success})
 

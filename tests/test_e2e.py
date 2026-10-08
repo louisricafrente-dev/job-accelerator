@@ -54,5 +54,47 @@ class TestEndToEnd(unittest.TestCase):
         self.assertIn("Remote OK", platforms)
         self.assertIn("Upwork", platforms)
 
+    def test_e2e_application_tracking_and_csv_export(self):
+        seed_sample_data(self.db_path)
+        jobs = get_jobs(self.db_path, status="new")
+        target_job = jobs[0]
+
+        # Apply and set stage
+        import io
+        post_env = {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": f"/api/jobs/{target_job['id']}/status",
+            "QUERY_STRING": "",
+            "wsgi.input": io.BytesIO(json.dumps({
+                "status": "applied",
+                "stage": "hr_screening",
+                "notes": "Talked to Recruiter Maria, next round Thursday"
+            }).encode("utf-8")),
+            "CONTENT_LENGTH": "150",
+            "CONTENT_TYPE": "application/json"
+        }
+        res_post = self.app._handle(post_env)
+        body_post = json.loads("".join(item if isinstance(item, str) else item.decode("utf-8") for item in res_post))
+        self.assertTrue(body_post["success"])
+
+        # Check stats
+        stats = self._api_get("/api/stats")
+        self.assertEqual(stats["applied"], 1)
+        self.assertEqual(stats["by_stage"].get("hr_screening"), 1)
+
+        # Download CSV export
+        csv_env = {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/jobs/export/csv",
+            "QUERY_STRING": "status=applied",
+            "wsgi.input": None
+        }
+        res_csv = self.app._handle(csv_env)
+        csv_text = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res_csv)
+        self.assertIn("Title,Company,Location,Platform", csv_text)
+        self.assertIn("hr_screening", csv_text)
+        self.assertIn("Talked to Recruiter Maria", csv_text)
+
 if __name__ == "__main__":
     unittest.main()
+

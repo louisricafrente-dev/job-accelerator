@@ -94,5 +94,39 @@ class TestServer(unittest.TestCase):
         self.assertIn("added", res)
         self.assertIn("platforms", res)
 
+    def test_update_job_stage_and_follow_up(self):
+        jobs = get_jobs(self.db_path)
+        job_id = jobs[0]["id"]
+        res = self._request("POST", f"/api/jobs/{job_id}/status", body={
+            "status": "applied",
+            "stage": "tech_exam",
+            "notes": "HackerRank due Friday",
+            "follow_up_date": "2026-10-12"
+        })
+        self.assertTrue(res["success"])
+        applied = get_jobs(self.db_path, status="applied")
+        self.assertEqual(len(applied), 1)
+        self.assertEqual(applied[0]["pipeline_stage"], "tech_exam")
+        self.assertEqual(applied[0]["notes"], "HackerRank due Friday")
+        self.assertEqual(applied[0]["follow_up_date"], "2026-10-12")
+
+    def test_export_csv_endpoint(self):
+        jobs = get_jobs(self.db_path)
+        self._request("POST", f"/api/jobs/{jobs[0]['id']}/status", body={"status": "applied", "stage": "final_interview"})
+
+        env = {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/jobs/export/csv",
+            "QUERY_STRING": "status=applied",
+            "wsgi.input": io.BytesIO(b""),
+            "CONTENT_LENGTH": "0",
+            "CONTENT_TYPE": ""
+        }
+        res = self.app._handle(env)
+        body_str = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)
+        self.assertIn("Title,Company,Location,Platform", body_str)
+        self.assertIn("final_interview", body_str)
+
 if __name__ == "__main__":
     unittest.main()
+

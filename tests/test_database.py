@@ -69,6 +69,7 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(stats["applied"], 0)
         self.assertEqual(stats["by_level"].get("Junior / Entry"), 1)
         self.assertEqual(stats["by_level"].get("Mid-Level"), 1)
+        self.assertIn("by_stage", stats)
 
     def test_filter_by_date(self):
         job_today = Job(
@@ -121,5 +122,46 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]["title"], "Remote Dev")
 
+    def test_pipeline_stages_and_follow_up(self):
+        job = Job(title="Backend Dev", company="Cloud Co", location="Remote", platform="Arc", tier=3, job_url="https://arc.dev/b1")
+        insert_jobs(self.db_path, [job])
+        jobs = get_jobs(self.db_path, status="new")
+        job_id = jobs[0]["id"]
+
+        # Mark applied with pipeline stage
+        ok = update_job_status(self.db_path, job_id, status="applied", pipeline_stage="hr_screening", notes="Recruiter: John Doe", follow_up_date="2026-10-15")
+        self.assertTrue(ok)
+
+        applied = get_jobs(self.db_path, status="applied")
+        self.assertEqual(len(applied), 1)
+        self.assertEqual(applied[0]["pipeline_stage"], "hr_screening")
+        self.assertEqual(applied[0]["notes"], "Recruiter: John Doe")
+        self.assertEqual(applied[0]["follow_up_date"], "2026-10-15")
+
+        # Advance stage to tech_exam
+        ok2 = update_job_status(self.db_path, job_id, pipeline_stage="tech_exam", notes="Take-home exam sent")
+        self.assertTrue(ok2)
+        applied2 = get_jobs(self.db_path, status="applied")
+        self.assertEqual(applied2[0]["pipeline_stage"], "tech_exam")
+        self.assertEqual(applied2[0]["notes"], "Take-home exam sent")
+
+    def test_export_jobs_csv(self):
+        from src.database import export_jobs_csv
+        job1 = Job(title="React Dev", company="Acme, Inc.", location="Remote", platform="LinkedIn", tier=1, job_url="https://acme.com", salary="$70k")
+        job2 = Job(title="Python Dev", company="Beta LLC", location="Remote", platform="Indeed", tier=1, job_url="https://beta.com")
+        insert_jobs(self.db_path, [job1, job2])
+        jobs = get_jobs(self.db_path, status="new")
+        target_id = [j["id"] for j in jobs if j["title"] == "React Dev"][0]
+        update_job_status(self.db_path, target_id, status="applied", pipeline_stage="offer", notes="Great offer")
+
+        csv_content = export_jobs_csv(self.db_path, status="applied")
+        self.assertIn("Title,Company,Location,Platform", csv_content)
+        self.assertIn('"Acme, Inc."', csv_content)
+        self.assertIn("React Dev", csv_content)
+        self.assertIn("offer", csv_content)
+        # job2 wasn't applied, should not appear in applied csv
+        self.assertNotIn("Beta LLC", csv_content)
+
 if __name__ == "__main__":
     unittest.main()
+
