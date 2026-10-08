@@ -411,9 +411,25 @@ kbd {
   font-weight: 600;
 }
 
-.job-date {
-  font-size: 0.8rem;
-  color: #64748b;
+.badge-date-today {
+  background-color: rgba(249, 115, 22, 0.2);
+  color: #fb923c;
+  border: 1px solid #f97316;
+  font-weight: 700;
+  margin-left: auto;
+}
+
+.badge-date-recent {
+  background-color: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  margin-left: auto;
+}
+
+.badge-date-older {
+  background-color: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
   margin-left: auto;
 }
 

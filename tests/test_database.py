@@ -70,5 +70,23 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(stats["by_level"].get("Junior / Entry"), 1)
         self.assertEqual(stats["by_level"].get("Mid-Level"), 1)
 
+    def test_filter_by_date(self):
+        job_today = Job(
+            title="Dev Today", company="Co", location="Remote", platform="LinkedIn",
+            tier=1, job_url="https://job1", date_posted="2026-10-08"
+        )
+        job_old = Job(
+            title="Dev Old", company="Co", location="Remote", platform="LinkedIn",
+            tier=1, job_url="https://job2", date_posted="2026-09-01"
+        )
+        insert_jobs(self.db_path, [job_today, job_old])
+
+        today_jobs = get_jobs(self.db_path, date_filter="today")
+        self.assertEqual(len(today_jobs), 1)
+        self.assertEqual(today_jobs[0]["title"], "Dev Today")
+
+        all_jobs = get_jobs(self.db_path, date_filter="all")
+        self.assertEqual(len(all_jobs), 2)
+
 if __name__ == "__main__":
     unittest.main()

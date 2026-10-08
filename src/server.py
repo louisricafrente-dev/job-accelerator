@@ -21,6 +21,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         level = bottle.request.query.get("experience_level", "All")
         tier_str = bottle.request.query.get("tier", "")
         search = bottle.request.query.get("search", "")
+        date_filter = bottle.request.query.get("date_filter", "all")
         tier = int(tier_str) if tier_str.isdigit() else None
 
         jobs = get_jobs(
@@ -30,6 +31,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             experience_level=level,
             tier=tier,
             search=search,
+            date_filter=date_filter,
             limit=200
         )
         bottle.response.content_type = "application/json"

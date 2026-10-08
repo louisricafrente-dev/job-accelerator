@@ -77,5 +77,9 @@ class TestServer(unittest.TestCase):
         self.assertEqual(stats["new"], 2)
         self.assertEqual(stats["applied"], 0)
 
+    def test_get_jobs_filtered_by_date(self):
+        data = self._request("GET", "/api/jobs", "date_filter=today")
+        self.assertIn("jobs", data)
+
 if __name__ == "__main__":
     unittest.main()

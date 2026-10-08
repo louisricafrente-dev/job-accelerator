@@ -2,6 +2,7 @@
 let currentStatus = 'new';
 let currentLevel = 'All';
 let currentRole = 'All';
+let currentDateFilter = 'all';
 let hideSenior = false;
 let searchQuery = '';
 let jobsList = [];
@@ -38,7 +39,8 @@ async function loadJobs() {
       status: currentStatus,
       role: currentRole,
       experience_level: currentLevel,
-      search: searchQuery
+      search: searchQuery,
+      date_filter: currentDateFilter
     });
 
     const res = await fetch(`/api/jobs?${params.toString()}`);
@@ -99,7 +101,7 @@ function renderJobs() {
             <span class="badge ${levelClass}">${escapeHtml(job.experience_level)}</span>
             <span class="job-location">📍 ${escapeHtml(job.location || 'Remote')}</span>
             ${job.salary ? `<span class="job-salary">💰 ${escapeHtml(job.salary)}</span>` : ''}
-            <span class="job-date">📅 ${escapeHtml(job.date_posted || 'Recently')}</span>
+            ${formatPostingDate(job.date_posted)}
           </div>
         </div>
 
@@ -256,6 +258,27 @@ function setRole(role, elem) {
   currentRole = role;
   updatePillActive('role-group', elem);
   loadJobs();
+}
+
+function setDateFilter(filter, elem) {
+  currentDateFilter = filter;
+  updatePillActive('date-group', elem);
+  loadJobs();
+}
+
+function formatPostingDate(dateStr) {
+  if (!dateStr) return '<span class="badge badge-date-older">📅 Recently</span>';
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const yesterdayStr = d.toISOString().slice(0, 10);
+
+  if (dateStr.startsWith(todayStr)) {
+    return `<span class="badge badge-date-today">🔥 Today (${escapeHtml(dateStr.slice(0, 10))})</span>`;
+  } else if (dateStr.startsWith(yesterdayStr)) {
+    return `<span class="badge badge-date-recent">🕒 Yesterday (${escapeHtml(dateStr.slice(0, 10))})</span>`;
+  }
+  return `<span class="badge badge-date-older">📅 ${escapeHtml(dateStr.slice(0, 10))}</span>`;
 }
 
 function toggleHideSenior(checkbox) {

@@ -72,6 +72,18 @@
           </div>
         </div>
 
+        <!-- Date Posted Filter (Requested by user) -->
+        <div class="filter-group">
+          <span class="group-label">Petsa / Date Posted</span>
+          <div class="pill-group" id="date-group">
+            <button class="pill active" data-val="all" onclick="setDateFilter('all', this)">Anytime (Lahat)</button>
+            <button class="pill pill-date-today" data-val="today" onclick="setDateFilter('today', this)">🔥 Today (Ngayong Araw)</button>
+            <button class="pill" data-val="3days" onclick="setDateFilter('3days', this)">Past 3 Days</button>
+            <button class="pill" data-val="7days" onclick="setDateFilter('7days', this)">Past 7 Days</button>
+            <button class="pill" data-val="14days" onclick="setDateFilter('14days', this)">Past 14 Days</button>
+          </div>
+        </div>
+
         <!-- Quick Toggles -->
         <div class="filter-group quick-toggles">
           <label class="toggle-control">

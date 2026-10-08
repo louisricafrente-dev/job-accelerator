@@ -81,6 +81,7 @@ def get_jobs(
     experience_level: Optional[str] = None,
     tier: Optional[int] = None,
     search: Optional[str] = None,
+    date_filter: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
@@ -105,6 +106,17 @@ def get_jobs(
         search_query = f"%{search.strip()}%"
         clauses.append("(title LIKE ? OR company LIKE ? OR location LIKE ?)")
         params.extend([search_query, search_query, search_query])
+
+    if date_filter and date_filter != "all":
+        effective_date = "COALESCE(NULLIF(substr(date_posted, 1, 10), ''), date(created_at))"
+        if date_filter == "today":
+            clauses.append(f"{effective_date} >= date('now', 'localtime')")
+        elif date_filter == "3days":
+            clauses.append(f"{effective_date} >= date('now', '-3 days')")
+        elif date_filter == "7days":
+            clauses.append(f"{effective_date} >= date('now', '-7 days')")
+        elif date_filter == "14days":
+            clauses.append(f"{effective_date} >= date('now', '-14 days')")
 
     where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     query = f"SELECT * FROM jobs {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?"
