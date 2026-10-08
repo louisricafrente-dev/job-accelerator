@@ -2,7 +2,7 @@ import json
 import urllib.request
 import xml.etree.ElementTree as ET
 from typing import List
-from src.connectors.base import BaseConnector
+from src.connectors.base import BaseConnector, logger
 from src.models import Job
 from src.classifier import classify_experience_level, classify_role
 
@@ -42,7 +42,7 @@ class RemoteOKConnector(BaseConnector):
                     )
                     jobs.append(job)
         except Exception as e:
-            pass
+            logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 
 class WeWorkRemotelyConnector(BaseConnector):
@@ -79,7 +79,7 @@ class WeWorkRemotelyConnector(BaseConnector):
                     )
                     jobs.append(job)
         except Exception as e:
-            pass
+            logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 
 class ArcConnector(BaseConnector):
@@ -109,6 +109,6 @@ class ArcConnector(BaseConnector):
                         experience_level=classify_experience_level(title),
                         date_posted=item.get("postedDate", "")[:10]
                     ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs

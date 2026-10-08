@@ -60,6 +60,15 @@ class TestConnectors(unittest.TestCase):
         jobs = connector.fetch()
         self.assertEqual(jobs, [])
 
+    @patch("urllib.request.urlopen")
+    def test_connector_logs_error_on_failure(self, mock_urlopen):
+        mock_urlopen.side_effect = Exception("Rate limit 429")
+        connector = KalibrrConnector()
+        with self.assertLogs("connectors", level="ERROR") as cm:
+            jobs = connector.fetch()
+            self.assertEqual(jobs, [])
+            self.assertTrue(any("Rate limit 429" in msg for msg in cm.output))
+
     def test_jobspy_adapter_fallback_when_uninstalled(self):
         # Should not crash if jobspy not installed
         adapter = JobSpyAdapter("LinkedIn", "linkedin", tier=1)

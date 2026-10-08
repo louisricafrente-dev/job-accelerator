@@ -2,7 +2,7 @@ import json
 import urllib.request
 import urllib.parse
 from typing import List
-from src.connectors.base import BaseConnector
+from src.connectors.base import BaseConnector, logger
 from src.models import Job
 from src.classifier import classify_experience_level, classify_role
 
@@ -41,8 +41,8 @@ class KalibrrConnector(BaseConnector):
                         date_posted=item.get("published", "")[:10]
                     )
                     jobs.append(job)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 
 class BossjobConnector(BaseConnector):
@@ -74,8 +74,8 @@ class BossjobConnector(BaseConnector):
                         experience_level=classify_experience_level(title),
                         date_posted=item.get("updated_at", "")[:10]
                     ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 
 class JobStreetConnector(BaseConnector):
@@ -107,6 +107,6 @@ class JobStreetConnector(BaseConnector):
                         experience_level=classify_experience_level(title),
                         date_posted=item.get("listingDate", "")[:10]
                     ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
