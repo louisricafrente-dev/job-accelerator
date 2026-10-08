@@ -9,7 +9,8 @@ from src.models import Job
 
 DEFAULT_QUERIES = [
     "software engineer", "frontend developer", "backend developer",
-    "full stack developer", "data analyst", "machine learning"
+    "full stack developer", "data analyst", "machine learning",
+    "junior developer", "python developer", "web developer"
 ]
 
 def get_default_connectors() -> List[BaseConnector]:
@@ -38,7 +39,7 @@ class Aggregator:
         self.connectors = connectors or get_default_connectors()
 
     def run_sync(self, queries: Optional[List[str]] = None) -> Dict[str, Any]:
-        search_queries = queries or DEFAULT_QUERIES[:2]
+        search_queries = queries if queries is not None else DEFAULT_QUERIES
         all_jobs: List[Job] = []
         platform_reports: Dict[str, int] = {}
 

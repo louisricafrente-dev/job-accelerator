@@ -103,9 +103,11 @@ def get_jobs(
         clauses.append("tier = ?")
         params.append(tier)
     if search:
-        search_query = f"%{search.strip()}%"
-        clauses.append("(title LIKE ? OR company LIKE ? OR location LIKE ?)")
-        params.extend([search_query, search_query, search_query])
+        words = [w.strip() for w in search.strip().split() if w.strip()]
+        for word in words:
+            query_param = f"%{word}%"
+            clauses.append("(title LIKE ? OR company LIKE ? OR location LIKE ? OR role_category LIKE ? OR experience_level LIKE ?)")
+            params.extend([query_param, query_param, query_param, query_param, query_param])
 
     if date_filter and date_filter != "all":
         effective_date = "COALESCE(NULLIF(substr(date_posted, 1, 10), ''), date(created_at))"

@@ -88,5 +88,22 @@ class TestDatabase(unittest.TestCase):
         all_jobs = get_jobs(self.db_path, date_filter="all")
         self.assertEqual(len(all_jobs), 2)
 
+    def test_tokenized_multi_word_search(self):
+        job = Job(
+            title="Junior Frontend Developer (React / Next.js)",
+            company="Acme Corp",
+            location="Remote PH",
+            platform="LinkedIn",
+            tier=1,
+            job_url="https://acme.com/job-token",
+            date_posted="2026-10-08"
+        )
+        insert_jobs(self.db_path, [job])
+
+        # Multi-word non-contiguous search: "junior" and "react" are not adjacent
+        results = get_jobs(self.db_path, search="junior react")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["company"], "Acme Corp")
+
 if __name__ == "__main__":
     unittest.main()
