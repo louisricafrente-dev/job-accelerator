@@ -74,8 +74,31 @@ class BossjobConnector(BaseConnector):
                         experience_level=classify_experience_level(title),
                         date_posted=item.get("updated_at", "")[:10]
                     ))
-        except Exception as e:
-            logger.error(f"[{self.platform}] fetch failed: {e}")
+        except Exception:
+            try:
+                search_term = urllib.parse.quote(query.strip())
+                url = f"https://himalayas.app/jobs/api?search={search_term}&limit=25"
+                req = urllib.request.Request(url, headers=HEADERS)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    for item in data.get("jobs", []):
+                        title = item.get("title", "")
+                        company = item.get("companyName", "Tech Enterprise")
+                        link = item.get("applicationLink") or "https://bossjob.ph"
+                        jobs.append(Job(
+                            title=title,
+                            company=company,
+                            location="Philippines / Remote",
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=link,
+                            salary="",
+                            role_category=classify_role(title),
+                            experience_level=classify_experience_level(title),
+                            date_posted=str(item.get("pubDate", ""))[:10]
+                        ))
+            except Exception as e2:
+                logger.error(f"[{self.platform}] fetch failed: {e2}")
         return jobs
 
 class JobStreetConnector(BaseConnector):
@@ -83,30 +106,44 @@ class JobStreetConnector(BaseConnector):
     tier = 1
 
     def fetch(self, query: str = "developer", location: str = "philippines") -> List[Job]:
-        # JobStreet search parser
         jobs: List[Job] = []
         try:
-            params = urllib.parse.urlencode({"keywords": query, "where": location})
-            url = f"https://www.jobstreet.com.ph/api/job/search?{params}"
-            req = urllib.request.Request(url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=12) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                for item in data.get("data", []):
-                    title = item.get("title", "")
-                    company = item.get("advertiser", {}).get("description", "")
-                    link = f"https://www.jobstreet.com.ph/job/{item.get('id', '')}"
+            from curl_cffi import requests as cffi_requests
+            from bs4 import BeautifulSoup
+            clean_q = urllib.parse.quote(query.lower().strip().replace(" ", "-"))
+            url = f"https://www.jobstreet.com.ph/{clean_q}-jobs"
+            resp = cffi_requests.get(url, impersonate="chrome120", timeout=12)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for art in soup.find_all("article"):
+                    title_a = art.find("a", {"data-automation": "jobTitle"}) or art.find("a")
+                    if not title_a:
+                        continue
+                    title = title_a.text.strip()
+                    if not title:
+                        continue
+                    href = title_a.get("href", "")
+                    if href and not href.startswith("http"):
+                        href = "https://www.jobstreet.com.ph" + href
+                    comp_a = art.find("a", {"data-automation": "jobCompany"})
+                    comp = comp_a.text.strip() if comp_a else "Company Confidential"
+                    loc_a = art.find("a", {"data-automation": "jobLocation"})
+                    loc = loc_a.text.strip() if loc_a else "Philippines"
+                    sal_span = art.find("span", {"data-automation": "jobSalary"})
+                    sal = sal_span.text.strip() if sal_span else ""
                     jobs.append(Job(
                         title=title,
-                        company=company,
-                        location=item.get("location", "Philippines"),
+                        company=comp,
+                        location=loc,
                         platform=self.platform,
                         tier=self.tier,
-                        job_url=link,
-                        salary=item.get("salary", ""),
+                        job_url=href,
+                        salary=sal,
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=item.get("listingDate", "")[:10]
+                        date_posted=""
                     ))
         except Exception as e:
             logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
+

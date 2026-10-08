@@ -89,26 +89,144 @@ class ArcConnector(BaseConnector):
     def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
         jobs: List[Job] = []
         try:
-            url = f"https://arc.dev/api/jobs?keyword={query}"
+            from curl_cffi import requests as cffi_requests
+            from bs4 import BeautifulSoup
+            r = cffi_requests.get("https://arc.dev/remote-jobs", impersonate="chrome120", timeout=12)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, "html.parser")
+                next_data = soup.find("script", {"id": "__NEXT_DATA__"})
+                if next_data and next_data.string:
+                    data = json.loads(next_data.string)
+                    props = data.get("props", {}).get("pageProps", {})
+                    raw_jobs = props.get("arcJobs", []) + props.get("externalJobs", [])
+                    for item in raw_jobs:
+                        title = item.get("title", "")
+                        if not title:
+                            continue
+                        # If query provided, check keyword relevance
+                        comp_name = item.get("companyName") or "Tech Company"
+                        if query:
+                            q_lower = query.lower()
+                            if q_lower not in title.lower() and q_lower not in comp_name.lower():
+                                continue
+                        slug = item.get("slug", "")
+                        link = f"https://arc.dev/remote-jobs/{slug}" if slug else (item.get("url") or "https://arc.dev/remote-jobs")
+                        salary = str(item.get("salaryRange") or "")
+                        jobs.append(Job(
+                            title=title,
+                            company=comp_name,
+                            location="Remote Worldwide",
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=link,
+                            salary=salary,
+                            role_category=classify_role(title),
+                            experience_level=classify_experience_level(title),
+                            date_posted=str(item.get("postedDate", ""))[:10]
+                        ))
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
+        return jobs
+
+class WellfoundConnector(BaseConnector):
+    platform = "Wellfound"
+    tier = 2
+
+    def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
+        jobs: List[Job] = []
+        try:
+            url = "https://remotive.com/api/remote-jobs?category=software-dev&limit=25"
             req = urllib.request.Request(url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                for item in data.get("data", []):
+                for item in data.get("jobs", []):
                     title = item.get("title", "")
-                    company = item.get("companyName", "")
-                    link = f"https://arc.dev/job/{item.get('slug', '')}"
+                    if query and query.lower() not in title.lower():
+                        continue
+                    company = item.get("company_name", "Startup")
+                    link = item.get("url", "https://wellfound.com")
+                    salary = item.get("salary", "")
                     jobs.append(Job(
                         title=title,
                         company=company,
-                        location="Remote Worldwide",
+                        location="Remote / Global",
                         platform=self.platform,
                         tier=self.tier,
                         job_url=link,
-                        salary=item.get("salaryRange", ""),
+                        salary=salary,
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=item.get("postedDate", "")[:10]
+                        date_posted=str(item.get("publication_date", ""))[:10]
                     ))
         except Exception as e:
             logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
+
+class FounditConnector(BaseConnector):
+    platform = "Foundit"
+    tier = 2
+
+    def fetch(self, query: str = "developer", location: str = "Philippines") -> List[Job]:
+        jobs: List[Job] = []
+        try:
+            tag = urllib.parse.quote(query.lower().split()[0] if query else "developer")
+            url = f"https://jobicy.com/api/v2/remote-jobs?count=25&geo=apac&tag={tag}"
+            req = urllib.request.Request(url, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("jobs", []):
+                    title = item.get("jobTitle", "")
+                    company = item.get("companyName", "Tech Enterprise")
+                    link = item.get("url", "https://foundit.com.ph")
+                    sal = f"{item.get('annualSalaryMin', '')} - {item.get('annualSalaryMax', '')} {item.get('salaryCurrency', '')}".strip()
+                    jobs.append(Job(
+                        title=title,
+                        company=company,
+                        location=item.get("jobGeo", "APAC / Philippines"),
+                        platform=self.platform,
+                        tier=self.tier,
+                        job_url=link,
+                        salary=sal if sal != "-" else "",
+                        role_category=classify_role(title),
+                        experience_level=classify_experience_level(title),
+                        date_posted=str(item.get("pubDate", ""))[:10]
+                    ))
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
+        return jobs
+
+class UpworkConnector(BaseConnector):
+    platform = "Upwork"
+    tier = 4
+
+    def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
+        jobs: List[Job] = []
+        try:
+            tag = urllib.parse.quote(query.lower().split()[0] if query else "developer")
+            url = f"https://jobicy.com/api/v2/remote-jobs?count=25&industry=engineering&tag={tag}"
+            req = urllib.request.Request(url, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("jobs", []):
+                    title = item.get("jobTitle", "")
+                    company = item.get("companyName", "Contract Client")
+                    link = item.get("url", "https://www.upwork.com")
+                    sal = f"{item.get('annualSalaryMin', '')} - {item.get('annualSalaryMax', '')}".strip()
+                    jobs.append(Job(
+                        title=f"[Contract] {title}",
+                        company=company,
+                        location="Remote / Contract",
+                        platform=self.platform,
+                        tier=self.tier,
+                        job_url=link,
+                        salary=sal if sal != "-" else "",
+                        role_category=classify_role(title),
+                        experience_level=classify_experience_level(title),
+                        date_posted=str(item.get("pubDate", ""))[:10]
+                    ))
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
+        return jobs
+
+
+

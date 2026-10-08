@@ -1,7 +1,14 @@
 import concurrent.futures
 from typing import List, Dict, Any, Optional
 from src.connectors.base import BaseConnector
-from src.connectors.remote_feed import RemoteOKConnector, WeWorkRemotelyConnector, ArcConnector
+from src.connectors.remote_feed import (
+    RemoteOKConnector,
+    WeWorkRemotelyConnector,
+    ArcConnector,
+    WellfoundConnector,
+    FounditConnector,
+    UpworkConnector
+)
 from src.connectors.ph_jobs import KalibrrConnector, BossjobConnector, JobStreetConnector
 from src.connectors.jobspy_adapter import JobSpyAdapter
 from src.database import insert_jobs
@@ -15,21 +22,24 @@ DEFAULT_QUERIES = [
 
 def get_default_connectors() -> List[BaseConnector]:
     return [
-        # Tier 1 — Apply heavily
+        # Tier 1 — Core PH & High-Yield Boards
         JobSpyAdapter("LinkedIn", "linkedin", tier=1),
         JobStreetConnector(),
         JobSpyAdapter("Indeed", "indeed", tier=1),
         KalibrrConnector(),
 
-        # Tier 2 — Very worth checking
+        # Tier 2 — High Value Startups & PH Portals
         BossjobConnector(),
+        WellfoundConnector(),
+        FounditConnector(),
 
-        # Tier 3 — For international/remote opportunities
+        # Tier 3 — Global Remote & International
         RemoteOKConnector(),
         WeWorkRemotelyConnector(),
         ArcConnector(),
 
-        # Tier 4 — Backup / freelance
+        # Tier 4 — Freelance & Company Reviews
+        UpworkConnector(),
         JobSpyAdapter("Glassdoor", "glassdoor", tier=4),
     ]
 

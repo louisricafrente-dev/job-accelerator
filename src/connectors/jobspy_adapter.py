@@ -1,5 +1,5 @@
 from typing import List
-from src.connectors.base import BaseConnector
+from src.connectors.base import BaseConnector, logger
 from src.models import Job
 from src.classifier import classify_experience_level, classify_role
 
@@ -39,6 +39,6 @@ class JobSpyAdapter(BaseConnector):
                     experience_level=classify_experience_level(title),
                     date_posted=str(row.get("date_posted", ""))
                 ))
-        except (ImportError, ModuleNotFoundError, Exception):
-            pass
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
