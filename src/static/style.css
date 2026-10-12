@@ -285,6 +285,39 @@ a {
   color: var(--accent-amber-bright);
 }
 
+.status-tab .tab-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+  flex-shrink: 0;
+  opacity: 0.65;
+  transition: all var(--transition-fast);
+}
+
+.status-tab:hover .tab-icon {
+  opacity: 0.9;
+}
+
+.status-tab.active .tab-icon {
+  opacity: 1;
+}
+
+.status-tab[data-val="new"].active .tab-icon {
+  color: var(--accent-cyan);
+}
+
+.status-tab[data-val="saved"].active .tab-icon {
+  color: var(--accent-amber-bright);
+}
+
+.status-tab[data-val="applied"].active .tab-icon {
+  color: var(--accent-emerald-bright);
+}
+
+.status-tab[data-val="ignored"].active .tab-icon {
+  color: var(--text-tertiary);
+}
+
 /* Header Action Tools Cluster */
 .header-actions {
   display: flex;

@@ -1677,3 +1677,25 @@ function filterRemoteVAJobs() {
   showToast('Filtered feed to Remote Virtual Assistant opportunities.');
   loadJobs();
 }
+
+// --------------------------------------------------------------------------
+// AUTOMATED DAILY EMAIL DIGEST
+// --------------------------------------------------------------------------
+async function triggerEmailDigest() {
+  const btn = document.getElementById('btn-daily-digest');
+  if (btn) btn.disabled = true;
+  showToast('Compiling and dispatching daily job digest to michael18ricafrente@gmail.com...');
+  try {
+    const res = await fetch('/api/notify/daily', { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Daily digest dispatched to ${data.recipient}! (${data.new_jobs} new jobs summarized)`);
+    } else {
+      showToast(data.message || `Digest compiled (${data.new_jobs || 0} jobs)! Check server logs.`);
+    }
+  } catch (err) {
+    showToast(`Digest error: ${err.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}

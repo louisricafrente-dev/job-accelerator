@@ -24,19 +24,35 @@
 
       <!-- Quick Status Segmented Nav -->
       <nav class="status-nav" aria-label="Status filters">
-        <button class="status-tab active" data-val="new" onclick="setStatus('new', this)">
+        <button class="status-tab active" data-val="new" onclick="setStatus('new', this)" title="Inbox — Unreviewed job opportunities">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/>
+            <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+          </svg>
           <span class="tab-label">Inbox</span>
           <span class="tab-count" id="stat-new">0</span>
         </button>
-        <button class="status-tab" data-val="saved" onclick="setStatus('saved', this)">
+        <button class="status-tab" data-val="saved" onclick="setStatus('saved', this)" title="Saved — Starred priority opportunities">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
           <span class="tab-label">Saved</span>
           <span class="tab-count" id="stat-saved">0</span>
         </button>
-        <button class="status-tab" data-val="applied" onclick="setStatus('applied', this)">
+        <button class="status-tab" data-val="applied" onclick="setStatus('applied', this)" title="Pipeline — Applied positions tracking">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
           <span class="tab-label">Pipeline</span>
           <span class="tab-count" id="stat-applied">0</span>
         </button>
-        <button class="status-tab" data-val="ignored" onclick="setStatus('ignored', this)">
+        <button class="status-tab" data-val="ignored" onclick="setStatus('ignored', this)" title="Archived — Hidden or passed opportunities">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="21 8 21 21 3 21 3 8"/>
+            <rect width="22" height="5" x="1" y="3"/>
+            <line x1="10" y1="12" x2="14" y2="12"/>
+          </svg>
           <span class="tab-label">Archived</span>
           <span class="tab-count" id="stat-ignored">0</span>
         </button>
@@ -59,6 +75,14 @@
             <line x1="12" y1="19" x2="20" y2="19"/>
           </svg>
           <span class="btn-text">Sync Logs</span>
+        </button>
+
+        <button id="btn-daily-digest" class="btn-subtle" onclick="triggerEmailDigest()" title="Send automated daily scraping summary to michael18ricafrente@gmail.com">
+          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="16" x="2" y="4" rx="2"/>
+            <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+          </svg>
+          <span class="btn-text">Email Digest</span>
         </button>
 
         <button id="btn-va-hub" class="btn-subtle" onclick="toggleVaHub()" title="Open Virtual Assistant Remote Training & Resource Hub">
