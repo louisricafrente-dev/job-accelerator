@@ -94,6 +94,17 @@ class TestServer(unittest.TestCase):
         self.assertIn("added", res)
         self.assertIn("platforms", res)
 
+    def test_sync_background_and_status_endpoint(self):
+        # Trigger background sync
+        res = self._request("POST", "/api/sync", body={"background": True})
+        self.assertEqual(res["status"], "started")
+        self.assertTrue(res["is_syncing"])
+
+        # Query status endpoint
+        status_res = self._request("GET", "/api/sync/status")
+        self.assertIn("is_syncing", status_res)
+        self.assertIn("last_result", status_res)
+
     def test_update_job_stage_and_follow_up(self):
         jobs = get_jobs(self.db_path)
         job_id = jobs[0]["id"]
@@ -126,6 +137,50 @@ class TestServer(unittest.TestCase):
         body_str = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)
         self.assertIn("Title,Company,Location,Platform", body_str)
         self.assertIn("final_interview", body_str)
+
+    def test_settings_stack_endpoints(self):
+        # 1. Default stack retrieval
+        res = self._request("GET", "/api/settings/stack")
+        self.assertIn("stack", res)
+        self.assertIn("Kotlin", res["stack"])
+
+        # 2. Update stack
+        post_res = self._request("POST", "/api/settings/stack", body={
+            "stack": "React, TypeScript, Next.js, MySQL"
+        })
+        self.assertTrue(post_res["success"])
+        self.assertEqual(post_res["stack"], "React, TypeScript, Next.js, MySQL")
+
+        # 3. Retrieve updated stack
+        get_res2 = self._request("GET", "/api/settings/stack")
+        self.assertEqual(get_res2["stack"], "React, TypeScript, Next.js, MySQL")
+
+    def test_general_settings_api(self):
+        # 1. Get all settings (defaults)
+        res = self._request("GET", "/api/settings")
+        self.assertIn("target_stack", res)
+        self.assertIn("Kotlin", res["target_stack"])
+
+        # 2. Save multiple toggle and filter settings
+        post_res = self._request("POST", "/api/settings", body={
+            "remote_only": "1",
+            "hide_senior": "1",
+            "date_filter": "24h",
+            "role": "Mobile",
+            "experience_levels": "Junior / Entry,Mid-Level"
+        })
+        self.assertTrue(post_res["success"])
+        self.assertEqual(post_res["settings"]["remote_only"], "1")
+        self.assertEqual(post_res["settings"]["hide_senior"], "1")
+        self.assertEqual(post_res["settings"]["date_filter"], "24h")
+        self.assertEqual(post_res["settings"]["role"], "Mobile")
+        self.assertEqual(post_res["settings"]["experience_levels"], "Junior / Entry,Mid-Level")
+
+        # 3. Verify retrieval persists
+        get_res2 = self._request("GET", "/api/settings")
+        self.assertEqual(get_res2["remote_only"], "1")
+        self.assertEqual(get_res2["date_filter"], "24h")
+        self.assertEqual(get_res2["role"], "Mobile")
 
 if __name__ == "__main__":
     unittest.main()

@@ -64,6 +64,33 @@ class TestUIEndpoints(unittest.TestCase):
         self.assertIn(".skill-chip", body_css)
         self.assertIn(".btn-filter-skills", body_css)
 
+    def test_api_jobs_returns_parsed_sources(self):
+        import json
+        from src.models import Job
+        from src.database import insert_jobs
+
+        job1 = Job(title="Fullstack Engineer", company="OmniCorp", location="Remote", platform="LinkedIn", tier=1, job_url="https://linkedin.com/1")
+        job2 = Job(title="Fullstack Engineer", company="OmniCorp", location="Remote", platform="JobStreet", tier=1, job_url="https://jobstreet.com/2")
+        insert_jobs(self.db_path, [job1, job2])
+
+        env = {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/jobs",
+            "QUERY_STRING": "status=new",
+            "wsgi.input": None
+        }
+        res = self.app._handle(env)
+        body = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)
+        if hasattr(res, "close"):
+            res.close()
+        data = json.loads(body)
+        self.assertEqual(len(data["jobs"]), 1)
+        job = data["jobs"][0]
+        self.assertIsInstance(job["sources"], list)
+        self.assertEqual(len(job["sources"]), 2)
+        platforms = {s["platform"] for s in job["sources"]}
+        self.assertEqual(platforms, {"LinkedIn", "JobStreet"})
+
 if __name__ == "__main__":
     unittest.main()
 

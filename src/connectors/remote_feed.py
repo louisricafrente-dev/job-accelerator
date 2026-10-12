@@ -75,7 +75,7 @@ class WeWorkRemotelyConnector(BaseConnector):
                         salary="",
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=pub_date.text[:16] if pub_date is not None and pub_date.text else ""
+                        date_posted=pub_date.text.strip() if pub_date is not None and pub_date.text else ""
                     )
                     jobs.append(job)
         except Exception as e:
@@ -165,64 +165,175 @@ class WellfoundConnector(BaseConnector):
 class FounditConnector(BaseConnector):
     platform = "Foundit"
     tier = 2
+    _cached_data = None
+    _last_fetch = 0
 
     def fetch(self, query: str = "developer", location: str = "Philippines") -> List[Job]:
+        import time
         jobs: List[Job] = []
-        try:
-            tag = urllib.parse.quote(query.lower().split()[0] if query else "developer")
-            url = f"https://jobicy.com/api/v2/remote-jobs?count=25&geo=apac&tag={tag}"
-            req = urllib.request.Request(url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                for item in data.get("jobs", []):
-                    title = item.get("jobTitle", "")
-                    company = item.get("companyName", "Tech Enterprise")
-                    link = item.get("url", "https://foundit.com.ph")
-                    sal = f"{item.get('annualSalaryMin', '')} - {item.get('annualSalaryMax', '')} {item.get('salaryCurrency', '')}".strip()
-                    jobs.append(Job(
-                        title=title,
-                        company=company,
-                        location=item.get("jobGeo", "APAC / Philippines"),
-                        platform=self.platform,
-                        tier=self.tier,
-                        job_url=link,
-                        salary=sal if sal != "-" else "",
-                        role_category=classify_role(title),
-                        experience_level=classify_experience_level(title),
-                        date_posted=str(item.get("pubDate", ""))[:10]
-                    ))
-        except Exception as e:
-            logger.error(f"[{self.platform}] fetch failed: {e}")
+        now = time.time()
+        # Cache Jobicy feed for 60 seconds to prevent 429 Too Many Requests
+        if not FounditConnector._cached_data or (now - FounditConnector._last_fetch > 60):
+            try:
+                url = "https://jobicy.com/api/v2/remote-jobs?count=50&geo=apac"
+                req = urllib.request.Request(url, headers=HEADERS)
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    FounditConnector._cached_data = json.loads(resp.read().decode("utf-8")).get("jobs", [])
+                    FounditConnector._last_fetch = now
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    logger.warning("[Foundit] Rate limited by upstream API (HTTP 429). Skipping.")
+                else:
+                    logger.warning(f"[Foundit] HTTP error: {e}")
+                return []
+            except Exception as e:
+                logger.warning(f"[{self.platform}] fetch failed: {e}")
+                return []
+
+        raw_list = FounditConnector._cached_data or []
+        q_lower = (query or "").lower().strip()
+        for item in raw_list:
+            title = item.get("jobTitle", "")
+            if q_lower and q_lower not in title.lower():
+                continue
+            company = item.get("companyName", "Tech Enterprise")
+            link = item.get("url", "https://foundit.com.ph")
+            sal = f"{item.get('annualSalaryMin', '')} - {item.get('annualSalaryMax', '')} {item.get('salaryCurrency', '')}".strip()
+            jobs.append(Job(
+                title=title,
+                company=company,
+                location=item.get("jobGeo", "APAC / Philippines"),
+                platform=self.platform,
+                tier=self.tier,
+                job_url=link,
+                salary=sal if sal != "-" else "",
+                role_category=classify_role(title),
+                experience_level=classify_experience_level(title),
+                date_posted=str(item.get("pubDate", ""))
+            ))
         return jobs
 
 class UpworkConnector(BaseConnector):
     platform = "Upwork"
     tier = 4
+    _cached_data = None
+    _last_fetch = 0
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
+        import time
+        jobs: List[Job] = []
+        now = time.time()
+        # Cache Jobicy contract engineering feed for 60 seconds to prevent 429 Too Many Requests
+        if not UpworkConnector._cached_data or (now - UpworkConnector._last_fetch > 60):
+            try:
+                url = "https://jobicy.com/api/v2/remote-jobs?count=50&industry=engineering"
+                req = urllib.request.Request(url, headers=HEADERS)
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    UpworkConnector._cached_data = json.loads(resp.read().decode("utf-8")).get("jobs", [])
+                    UpworkConnector._last_fetch = now
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    logger.warning("[Upwork] Rate limited by upstream API (HTTP 429). Skipping.")
+                else:
+                    logger.warning(f"[Upwork] HTTP error: {e}")
+                return []
+            except Exception as e:
+                logger.warning(f"[{self.platform}] fetch failed: {e}")
+                return []
+
+        raw_list = UpworkConnector._cached_data or []
+        q_lower = (query or "").lower().strip()
+        for item in raw_list:
+            title = item.get("jobTitle", "")
+            if q_lower and q_lower not in title.lower():
+                continue
+            company = item.get("companyName", "Contract Client")
+            link = item.get("url", "https://www.upwork.com")
+            sal = f"{item.get('annualSalaryMin', '')} - {item.get('annualSalaryMax', '')}".strip()
+            jobs.append(Job(
+                title=f"[Contract] {title}",
+                company=company,
+                location="Remote / Contract",
+                platform=self.platform,
+                tier=self.tier,
+                job_url=link,
+                salary=sal if sal != "-" else "",
+                role_category=classify_role(title),
+                experience_level=classify_experience_level(title),
+                date_posted=str(item.get("pubDate", ""))
+            ))
+        return jobs
+
+class RemotiveConnector(BaseConnector):
+    platform = "Remotive"
+    tier = 3
+    is_feed = True
+
+    def fetch(self, query: str = "software-dev", location: str = "remote") -> List[Job]:
         jobs: List[Job] = []
         try:
-            tag = urllib.parse.quote(query.lower().split()[0] if query else "developer")
-            url = f"https://jobicy.com/api/v2/remote-jobs?count=25&industry=engineering&tag={tag}"
+            url = "https://remotive.com/api/remote-jobs?category=software-dev&limit=40"
             req = urllib.request.Request(url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for item in data.get("jobs", []):
-                    title = item.get("jobTitle", "")
-                    company = item.get("companyName", "Contract Client")
-                    link = item.get("url", "https://www.upwork.com")
-                    sal = f"{item.get('annualSalaryMin', '')} - {item.get('annualSalaryMax', '')}".strip()
+                    title = item.get("title", "")
+                    if not title:
+                        continue
+                    company = item.get("company_name", "Remote Tech")
+                    link = item.get("url", "https://remotive.com")
+                    sal = str(item.get("salary") or "")
+                    loc = item.get("candidate_required_location") or "Remote Worldwide"
+                    pub = str(item.get("publication_date", ""))[:10]
                     jobs.append(Job(
-                        title=f"[Contract] {title}",
+                        title=title,
                         company=company,
-                        location="Remote / Contract",
+                        location=loc,
                         platform=self.platform,
                         tier=self.tier,
                         job_url=link,
-                        salary=sal if sal != "-" else "",
+                        salary=sal,
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=str(item.get("pubDate", ""))[:10]
+                        date_posted=pub
+                    ))
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
+        return jobs
+
+class HimalayasConnector(BaseConnector):
+    platform = "Himalayas"
+    tier = 3
+    is_feed = True
+
+    def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
+        jobs: List[Job] = []
+        try:
+            url = "https://himalayas.app/jobs/api?limit=35"
+            req = urllib.request.Request(url, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("jobs", []):
+                    title = item.get("title", "")
+                    if not title:
+                        continue
+                    company = item.get("companyName", "Tech Enterprise")
+                    link = item.get("applicationLink") or "https://himalayas.app"
+                    sal_min = item.get("minSalary")
+                    sal_max = item.get("maxSalary")
+                    sal = f"${sal_min:,} - ${sal_max:,}" if sal_min and sal_max else ""
+                    pub = str(item.get("pubDate", ""))[:10]
+                    jobs.append(Job(
+                        title=title,
+                        company=company,
+                        location="Remote Worldwide",
+                        platform=self.platform,
+                        tier=self.tier,
+                        job_url=link,
+                        salary=sal,
+                        role_category=classify_role(title),
+                        experience_level=classify_experience_level(title),
+                        date_posted=pub
                     ))
         except Exception as e:
             logger.error(f"[{self.platform}] fetch failed: {e}")

@@ -1,7 +1,10 @@
 import os
 import json
 import bottle
-from src.database import get_jobs, update_job_status, get_stats, export_jobs_csv
+from src.database import (
+    get_jobs, update_job_status, get_stats, export_jobs_csv, 
+    get_user_setting, set_user_setting, get_all_user_settings
+)
 from src.aggregator import Aggregator
 
 def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
@@ -9,10 +12,13 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     aggregator = Aggregator(db_path=db_path)
 
     @app.hook("after_request")
-    def enable_cors():
+    def enable_cors_and_nocache():
         bottle.response.headers["Access-Control-Allow-Origin"] = "*"
         bottle.response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         bottle.response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        bottle.response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        bottle.response.headers["Pragma"] = "no-cache"
+        bottle.response.headers["Expires"] = "0"
 
     @app.route("/api/jobs/export/csv", method="GET")
     def api_export_csv():
@@ -32,11 +38,14 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         date_filter = bottle.request.query.get("date_filter", "all")
         has_salary = bottle.request.query.get("has_salary", "0") in ("1", "true", "True")
         remote_only = bottle.request.query.get("remote_only", "0") in ("1", "true", "True")
+        hide_senior = bottle.request.query.get("hide_senior", "0") in ("1", "true", "True")
         tier = int(tier_str) if tier_str.isdigit() else None
+
+        query_status = status
 
         jobs = get_jobs(
             db_path=db_path,
-            status=status if status != "all" else None,
+            status=query_status if status != "all" else None,
             role_category=role,
             experience_level=level,
             tier=tier,
@@ -44,6 +53,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             date_filter=date_filter,
             has_salary=has_salary,
             remote_only=remote_only,
+            hide_senior=hide_senior,
             limit=200
         )
         bottle.response.content_type = "application/json"
@@ -73,13 +83,90 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         bottle.response.content_type = "application/json"
         return json.dumps(stats)
 
+    DEFAULT_TARGET_STACK = "Kotlin, Jetpack Compose, React, Next.js, TypeScript, Node.js, Express, MySQL, Tailwind CSS, Junior / Entry"
+
+    @app.route("/api/settings", method=["GET", "OPTIONS"])
+    def api_get_all_settings():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        settings = get_all_user_settings(db_path)
+        if "target_stack" not in settings:
+            settings["target_stack"] = DEFAULT_TARGET_STACK
+        bottle.response.content_type = "application/json"
+        return json.dumps(settings)
+
+    @app.route("/api/settings", method=["POST", "PUT"])
+    def api_save_settings():
+        data = bottle.request.json or {}
+        for k, v in data.items():
+            val_str = json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v)
+            set_user_setting(db_path, str(k), val_str)
+        settings = get_all_user_settings(db_path)
+        if "target_stack" not in settings:
+            settings["target_stack"] = DEFAULT_TARGET_STACK
+        bottle.response.content_type = "application/json"
+        return json.dumps({"success": True, "settings": settings})
+
+    @app.route("/api/settings/stack", method=["GET", "OPTIONS"])
+    def api_get_stack_setting():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        stack = get_user_setting(db_path, "target_stack", DEFAULT_TARGET_STACK)
+        bottle.response.content_type = "application/json"
+        return json.dumps({"stack": stack})
+
+    @app.route("/api/settings/stack", method=["POST", "PUT"])
+    def api_save_stack_setting():
+        data = bottle.request.json or {}
+        stack = data.get("stack", "")
+        if isinstance(stack, list):
+            stack = ", ".join(str(s).strip() for s in stack if str(s).strip())
+        elif isinstance(stack, str):
+            stack = stack.strip()
+
+        set_user_setting(db_path, "target_stack", stack)
+        bottle.response.content_type = "application/json"
+        return json.dumps({"success": True, "stack": stack})
+
+    @app.route("/api/notify/daily", method=["GET", "POST"])
+    def api_notify_daily():
+        try:
+            from scripts.daily_notifier import send_daily_email
+            result = send_daily_email(db_path)
+        except Exception as e:
+            result = {"success": False, "error": str(e)}
+        bottle.response.content_type = "application/json"
+        return json.dumps(result)
+
+    @app.route("/api/sync/status", method="GET")
+    def api_sync_status():
+        bottle.response.content_type = "application/json"
+        telemetry = aggregator.get_telemetry()
+        telemetry["last_result"] = aggregator.last_sync_result
+        return json.dumps(telemetry)
+
     @app.route("/api/sync", method=["POST", "OPTIONS"])
     def api_sync():
+        if bottle.request.method == "OPTIONS":
+            return ""
         data = bottle.request.json or {}
         keywords = data.get("keywords")
+        is_background = data.get("background", False) or (bottle.request.query.get("background") in ("1", "true"))
+        force = data.get("force", False)
+
         if isinstance(keywords, str):
             keywords = [k.strip() for k in keywords.split(",") if k.strip()]
-        stats = aggregator.run_sync(queries=keywords if keywords else None)
+
+        if is_background:
+            started = aggregator.start_background_sync(queries=keywords if keywords else None, force=force)
+            bottle.response.content_type = "application/json"
+            return json.dumps({
+                "status": "started" if started else "already_syncing",
+                "is_syncing": True,
+                "message": "Background sync started." if started else "Sync already running in background."
+            })
+
+        stats = aggregator.run_sync(queries=keywords if keywords else None, force=force)
         bottle.response.content_type = "application/json"
         return json.dumps(stats)
 

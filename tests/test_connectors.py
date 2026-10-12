@@ -76,5 +76,29 @@ class TestConnectors(unittest.TestCase):
             jobs = adapter.fetch()
             self.assertIsInstance(jobs, list)
 
+    @patch("urllib.request.urlopen")
+    def test_onlinejobs_parsing(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'''
+        <div class="jobpost-cat-box">
+            <h4>Full Stack Web Developer<span class="badge">Full Time</span></h4>
+            <p class="fs-13" data-temp="2026-10-12 10:00:00">Posted on 2026-10-12</p>
+            <dd class="col">$1,500/month</dd>
+            <div class="desc">Company: Apex Digital Labs. We are hiring a full stack developer... <a href="/jobseekers/job/apex-123">See More</a></div>
+        </div>
+        '''
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        from src.connectors.ph_jobs import OnlineJobsConnector
+        connector = OnlineJobsConnector()
+        jobs = connector.fetch()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].title, "Full Stack Web Developer")
+        self.assertEqual(jobs[0].company, "Apex Digital Labs")
+        self.assertEqual(jobs[0].salary, "$1,500/month")
+        self.assertEqual(jobs[0].tier, 1)
+        self.assertEqual(jobs[0].platform, "OnlineJobs.ph")
+        self.assertEqual(jobs[0].job_url, "https://www.onlinejobs.ph/jobseekers/job/apex-123")
+
 if __name__ == "__main__":
     unittest.main()

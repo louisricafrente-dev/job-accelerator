@@ -1,9 +1,10 @@
 import io
 import csv
+import json
 import sqlite3
 import os
 from typing import Any, Dict, List, Optional, Tuple
-from src.models import Job
+from src.models import Job, normalize_date
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -23,8 +24,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     pipeline_stage TEXT DEFAULT 'applied',
     follow_up_date TEXT,
     notes TEXT,
+    sources TEXT DEFAULT '[]',
     applied_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS user_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
@@ -49,10 +56,48 @@ def init_db(db_path: str = "data/jobs.db") -> None:
         conn.execute("ALTER TABLE jobs ADD COLUMN pipeline_stage TEXT DEFAULT 'applied';")
     if "follow_up_date" not in existing_cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN follow_up_date TEXT;")
+    if "sources" not in existing_cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN sources TEXT DEFAULT '[]';")
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_stage ON jobs(pipeline_stage);")
+
+    # Safe backfill for legacy unclassified junior/entry opportunities
+    try:
+        from src.classifier import classify_experience_level
+        cursor.execute("SELECT id, title, experience_level FROM jobs WHERE experience_level != 'Junior / Entry';")
+        legacy_rows = cursor.fetchall()
+        to_update = []
+        for row in legacy_rows:
+            jid, title, old_lvl = row[0], row[1], row[2]
+            new_lvl = classify_experience_level(title)
+            if new_lvl == "Junior / Entry" and old_lvl != "Junior / Entry":
+                to_update.append((new_lvl, jid))
+        if to_update:
+            cursor.executemany("UPDATE jobs SET experience_level = ? WHERE id = ?;", to_update)
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
+
+def get_user_setting(db_path: str, key: str, default: Optional[str] = None) -> Optional[str]:
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM user_settings WHERE key = ?;", (key,))
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row else default
+
+def set_user_setting(db_path: str, key: str, value: str) -> bool:
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO user_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;",
+        (key, value)
+    )
+    conn.commit()
+    conn.close()
+    return True
 
 def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
     conn = sqlite3.connect(db_path)
@@ -61,30 +106,99 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
     skipped = 0
     cursor = conn.cursor()
     for job in jobs:
+        norm_date = normalize_date(job.date_posted) if job.date_posted else ""
+        canonical_co = job.company.strip().lower()
+        canonical_title = job.title.strip().lower()
+
         cursor.execute(
             """
-            INSERT INTO jobs (dedup_hash, title, company, location, platform, tier, job_url, salary, role_category, experience_level, date_posted, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')
-            ON CONFLICT(dedup_hash) DO NOTHING;
+            SELECT id, platform, job_url, salary, date_posted, sources, status
+            FROM jobs
+            WHERE lower(trim(company)) = ? AND lower(trim(title)) = ?
+            ORDER BY id DESC
+            LIMIT 1;
             """,
-            (
-                job.dedup_hash,
-                job.title,
-                job.company,
-                job.location,
-                job.platform,
-                job.tier,
-                job.job_url,
-                job.salary,
-                job.role_category,
-                job.experience_level,
-                job.date_posted,
-            ),
+            (canonical_co, canonical_title),
         )
-        if cursor.rowcount > 0:
-            added += 1
+        existing = cursor.fetchone()
+        if existing:
+            # Aggregate source platform and link
+            try:
+                sources_list = json.loads(existing["sources"]) if existing["sources"] else []
+            except Exception:
+                sources_list = []
+            if not sources_list:
+                sources_list = [{"platform": existing["platform"], "url": existing["job_url"]}]
+
+            already_present = any(
+                s.get("platform", "").lower() == job.platform.lower() or s.get("url") == job.job_url
+                for s in sources_list
+            )
+            if not already_present:
+                sources_list.append({"platform": job.platform, "url": job.job_url})
+
+            new_salary = job.salary or existing["salary"] or ""
+
+            # Check if incoming listing has a newer date or fresh date vs empty
+            existing_date = existing["date_posted"] or ""
+            if norm_date and existing_date:
+                is_newer_date = norm_date > existing_date
+                new_date = norm_date if is_newer_date else existing_date
+            else:
+                is_newer_date = bool(norm_date and not existing_date)
+                new_date = norm_date or existing_date
+
+            existing_status = existing["status"]
+            is_new_source = not already_present
+            is_new_post = is_newer_date or is_new_source
+
+            # Re-post / Archive handling:
+            # 1. If previously archived ('ignored') and a new post arrives (newer date or new platform),
+            #    bring it out again to Inbox ('new') so the candidate never misses refreshed opportunities!
+            # 2. If 'new', keep in Inbox with updated date and sources.
+            # 3. If 'applied' or 'saved', preserve applicant's tracking state.
+            if existing_status == "ignored" and is_new_post:
+                target_status = "new"
+                added += 1
+            else:
+                target_status = existing_status
+                skipped += 1
+
+            cursor.execute(
+                """
+                UPDATE jobs
+                SET sources = ?, salary = ?, date_posted = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (json.dumps(sources_list), new_salary, new_date, target_status, existing["id"]),
+            )
         else:
-            skipped += 1
+            initial_sources = json.dumps([{"platform": job.platform, "url": job.job_url}])
+            cursor.execute(
+                """
+                INSERT INTO jobs (dedup_hash, title, company, location, platform, tier, job_url, salary, role_category, experience_level, date_posted, status, sources)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
+                ON CONFLICT(dedup_hash) DO NOTHING;
+                """,
+                (
+                    job.dedup_hash,
+                    job.title,
+                    job.company,
+                    job.location,
+                    job.platform,
+                    job.tier,
+                    job.job_url,
+                    job.salary,
+                    job.role_category,
+                    job.experience_level,
+                    norm_date,
+                    initial_sources,
+                ),
+            )
+            if cursor.rowcount > 0:
+                added += 1
+            else:
+                skipped += 1
     conn.commit()
     conn.close()
     return added, skipped
@@ -99,6 +213,7 @@ def get_jobs(
     date_filter: Optional[str] = None,
     has_salary: bool = False,
     remote_only: bool = False,
+    hide_senior: bool = False,
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
@@ -108,8 +223,14 @@ def get_jobs(
     params: List[Any] = []
 
     if status:
-        clauses.append("status = ?")
-        params.append(status)
+        if "," in status:
+            statuses = [s.strip() for s in status.split(",") if s.strip()]
+            placeholders = ",".join(["?"] * len(statuses))
+            clauses.append(f"status IN ({placeholders})")
+            params.extend(statuses)
+        else:
+            clauses.append("status = ?")
+            params.append(status)
     if role_category and role_category != "All":
         rc = role_category.strip()
         if rc == "Frontend":
@@ -167,8 +288,44 @@ def get_jobs(
             clauses.append("(role_category = ? OR role_category = 'Both' OR lower(title) LIKE ?)")
             params.extend([rc, f"%{rc.lower()}%"])
     if experience_level and experience_level != "All":
-        clauses.append("experience_level = ?")
-        params.append(experience_level)
+        raw_levels = [l.strip() for l in experience_level.split(",") if l.strip() and l.strip() != "All"]
+        if raw_levels:
+            level_clauses = []
+            for el in raw_levels:
+                if el in ("Junior / Entry", "Junior", "Entry", "Junior / Entry Level"):
+                    senior_guard = "lower(title) NOT LIKE '%senior%' AND lower(title) NOT LIKE '%sr%' AND lower(title) NOT LIKE '%lead%' AND lower(title) NOT LIKE '%director%' AND lower(title) NOT LIKE '%manager%'"
+                    roman_guard = "lower(title) NOT LIKE '%engineer ii%' AND lower(title) NOT LIKE '%developer ii%' AND lower(title) NOT LIKE '%programmer ii%'"
+                    jr_sub = [
+                        "experience_level = 'Junior / Entry'",
+                        f"(lower(title) LIKE '%junior%' AND {senior_guard})",
+                        f"(lower(title) LIKE '%jr%' AND lower(title) NOT LIKE '%jr-%' AND lower(title) NOT LIKE '%project%' AND {senior_guard})",
+                        f"(lower(title) LIKE '%entry level%' OR lower(title) LIKE '%entry-level%')",
+                        f"(lower(title) LIKE '%associate%' AND (lower(title) LIKE '%developer%' OR lower(title) LIKE '%engineer%' OR lower(title) LIKE '%software%' OR lower(title) LIKE '%qa%' OR lower(title) LIKE '%web%') AND {senior_guard})",
+                        f"(lower(title) LIKE '%intern%' AND lower(title) NOT LIKE '%internal%' AND lower(title) NOT LIKE '%international%' AND {senior_guard})",
+                        f"(lower(title) LIKE '%trainee%' AND {senior_guard})",
+                        f"(lower(title) LIKE '%apprentice%' AND {senior_guard})",
+                        f"(lower(title) LIKE '%fresh grad%' AND {senior_guard})",
+                        f"(lower(title) LIKE '%early career%' AND {senior_guard})",
+                        f"(lower(title) LIKE '%ojt%' AND {senior_guard})",
+                        f"(lower(title) LIKE '%engineer i%' AND {senior_guard} AND {roman_guard})",
+                        f"(lower(title) LIKE '%developer i%' AND {senior_guard} AND {roman_guard})",
+                        f"(lower(title) LIKE '%programmer i%' AND {senior_guard} AND {roman_guard})",
+                        f"(lower(title) LIKE '%0-1 year%' AND {senior_guard})",
+                        f"(lower(title) LIKE '%0-2 year%' AND {senior_guard})"
+                    ]
+                    level_clauses.append(f"({' OR '.join(jr_sub)})")
+                elif el in ("Senior / Lead", "Senior", "Lead"):
+                    level_clauses.append("(experience_level = 'Senior / Lead' OR lower(title) LIKE '%senior%' OR lower(title) LIKE '%sr%' OR lower(title) LIKE '%lead%' OR lower(title) LIKE '%principal%')")
+                elif el in ("Mid-Level", "Mid"):
+                    level_clauses.append("(experience_level = 'Mid-Level' OR lower(title) LIKE '%engineer ii%' OR lower(title) LIKE '%developer ii%')")
+                else:
+                    level_clauses.append("experience_level = ?")
+                    params.append(el)
+            if level_clauses:
+                clauses.append(f"({' OR '.join(level_clauses)})")
+
+    if hide_senior:
+        clauses.append("(experience_level != 'Senior / Lead' AND lower(title) NOT LIKE '%senior%' AND lower(title) NOT LIKE '%sr%' AND lower(title) NOT LIKE '%lead%' AND lower(title) NOT LIKE '%principal%' AND lower(title) NOT LIKE '%staff%' AND lower(title) NOT LIKE '%architect%')")
     if tier:
         clauses.append("tier = ?")
         params.append(tier)
@@ -184,7 +341,8 @@ def get_jobs(
             params.extend([query_param, query_param, query_param, query_param, query_param])
 
     if date_filter and date_filter != "all":
-        effective_date = "COALESCE(NULLIF(substr(date_posted, 1, 10), ''), date(created_at))"
+        clauses.append("date_posted GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'")
+        effective_date = "substr(date_posted, 1, 10)"
         if date_filter == "today":
             clauses.append(f"{effective_date} >= date('now', 'localtime')")
         elif date_filter == "3days":
@@ -195,11 +353,22 @@ def get_jobs(
             clauses.append(f"{effective_date} >= date('now', '-14 days')")
 
     where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    query = f"SELECT * FROM jobs {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?"
+    query = f"SELECT * FROM jobs {where_sql} ORDER BY COALESCE(date_posted, '') DESC, updated_at DESC, id DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
     cursor = conn.execute(query, params)
-    rows = [dict(row) for row in cursor.fetchall()]
+    rows = []
+    for row in cursor.fetchall():
+        d = dict(row)
+        raw_sources = d.get("sources")
+        if raw_sources:
+            try:
+                d["sources"] = json.loads(raw_sources)
+            except Exception:
+                d["sources"] = [{"platform": d["platform"], "url": d["job_url"]}]
+        else:
+            d["sources"] = [{"platform": d["platform"], "url": d["job_url"]}]
+        rows.append(d)
     conn.close()
     return rows
 
@@ -318,4 +487,38 @@ def get_stats(db_path: str) -> Dict[str, Any]:
         "by_level": level_counts,
         "by_stage": stage_counts,
     }
+
+def get_user_setting(db_path: str, key: str, default: Optional[str] = None) -> Optional[str]:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM user_settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row[0] is not None:
+        return row[0]
+    return default
+
+def set_user_setting(db_path: str, key: str, value: str) -> bool:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO user_settings (key, value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+        """,
+        (key, value),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+def get_all_user_settings(db_path: str) -> Dict[str, str]:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value FROM user_settings")
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in rows}
+
 

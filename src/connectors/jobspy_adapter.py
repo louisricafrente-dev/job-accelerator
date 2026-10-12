@@ -20,24 +20,31 @@ class JobSpyAdapter(BaseConnector):
                 search_term=query,
                 location=location,
                 results_wanted=20,
-                country_indeed="philippines" if "indeed" in self.site_name else None
+                country_indeed="philippines" if "indeed" in self.site_name else None,
+                hours_old=168
             )
+            import pandas as pd
             for _, row in df.iterrows():
-                title = str(row.get("title", ""))
-                company = str(row.get("company", ""))
-                url = str(row.get("job_url", ""))
-                salary = str(row.get("min_amount", "")) if row.get("min_amount") else ""
+                title = str(row.get("title", "")).strip()
+                company = str(row.get("company", "")).strip()
+                url = str(row.get("job_url", "")).strip()
+                raw_loc = row.get("location")
+                loc = location if pd.isna(raw_loc) or str(raw_loc).lower() in ("nan", "none", "") else str(raw_loc).strip()
+                raw_sal = row.get("min_amount")
+                salary = "" if pd.isna(raw_sal) or str(raw_sal).lower() in ("nan", "none", "") else str(raw_sal).strip()
+                raw_date = row.get("date_posted")
+                date_str = "" if pd.isna(raw_date) or str(raw_date).lower() in ("nan", "none", "") else str(raw_date).strip()
                 jobs.append(Job(
                     title=title,
                     company=company,
-                    location=str(row.get("location", location)),
+                    location=loc,
                     platform=self.platform,
                     tier=self.tier,
                     job_url=url,
                     salary=salary,
                     role_category=classify_role(title),
                     experience_level=classify_experience_level(title),
-                    date_posted=str(row.get("date_posted", ""))
+                    date_posted=date_str
                 ))
         except Exception as e:
             logger.error(f"[{self.platform}] fetch failed: {e}")

@@ -110,38 +110,127 @@ class JobStreetConnector(BaseConnector):
         try:
             from curl_cffi import requests as cffi_requests
             from bs4 import BeautifulSoup
-            clean_q = urllib.parse.quote(query.lower().strip().replace(" ", "-"))
-            url = f"https://www.jobstreet.com.ph/{clean_q}-jobs"
-            resp = cffi_requests.get(url, impersonate="chrome120", timeout=12)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for art in soup.find_all("article"):
-                    title_a = art.find("a", {"data-automation": "jobTitle"}) or art.find("a")
-                    if not title_a:
+
+            queries = [query]
+            if query.lower() in ("developer", "software developer", "software engineer", "dev"):
+                queries.append("junior-developer")
+
+            seen_urls = set()
+            for q_term in queries:
+                clean_q = urllib.parse.quote(q_term.lower().strip().replace(" ", "-"))
+                url = f"https://www.jobstreet.com.ph/{clean_q}-jobs"
+                try:
+                    resp = cffi_requests.get(url, impersonate="chrome120", timeout=12)
+                    if resp.status_code == 200:
+                        soup = BeautifulSoup(resp.text, "html.parser")
+                        for art in soup.find_all("article"):
+                            title_a = art.find("a", {"data-automation": "jobTitle"}) or art.find("a")
+                            if not title_a:
+                                continue
+                            title = title_a.text.strip()
+                            if not title:
+                                continue
+                            href = title_a.get("href", "")
+                            if href and not href.startswith("http"):
+                                href = "https://www.jobstreet.com.ph" + href
+                            if href in seen_urls:
+                                continue
+                            seen_urls.add(href)
+                            comp_a = art.find("a", {"data-automation": "jobCompany"})
+                            comp = comp_a.text.strip() if comp_a else "Company Confidential"
+                            loc_a = art.find("a", {"data-automation": "jobLocation"})
+                            loc = loc_a.text.strip() if loc_a else "Philippines"
+                            sal_span = art.find("span", {"data-automation": "jobSalary"})
+                            sal = sal_span.text.strip() if sal_span else ""
+                            date_elem = art.find(attrs={"data-automation": "jobListingDate"}) or art.find("time")
+                            date_val = date_elem.text.strip() if date_elem else ""
+                            jobs.append(Job(
+                                title=title,
+                                company=comp,
+                                location=loc,
+                                platform=self.platform,
+                                tier=self.tier,
+                                job_url=href,
+                                salary=sal,
+                                role_category=classify_role(title),
+                                experience_level=classify_experience_level(title),
+                                date_posted=date_val
+                            ))
+                except Exception as inner_e:
+                    logger.warning(f"[{self.platform}] sub-query '{q_term}' fetch notice: {inner_e}")
+        except Exception as e:
+            logger.error(f"[{self.platform}] fetch failed: {e}")
+        return jobs
+
+
+class OnlineJobsConnector(BaseConnector):
+    platform = "OnlineJobs.ph"
+    tier = 1
+
+    def fetch(self, query: str = "developer", location: str = "philippines") -> List[Job]:
+        jobs: List[Job] = []
+        try:
+            from bs4 import BeautifulSoup
+
+            clean_q = urllib.parse.quote(query.strip())
+            url = f"https://www.onlinejobs.ph/jobseekers/jobsearch?jobkeyword={clean_q}&fullTime=on&partTime=on"
+            req = urllib.request.Request(url, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                html = resp.read().decode("utf-8")
+                soup = BeautifulSoup(html, "html.parser")
+                cards = soup.select(".jobpost-cat-box")
+                for c in cards:
+                    h4 = c.select_one("h4")
+                    if not h4:
                         continue
-                    title = title_a.text.strip()
+                    badge = h4.select_one(".badge")
+                    if badge:
+                        badge.extract()
+                    title = h4.get_text(strip=True)
                     if not title:
                         continue
-                    href = title_a.get("href", "")
-                    if href and not href.startswith("http"):
-                        href = "https://www.jobstreet.com.ph" + href
-                    comp_a = art.find("a", {"data-automation": "jobCompany"})
-                    comp = comp_a.text.strip() if comp_a else "Company Confidential"
-                    loc_a = art.find("a", {"data-automation": "jobLocation"})
-                    loc = loc_a.text.strip() if loc_a else "Philippines"
-                    sal_span = art.find("span", {"data-automation": "jobSalary"})
-                    sal = sal_span.text.strip() if sal_span else ""
+
+                    a = c.find("a", href=lambda h: h and "/jobseekers/job/" in h)
+                    link = a["href"] if a else ""
+                    if link and not link.startswith("http"):
+                        link = "https://www.onlinejobs.ph" + link
+
+                    sal_el = c.select_one("dd.col")
+                    salary = sal_el.get_text(strip=True) if sal_el else ""
+
+                    date_el = c.select_one("p.fs-13")
+                    date_val = ""
+                    if date_el:
+                        date_val = date_el.get("data-temp", "")[:10]
+                        if not date_val:
+                            raw_t = date_el.get_text(strip=True)
+                            if "Posted on " in raw_t:
+                                date_val = raw_t.replace("Posted on ", "")[:10]
+
+                    company = "Direct Client (OnlineJobs.ph)"
+                    desc_el = c.select_one(".desc")
+                    if desc_el:
+                        desc_text = desc_el.get_text()
+                        for prefix in ("Company:", "About Us:", "Client:"):
+                            if prefix in desc_text:
+                                parts = desc_text.split(prefix)
+                                if len(parts) > 1:
+                                    first_line = parts[1].strip().split("\n")[0].split(".")[0].strip()
+                                    if 2 < len(first_line) < 40:
+                                        company = first_line
+                                        break
+
                     jobs.append(Job(
                         title=title,
-                        company=comp,
-                        location=loc,
+                        company=company,
+                        location="Philippines (Remote / Direct Client)",
                         platform=self.platform,
                         tier=self.tier,
-                        job_url=href,
-                        salary=sal,
+                        job_url=link,
+                        salary=salary,
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=""
+                        date_posted=date_val
                     ))
         except Exception as e:
             logger.error(f"[{self.platform}] fetch failed: {e}")

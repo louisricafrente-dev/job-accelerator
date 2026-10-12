@@ -1,0 +1,6 @@
+bottle>=0.12.25
+beautifulsoup4>=4.12.0
+curl_cffi>=0.7.0
+python-jobspy>=1.1.50
+lxml>=5.0.0
+requests>=2.31.0

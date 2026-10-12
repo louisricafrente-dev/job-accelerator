@@ -9,6 +9,12 @@ class TestClassifier(unittest.TestCase):
         self.assertEqual(classify_experience_level("Associate Web Developer"), "Junior / Entry")
         self.assertEqual(classify_experience_level("Data Science Intern"), "Junior / Entry")
         self.assertEqual(classify_experience_level("Fresh Graduate Web Developer"), "Junior / Entry")
+        self.assertEqual(classify_experience_level("Software Engineer I"), "Junior / Entry")
+        self.assertEqual(classify_experience_level("Early Career Software Engineer"), "Junior / Entry")
+        self.assertEqual(classify_experience_level("OJT Android Developer"), "Junior / Entry")
+        self.assertEqual(classify_experience_level("Software Developer Trainee"), "Junior / Entry")
+        self.assertEqual(classify_experience_level("Junior / Senior Full Stack Developer"), "Junior / Entry")
+        self.assertEqual(classify_experience_level("0-2 Years Experience Web Developer"), "Junior / Entry")
 
     def test_experience_level_senior(self):
         self.assertEqual(classify_experience_level("Senior Backend Engineer"), "Senior / Lead")
@@ -16,6 +22,12 @@ class TestClassifier(unittest.TestCase):
         self.assertEqual(classify_experience_level("Lead Data Architect"), "Senior / Lead")
         self.assertEqual(classify_experience_level("Principal Software Engineer"), "Senior / Lead")
         self.assertEqual(classify_experience_level("Engineering Manager"), "Senior / Lead")
+        self.assertEqual(classify_experience_level("JR-213105 BI Consultant Senior"), "Senior / Lead")
+        self.assertEqual(classify_experience_level("Director, Financial Reporting & Internal Controls"), "Senior / Lead")
+        self.assertEqual(classify_experience_level("Contracts Manager - International"), "Senior / Lead")
+
+    def test_false_positive_prevention(self):
+        self.assertNotEqual(classify_experience_level("Data Entry Administrator"), "Junior / Entry")
 
     def test_experience_level_mid(self):
         self.assertEqual(classify_experience_level("Mid-Level React Developer"), "Mid-Level")

@@ -4,183 +4,514 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Job Application Accelerator</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=2.1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
+  <!-- Top Navigation & Global Header -->
   <header class="app-header">
-    <div class="header-container">
-      <div class="brand">
-        <div class="brand-title">
-          <span class="icon">⚡</span>
-          <h1>Job Application Accelerator</h1>
+    <div class="header-inner">
+      <div class="brand-cluster">
+        <div class="brand-badge">
+          <span class="live-pulse"></span>
+          <h1 class="brand-name">Job Application Accelerator</h1>
         </div>
-        <p class="tagline">High-velocity multi-platform aggregator across 12 boards</p>
+        <span class="brand-divider">/</span>
+        <span class="brand-sub">Multi-Platform Aggregator</span>
       </div>
-      <div class="stats-bar">
-        <div class="stat-pill"><span class="num" id="stat-new">0</span> <span class="lbl">New</span></div>
-        <div class="stat-pill"><span class="num" id="stat-saved">0</span> <span class="lbl">Saved</span></div>
-        <div class="stat-pill success"><span class="num" id="stat-applied">0</span> <span class="lbl">Applied</span></div>
-      </div>
-    </div>
-    <div class="sync-config-row">
-      <div class="sync-config-container">
-        <div class="sync-config-top">
-          <div class="sync-input-group">
-            <label for="user-stack-input" class="sync-kw-label">🎯 Target Skills & Tech Stack:</label>
-            <input type="text" id="user-stack-input" value="React, Python, TypeScript, Node.js, SQL, Junior" placeholder="Click skill toggles below or type custom skills (comma-separated)..." oninput="handleStackInputChange()">
-          </div>
-          <div class="sync-btn-group">
-            <button id="filter-by-skills-btn" class="btn-filter-skills" onclick="toggleFilterBySkills()" title="Toggle: Show only jobs matching my selected skills">
-              <span id="filter-skills-icon">🎯</span>
-              <span id="filter-skills-text">Filter Feed by Skills</span>
-            </button>
-            <button id="sync-btn" class="btn-sync" onclick="triggerSync()" title="Scrape 12 job boards using selected target skills">
-              <span class="spin-icon" id="sync-spinner">🔄</span>
-              <span id="sync-text">Sync 12 Boards</span>
-            </button>
-          </div>
-        </div>
 
-        <!-- Toggleable Skill Chips Bar -->
-        <div class="skill-chips-row">
-          <div class="chips-label-group">
-            <span class="chips-label">⚡ Quick Toggles:</span>
-            <span class="chips-subtitle">Click to toggle skills for live matching & board sync</span>
-          </div>
-          <div class="skill-chips-container" id="skill-chips-container">
-            <!-- Dynamic toggle pills populated via JS -->
-          </div>
-          <div class="chips-controls">
-            <button type="button" class="btn-chip-action" onclick="selectAllSkills()" title="Select all preset skills">Select All</button>
-            <button type="button" class="btn-chip-action" onclick="clearAllSkills()" title="Clear selected skills">Clear All</button>
-          </div>
-        </div>
+      <!-- Quick Status Segmented Nav -->
+      <nav class="status-nav" aria-label="Status filters">
+        <button class="status-tab active" data-val="new" onclick="setStatus('new', this)">
+          <span class="tab-label">Inbox</span>
+          <span class="tab-count" id="stat-new">0</span>
+        </button>
+        <button class="status-tab" data-val="saved" onclick="setStatus('saved', this)">
+          <span class="tab-label">Saved</span>
+          <span class="tab-count" id="stat-saved">0</span>
+        </button>
+        <button class="status-tab" data-val="applied" onclick="setStatus('applied', this)">
+          <span class="tab-label">Pipeline</span>
+          <span class="tab-count" id="stat-applied">0</span>
+        </button>
+        <button class="status-tab" data-val="ignored" onclick="setStatus('ignored', this)">
+          <span class="tab-label">Archived</span>
+          <span class="tab-count" id="stat-ignored">0</span>
+        </button>
+      </nav>
+
+      <!-- Header Action Controls -->
+      <div class="header-actions">
+        <button id="toggle-stack-btn" class="btn-subtle" onclick="toggleStackDrawer()" title="Configure your target tech skills for scoring and sync">
+          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 20h9"/>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
+          <span class="btn-text">Stack Matrix</span>
+          <span class="active-skills-count" id="active-skills-count">6</span>
+        </button>
+
+        <button id="btn-sync-telemetry" class="btn-subtle" onclick="toggleSyncLogModal()" title="View live board sync telemetry & logs">
+          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"/>
+            <line x1="12" y1="19" x2="20" y2="19"/>
+          </svg>
+          <span class="btn-text">Sync Logs</span>
+        </button>
+
+        <button id="btn-va-hub" class="btn-subtle" onclick="toggleVaHub()" title="Open Virtual Assistant Remote Training & Resource Hub">
+          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+          <span class="btn-text">VA Hub</span>
+        </button>
+
+        <button id="sync-btn" class="btn-primary" onclick="triggerSync()" title="Scrape 15 job boards including OnlineJobs.ph for latest postings">
+          <svg class="icon-svg spin-icon" id="sync-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+            <path d="M16 21h5v-5"/>
+          </svg>
+          <span id="sync-text">Sync 15 Boards</span>
+        </button>
       </div>
     </div>
   </header>
 
-  <div class="main-layout">
-    <!-- Controls Bar -->
-    <section class="controls-panel">
-      <!-- Search row -->
-      <div class="search-box">
-        <span class="search-icon">🔍</span>
-        <input type="text" id="search-input" placeholder="Search keywords, tech stack, or company (type '/' to focus)..." autocomplete="off" oninput="handleSearchInput()">
-        <button type="button" class="btn-quick-search-skills" onclick="applySkillsToSearch()" title="Copy active target skills into search">
-          ⚡ Search My Skills
-        </button>
-        <span id="search-count" class="search-count"></span>
+  <!-- Collapsible Stack & Skills Configuration Drawer -->
+  <section id="stack-drawer" class="stack-drawer" style="display: none;">
+    <div class="stack-drawer-inner">
+      <div class="drawer-header">
+        <div class="drawer-title-group">
+          <div class="drawer-title-row">
+            <h2 class="drawer-heading">Target Stack &amp; Skill Profile</h2>
+            <span class="active-badge-pill" id="matrix-active-count-badge">6 Active</span>
+          </div>
+          <p class="drawer-sub">Custom keywords and toggled skills dynamically score opportunities, personalize pitches, and drive the 15-board sync.</p>
+        </div>
+        <div class="drawer-actions">
+          <button type="button" class="btn-text-action" onclick="resetToCandidateProfile()" title="Load verified candidate stack">Reset to Profile</button>
+          <span class="action-divider">|</span>
+          <button type="button" class="btn-text-action" onclick="clearAllSkills()">Clear All</button>
+          <button type="button" class="btn-close-drawer" onclick="toggleStackDrawer()" aria-label="Close drawer">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
-      <!-- Filters grid -->
-      <div class="filters-grid">
-        <!-- Status View -->
-        <div class="filter-group">
-          <span class="group-label">Status</span>
-          <div class="pill-group" id="status-group">
-            <button class="pill active" data-val="new" onclick="setStatus('new', this)">📥 Inbox</button>
-            <button class="pill" data-val="saved" onclick="setStatus('saved', this)">⭐ Saved</button>
-            <button class="pill" data-val="applied" onclick="setStatus('applied', this)">✅ Applied</button>
-            <button class="pill" data-val="ignored" onclick="setStatus('ignored', this)">✕ Ignored</button>
-          </div>
+      <!-- 1. Dedicated Manual Keyword Input -->
+      <div class="matrix-add-box">
+        <div class="add-keyword-input-wrapper">
+          <svg class="add-kw-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          <input type="text" id="manual-keyword-input" class="manual-keyword-input" 
+                 placeholder="Type any keyword (e.g. Kotlin, Next.js, Media3, Docker, Laravel) and press Enter..." 
+                 autocomplete="off" onkeydown="handleManualKeywordKeyDown(event)">
+        </div>
+        <button type="button" class="btn-add-keyword" onclick="addManualKeyword()" title="Add custom keyword to matrix">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span>Add</span>
+          <kbd class="kbd-hint-inline">↵</kbd>
+        </button>
+      </div>
+
+      <!-- 2. Active Keywords Tag Flex (With 1-Click Remove) -->
+      <div class="active-tags-section">
+        <div class="section-label-row">
+          <span class="matrix-section-title">Active Keywords in Your Target Stack</span>
+          <span class="section-sub-hint">Click &times; to remove any skill</span>
+        </div>
+        <div class="active-tags-flex" id="active-tags-container">
+          <!-- Rendered dynamically by app.js -->
+        </div>
+      </div>
+
+      <!-- 3. Categorized Presets Palette -->
+      <div class="presets-section">
+        <div class="section-label-row">
+          <span class="matrix-section-title">Quick-Add Popular Tech Stacks</span>
+          <span class="section-sub-hint">Click any chip to toggle in/out of active stack</span>
+        </div>
+        <div class="preset-categories-grid" id="preset-categories-container">
+          <!-- Rendered dynamically by app.js -->
+        </div>
+        <div id="skill-chips-container" style="display: none;"></div>
+      </div>
+
+      <!-- Backward-compatible hidden element for sync queries -->
+      <input type="hidden" id="user-stack-input" value="React, Python, TypeScript, Node.js, SQL, Junior">
+    </div>
+  </section>
+
+  <!-- Main Container -->
+  <main class="app-layout">
+    <!-- Filter Deck & Search Bar -->
+    <section class="control-deck">
+      <div class="search-command-bar">
+        <div class="search-input-wrapper">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="m21 21-4.3-4.3"/>
+          </svg>
+          <input type="text" id="search-input" placeholder="Search keywords, tech stack, or company name..." autocomplete="off" oninput="handleSearchInput()">
+          <button id="clear-search-btn" class="clear-search-btn" onclick="clearSearchInput()" aria-label="Clear search" style="display: none;">&times;</button>
+          <kbd class="kbd-hint">/</kbd>
         </div>
 
-        <!-- Experience Level Filter (Requested by user) -->
-        <div class="filter-group">
-          <span class="group-label">Experience Level</span>
-          <div class="pill-group" id="level-group">
-            <button class="pill active" data-val="All" onclick="setLevel('All', this)">All</button>
-            <button class="pill level-junior-btn" data-val="Junior / Entry" onclick="setLevel('Junior / Entry', this)">🌱 Junior / Entry</button>
-            <button class="pill level-mid-btn" data-val="Mid-Level" onclick="setLevel('Mid-Level', this)">⚡ Mid-Level</button>
-            <button class="pill level-senior-btn" data-val="Senior / Lead" onclick="setLevel('Senior / Lead', this)">👑 Senior</button>
-          </div>
-        </div>
+        <div class="quick-filter-toggles">
+          <button id="filter-by-skills-btn" class="toggle-pill-btn" onclick="toggleFilterBySkills()" title="Toggle: Show only jobs matching target stack">
+            <input type="checkbox" id="skills-only-checkbox" onchange="toggleSkillsOnly(this)" style="display: none;">
+            <span class="toggle-indicator"></span>
+            <span>Match Stack Only</span>
+          </button>
 
-        <!-- Role Filter (Expanded for all Software Development Domains) -->
-        <div class="filter-group">
-          <span class="group-label">Target Role</span>
-          <div class="pill-group" id="role-group">
-            <button class="pill active" data-val="All" onclick="setRole('All', this)">All Roles</button>
-            <button class="pill" data-val="Frontend" onclick="setRole('Frontend', this)">💻 Frontend</button>
-            <button class="pill" data-val="Backend" onclick="setRole('Backend', this)">⚙️ Backend</button>
-            <button class="pill" data-val="Full Stack" onclick="setRole('Full Stack', this)">🌐 Full Stack</button>
-            <button class="pill" data-val="Mobile" onclick="setRole('Mobile', this)">📱 Mobile</button>
-            <button class="pill" data-val="DevOps / Cloud" onclick="setRole('DevOps / Cloud', this)">☁️ DevOps / Cloud</button>
-            <button class="pill" data-val="QA / Testing" onclick="setRole('QA / Testing', this)">🧪 QA / Testing</button>
-            <button class="pill" data-val="Data/AI/ML" onclick="setRole('Data/AI/ML', this)">🧠 Data & AI</button>
-            <button class="pill" data-val="Web/Software Dev" onclick="setRole('Web/Software Dev', this)">💻 All Software</button>
-          </div>
-        </div>
-
-        <!-- Date Posted Filter (Requested by user) -->
-        <div class="filter-group">
-          <span class="group-label">Petsa / Date Posted</span>
-          <div class="pill-group" id="date-group">
-            <button class="pill active" data-val="all" onclick="setDateFilter('all', this)">Anytime (Lahat)</button>
-            <button class="pill pill-date-today" data-val="today" onclick="setDateFilter('today', this)">🔥 Today (Ngayong Araw)</button>
-            <button class="pill" data-val="3days" onclick="setDateFilter('3days', this)">Past 3 Days</button>
-            <button class="pill" data-val="7days" onclick="setDateFilter('7days', this)">Past 7 Days</button>
-            <button class="pill" data-val="14days" onclick="setDateFilter('14days', this)">Past 14 Days</button>
-          </div>
-        </div>
-
-        <!-- Quick Toggles -->
-        <div class="filter-group quick-toggles">
-          <label class="toggle-control">
-            <input type="checkbox" id="skills-only-checkbox" onchange="toggleSkillsOnly(this)">
-            <span class="toggle-label">🎯 Target Skills Only</span>
-          </label>
-          <label class="toggle-control">
+          <label class="toggle-switch-label" title="Show only listings with disclosed compensation">
             <input type="checkbox" id="salary-only-checkbox" onchange="toggleSalaryOnly(this)">
-            <span class="toggle-label">💰 Has Salary</span>
+            <span class="switch-box"></span>
+            <span class="switch-text">Disclosed Salary</span>
           </label>
-          <label class="toggle-control">
+
+          <label class="toggle-switch-label" title="Filter to remote positions only">
             <input type="checkbox" id="remote-only-checkbox" onchange="toggleRemoteOnly(this)">
-            <span class="toggle-label">🏠 Remote Only</span>
+            <span class="switch-box"></span>
+            <span class="switch-text">Remote Only</span>
           </label>
-          <label class="toggle-control">
+
+          <label class="toggle-switch-label" title="Suppress senior and lead positions">
             <input type="checkbox" id="hide-senior-checkbox" onchange="toggleHideSenior(this)">
-            <span class="toggle-label">Hide Senior</span>
+            <span class="switch-box"></span>
+            <span class="switch-text">Exclude Senior</span>
           </label>
+        </div>
+      </div>
+
+      <!-- Collapsible Active Stack Matrix Strip -->
+      <div class="active-stack-strip is-collapsed" id="active-stack-strip">
+        <div class="stack-strip-meta">
+          <div class="stack-strip-title" onclick="toggleActiveMatrixCollapse()" style="cursor: pointer;" title="Toggle show/hide active keyword chips">
+            <span class="strip-pulse-dot"></span>
+            <span class="strip-label">ACTIVE STACK MATRIX</span>
+            <span class="strip-badge" id="strip-active-count">0</span>
+            <span class="strip-preview-inline" id="strip-preview-inline"></span>
+          </div>
+          <div class="stack-strip-controls">
+            <button type="button" class="btn-strip-toggle" id="btn-collapse-strip" onclick="toggleActiveMatrixCollapse()" title="Toggle keyword chips view">
+              <svg class="icon-svg toggle-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+              <span id="strip-collapse-label">Show Chips</span>
+            </button>
+            <button type="button" class="btn-strip-action" onclick="toggleStackDrawer()" title="Open Matrix Drawer to add custom keywords or click presets">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+              <span>Add / Edit Matrix</span>
+            </button>
+            <button type="button" class="btn-strip-subtle" onclick="resetToCandidateProfile()" title="Reset to verified candidate profile (Louis Michael Ricafrente)">
+              Reset Profile
+            </button>
+          </div>
+        </div>
+        <div class="stack-strip-chips" id="strip-active-chips">
+          <!-- Dynamically populated with active skills -->
+        </div>
+      </div>
+
+      <!-- Segmented Category Filters -->
+      <div class="filter-strip">
+        <!-- Role Discipline -->
+        <div class="filter-cell">
+          <span class="filter-title">Role Focus</span>
+          <div class="chip-carousel" id="role-group">
+            <button class="filter-chip active" data-val="All" onclick="setRole('All', this)">All Roles</button>
+            <button class="filter-chip" data-val="Frontend" onclick="setRole('Frontend', this)">Frontend</button>
+            <button class="filter-chip" data-val="Backend" onclick="setRole('Backend', this)">Backend</button>
+            <button class="filter-chip" data-val="Full Stack" onclick="setRole('Full Stack', this)">Full Stack</button>
+            <button class="filter-chip" data-val="Mobile" onclick="setRole('Mobile', this)">Mobile</button>
+            <button class="filter-chip" data-val="DevOps / Cloud" onclick="setRole('DevOps / Cloud', this)">DevOps / Cloud</button>
+            <button class="filter-chip" data-val="QA / Testing" onclick="setRole('QA / Testing', this)">QA &amp; Testing</button>
+            <button class="filter-chip" data-val="Data/AI/ML" onclick="setRole('Data/AI/ML', this)">Data &amp; AI</button>
+            <button class="filter-chip" data-val="Web/Software Dev" onclick="setRole('Web/Software Dev', this)">All Engineering</button>
+          </div>
+        </div>
+
+        <!-- Experience & Recency Multi-Filter -->
+        <div class="filter-subgrid">
+          <div class="filter-cell">
+            <div class="filter-cell-header">
+              <span class="filter-title">Seniority</span>
+              <span class="seniority-hint" id="seniority-hint">Multi-select</span>
+            </div>
+            <div class="chip-carousel" id="level-group">
+              <button class="filter-chip active" data-val="All" onclick="setLevel('All', this)">All</button>
+              <button class="filter-chip" data-val="Junior / Entry" onclick="setLevel('Junior / Entry', this)">Junior / Entry</button>
+              <button class="filter-chip" data-val="Mid-Level" onclick="setLevel('Mid-Level', this)">Mid-Level</button>
+              <button class="filter-chip" data-val="Senior / Lead" onclick="setLevel('Senior / Lead', this)">Senior</button>
+            </div>
+          </div>
+
+          <div class="filter-cell">
+            <span class="filter-title">Date Posted</span>
+            <div class="chip-carousel" id="date-group">
+              <button class="filter-chip" data-val="all" onclick="setDateFilter('all', this)">Anytime</button>
+              <button class="filter-chip chip-urgent" data-val="today" onclick="setDateFilter('today', this)">Today</button>
+              <button class="filter-chip" data-val="3days" onclick="setDateFilter('3days', this)">Past 3d</button>
+              <button class="filter-chip active" data-val="7days" onclick="setDateFilter('7days', this)">Past 7d</button>
+              <button class="filter-chip" data-val="14days" onclick="setDateFilter('14days', this)">Past 14d</button>
+            </div>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- Keyboard Shortcuts Hint Bar -->
-    <div class="shortcuts-bar">
-      <span><strong>Keyboard Mode:</strong> <kbd>J</kbd> Next &bull; <kbd>K</kbd> Prev &bull; <kbd>A</kbd> / <kbd>Enter</kbd> Apply Now &bull; <kbd>S</kbd> Save &bull; <kbd>X</kbd> Ignore &bull; <kbd>/</kbd> Search</span>
-    </div>
-
-    <!-- Dedicated Applications Tracker Hub (Active when Applied tab is selected) -->
-    <div id="pipeline-hub-header" class="pipeline-hub-header" style="display: none;">
-      <div class="pipeline-hub-top">
-        <div class="pipeline-hub-info">
-          <div class="pipeline-title-group">
-            <span class="hub-icon">💼</span>
-            <h2>My Applications Tracker Hub</h2>
+    <!-- Virtual Assistant & Remote Freelance Training Hub (Remote Only) -->
+    <section id="va-hub-section" class="va-hub-section" style="display: none;">
+      <div class="va-hub-banner">
+        <div class="va-hub-title-group">
+          <div class="va-title-badge-row">
+            <h2 class="va-hub-title">Virtual Assistant &amp; Remote Freelance Hub</h2>
+            <span class="va-badge-remote">Remote Only</span>
           </div>
-          <p class="pipeline-desc">Manage stages, schedule timely follow-ups, and keep recruiter notes per company.</p>
+          <p class="va-hub-subtitle">
+            Curated Free Government Training (DICT DigitalJobsPH), Core Remote Stack Roadmap, and Direct VA Opportunities.
+          </p>
         </div>
-        <div class="pipeline-hub-actions">
-          <a href="/api/jobs/export/csv?status=applied" class="btn-export-csv" download="my_job_applications.csv">
-            📥 Export to CSV / Excel
+        <div class="va-hub-actions">
+          <button type="button" class="btn-va-filter-action" onclick="filterRemoteVAJobs()" title="Filter job feed to remote VA & admin opportunities">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+            </svg>
+            <span>Filter Remote VA Jobs</span>
+          </button>
+          <button type="button" class="btn-close-va" onclick="toggleVaHub()" aria-label="Close VA Hub">&times;</button>
+        </div>
+      </div>
+
+      <div class="va-cards-grid">
+        <!-- Card 1: Official Free DICT Training -->
+        <div class="va-card">
+          <div class="va-card-header">
+            <span class="va-card-tag dict-tag">Philippine Gov't / DICT</span>
+            <h3 class="va-card-title">DICT DigitalJobsPH Free Virtual Assistance</h3>
+          </div>
+          <p class="va-card-desc">
+            Official free government training program providing hands-on modules in Virtual Assistance, Executive Support, Calendar &amp; Email Management, and Freelancing Basics.
+          </p>
+          <div class="va-card-bullets">
+            <span class="va-pill">Email &amp; Calendar Management</span>
+            <span class="va-pill">Client Invoicing</span>
+            <span class="va-pill">Data Handling</span>
+            <span class="va-pill">Government Certificate</span>
+          </div>
+          <a href="https://dict.gov.ph/" target="_blank" rel="noopener noreferrer" class="va-link-btn">
+            Visit Official DICT Portal &nearr;
           </a>
         </div>
+
+        <!-- Card 2: Core Remote VA Skills Roadmap -->
+        <div class="va-card">
+          <div class="va-card-header">
+            <span class="va-card-tag roadmap-tag">Skills Roadmap</span>
+            <h3 class="va-card-title">Core Remote VA Tech Stack</h3>
+          </div>
+          <p class="va-card-desc">
+            The standard toolset required by US, UK, and Australian clients for general and executive virtual assistants.
+          </p>
+          <div class="va-card-bullets">
+            <span class="va-pill">Google Workspace (Docs, Sheets, Drive)</span>
+            <span class="va-pill">Notion &amp; Trello</span>
+            <span class="va-pill">Asana &amp; ClickUp</span>
+            <span class="va-pill">Slack &amp; Zoom</span>
+            <span class="va-pill">Canva Basics</span>
+          </div>
+          <div class="va-cert-box">
+            <span class="va-cert-label">Free Certifications:</span>
+            <span class="va-cert-sub">HubSpot Email Marketing, Google Workspace Certification</span>
+          </div>
+        </div>
+
+        <!-- Card 3: Tech VA Specialized Bridge -->
+        <div class="va-card">
+          <div class="va-card-header">
+            <span class="va-card-tag tech-tag">High-Yield Path</span>
+            <h3 class="va-card-title">Technical Virtual Assistant (Tech VA)</h3>
+          </div>
+          <p class="va-card-desc">
+            A premium remote specialization where tech background gives an immediate advantage over general VAs.
+          </p>
+          <div class="va-card-bullets">
+            <span class="va-pill">WordPress Maintenance &amp; Updates</span>
+            <span class="va-pill">Zapier / Make.com Automation</span>
+            <span class="va-pill">CRM Integrations (HubSpot, GoHighLevel)</span>
+            <span class="va-pill">DNS, Email Routing &amp; Webhooks</span>
+          </div>
+          <div class="va-rate-hint">
+            <span>Average Remote Rate:</span> <strong>$7 - $15/hr (₱35k - ₱80k/mo)</strong>
+          </div>
+        </div>
+
+        <!-- Card 4: Top Verified VA Agencies in PH -->
+        <div class="va-card">
+          <div class="va-card-header">
+            <span class="va-card-tag agency-tag">Top Agencies</span>
+            <h3 class="va-card-title">Legitimate Remote VA Employers</h3>
+          </div>
+          <p class="va-card-desc">
+            Direct agencies that provide paid training, equipment allowances, and client matching in the Philippines.
+          </p>
+          <div class="va-card-bullets">
+            <span class="va-pill">Cyberbacker PH</span>
+            <span class="va-pill">Athena Executive</span>
+            <span class="va-pill">Pineapple Staffing</span>
+            <span class="va-pill">Virtudesk</span>
+            <span class="va-pill">OnlineJobs.ph Direct</span>
+          </div>
+          <div class="va-tip-footer">
+            <span>Authentic developer credentials remain your core asset; this hub provides immediate remote freelance options.</span>
+          </div>
+        </div>
       </div>
-      <div class="pipeline-stages-summary" id="pipeline-stages-summary">
-        <!-- Dynamic stage breakdown badges rendered here -->
+    </section>
+
+    <!-- Context Bar & Feed Statistics -->
+    <div class="feed-summary-bar">
+      <div class="summary-left">
+        <span id="search-count" class="summary-count">Loading opportunities...</span>
+        <span class="summary-context" id="summary-context"></span>
+      </div>
+      <div class="shortcuts-legend" title="Keyboard navigation enabled">
+        <span class="kbd-guide"><kbd>J</kbd>/<kbd>K</kbd> Navigate</span>
+        <span class="kbd-guide"><kbd>Enter</kbd> Open &amp; Apply</span>
+        <span class="kbd-guide"><kbd>S</kbd> Save</span>
+        <span class="kbd-guide"><kbd>X</kbd> Archive</span>
       </div>
     </div>
 
-    <!-- Job Cards Feed -->
-    <div id="job-feed" class="job-feed">
-      <div class="loading-state">Loading job listings...</div>
+    <!-- Application Pipeline Tracking Stage Hub (Active when Pipeline tab selected) -->
+    <section id="pipeline-hub-header" class="pipeline-hub-header pipeline-hub-container" style="display: none;">
+      <div class="pipeline-banner">
+        <div class="pipeline-info">
+          <h2 class="pipeline-title">Active Applications Pipeline</h2>
+          <p class="pipeline-subtitle">Track recruitment milestones, manage interview notes, and maintain timely follow-up cadences.</p>
+        </div>
+        <a href="/api/jobs/export/csv?status=applied" class="btn-export-csv" download="job_applications.csv">
+          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          <span>Export CSV</span>
+        </a>
+      </div>
+      <div class="pipeline-stages-grid" id="pipeline-stages-summary">
+        <!-- Rendered dynamically by app.js -->
+      </div>
+    </section>
+
+    <!-- Opportunity Cards Stream -->
+    <div id="job-feed" class="job-stream" role="region" aria-label="Job opportunities feed">
+      <div class="state-loading">
+        <div class="loading-spinner"></div>
+        <p>Scanning job opportunities across platforms...</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Sync Telemetry & Board Harvest Log Modal -->
+  <div id="sync-log-modal" class="sync-log-modal-overlay" style="display: none;" onclick="handleModalBackdropClick(event)">
+    <div class="sync-log-modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-title-row">
+            <h2 class="modal-title">Live Multi-Board Harvest Telemetry</h2>
+            <span class="telemetry-badge-count" id="telemetry-board-count-badge">14 Boards Connected</span>
+          </div>
+          <p class="modal-subtitle">Real-time status, harvest metrics, and orchestrator execution feed across all monitored platforms.</p>
+        </div>
+        <div class="modal-actions-group">
+          <button type="button" class="btn-subtle btn-telemetry-action" onclick="fetchSyncTelemetry()" title="Refresh telemetry state">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+            <span>Refresh</span>
+          </button>
+          <button type="button" class="btn-subtle btn-telemetry-action" onclick="copySyncLogs()" title="Copy entire log console to clipboard">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+            <span>Copy Logs</span>
+          </button>
+          <button type="button" class="btn-close-modal" onclick="toggleSyncLogModal()" aria-label="Close modal">&times;</button>
+        </div>
+      </div>
+
+      <!-- Telemetry Overview Stats Bar -->
+      <div class="telemetry-overview-bar">
+        <div class="telemetry-stat-tile">
+          <span class="telemetry-stat-label">Orchestrator State</span>
+          <span class="telemetry-stat-val" id="telemetry-sync-state">Idle</span>
+        </div>
+        <div class="telemetry-stat-tile">
+          <span class="telemetry-stat-label">Total Jobs in DB</span>
+          <span class="telemetry-stat-val" id="telemetry-total-db-jobs">-</span>
+        </div>
+        <div class="telemetry-stat-tile">
+          <span class="telemetry-stat-label">Active Boards</span>
+          <span class="telemetry-stat-val highlight-cyan" id="telemetry-active-boards">14 / 14</span>
+        </div>
+        <div class="telemetry-stat-tile">
+          <span class="telemetry-stat-label">Last Harvest Run</span>
+          <span class="telemetry-stat-val" id="telemetry-last-run-time">Pending</span>
+        </div>
+      </div>
+
+      <!-- 14 Boards Status Grid -->
+      <div class="telemetry-section-title">
+        <span>Monitored Job Boards &amp; API Feeds</span>
+        <span class="telemetry-section-sub">Includes 2 fresh verified remote endpoints (Remotive &amp; Himalayas)</span>
+      </div>
+      <div id="telemetry-boards-grid" class="telemetry-boards-grid">
+        <!-- Rendered dynamically by app.js -->
+      </div>
+
+      <!-- Live Terminal Console Stream -->
+      <div class="telemetry-terminal-wrap">
+        <div class="telemetry-terminal-bar">
+          <div class="terminal-dots">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+          </div>
+          <span class="terminal-title">Aggregator Log Stream (live telemetry /api/sync/status)</span>
+          <label class="terminal-autoscroll-label">
+            <input type="checkbox" id="telemetry-autoscroll" checked>
+            <span>Auto-scroll</span>
+          </label>
+        </div>
+        <pre id="telemetry-log-stream" class="telemetry-terminal-stream">Waiting for sync activity logs...</pre>
+      </div>
+
+      <div class="modal-footer">
+        <div class="telemetry-footer-hint">
+          <span>Telemetry feeds update automatically every 2 seconds while a sync is running.</span>
+        </div>
+        <button type="button" class="btn-primary" onclick="toggleSyncLogModal()">Done</button>
+      </div>
     </div>
   </div>
 
-  <!-- Toast Notification Container -->
-  <div id="toast-container" class="toast-container"></div>
+  <!-- Toast Notification Hub -->
+  <div id="toast-container" class="toast-hub" aria-live="polite"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2.1"></script>
 </body>
 </html>
