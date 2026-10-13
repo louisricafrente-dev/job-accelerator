@@ -1,35 +1,194 @@
 import os
 import json
+import uuid
 import bottle
 from src.database import (
     get_jobs, update_job_status, get_stats, export_jobs_csv, 
     get_user_setting, set_user_setting, get_all_user_settings
 )
 from src.aggregator import Aggregator
+from src.auth import (
+    get_or_create_admin_totp_secret, verify_totp, get_otpauth_uri,
+    create_session_token, verify_session_token,
+    resolve_guest_db_path, reset_guest_db
+)
 
 def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     app = bottle.Bottle()
     aggregator = Aggregator(db_path=db_path)
 
+    # Pre-initialize master admin TOTP secret so it exists in database
+    get_or_create_admin_totp_secret(db_path)
+
     @app.hook("after_request")
     def enable_cors_and_nocache():
         bottle.response.headers["Access-Control-Allow-Origin"] = "*"
-        bottle.response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        bottle.response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        bottle.response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, OPTIONS"
+        bottle.response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Session-Token"
         bottle.response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         bottle.response.headers["Pragma"] = "no-cache"
         bottle.response.headers["Expires"] = "0"
 
+    def get_current_session():
+        token = bottle.request.get_cookie("job_accel_session")
+        if not token:
+            auth_hdr = bottle.request.headers.get("Authorization", "")
+            if auth_hdr.startswith("Bearer "):
+                token = auth_hdr.split(" ", 1)[1].strip()
+        if not token:
+            token = bottle.request.headers.get("X-Session-Token")
+        if not token:
+            token = bottle.request.query.get("session_token")
+        if not token:
+            return None
+        return verify_session_token(token)
+
+    def resolve_target_db() -> str:
+        session = get_current_session()
+        if session and session.get("role") == "guest":
+            guest_id = session.get("id") or "guest_sandbox"
+            return resolve_guest_db_path(guest_id, db_path)
+        # Default / Admin points strictly to master db_path
+        return db_path
+
+    def require_auth():
+        session = get_current_session()
+        if not session:
+            bottle.response.status = 401
+            bottle.response.content_type = "application/json"
+            return json.dumps({
+                "error": "Unauthorized", 
+                "auth_required": True,
+                "message": "Authentication required. Log in with Google Authenticator or continue as Guest."
+            })
+        return None
+
+    # -------------------------------------------------------------------------
+    # AUTHENTICATION & ACCESS CONTROL ENDPOINTS
+    # -------------------------------------------------------------------------
+    @app.route("/api/auth/status", method=["GET", "OPTIONS"])
+    def api_auth_status():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        session = get_current_session()
+        bottle.response.content_type = "application/json"
+        if not session:
+            return json.dumps({
+                "authenticated": False,
+                "role": None,
+                "guest_id": None,
+                "is_admin": False
+            })
+        return json.dumps({
+            "authenticated": True,
+            "role": session.get("role"),
+            "guest_id": session.get("id"),
+            "is_admin": session.get("role") == "admin"
+        })
+
+    @app.route("/api/auth/setup", method=["GET", "OPTIONS"])
+    def api_auth_setup():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        admin_secret = get_or_create_admin_totp_secret(db_path)
+        otpauth_uri = get_otpauth_uri(admin_secret, "Louis Michael Ricafrente", "Job Accelerator")
+        bottle.response.content_type = "application/json"
+        return json.dumps({
+            "secret": admin_secret,
+            "otpauth_uri": otpauth_uri,
+            "issuer": "Job Accelerator",
+            "account": "Louis Michael Ricafrente"
+        })
+
+    @app.route("/api/auth/login-admin", method=["POST", "OPTIONS"])
+    def api_login_admin():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        data = bottle.request.json or {}
+        code = str(data.get("code", "")).strip()
+        admin_secret = get_or_create_admin_totp_secret(db_path)
+        
+        if not verify_totp(admin_secret, code):
+            bottle.response.status = 401
+            bottle.response.content_type = "application/json"
+            return json.dumps({
+                "success": False, 
+                "error": "Invalid 6-digit code. Please enter the current code from your Google Authenticator app."
+            })
+            
+        token = create_session_token("admin", "louis_admin")
+        bottle.response.set_cookie("job_accel_session", token, path="/", max_age=30*86400, httponly=False, samesite="Lax")
+        bottle.response.content_type = "application/json"
+        return json.dumps({
+            "success": True,
+            "role": "admin",
+            "token": token,
+            "message": "Admin authenticated. Master database unlocked."
+        })
+
+    @app.route("/api/auth/login-guest", method=["POST", "OPTIONS"])
+    def api_login_guest():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        guest_id = f"guest_{uuid.uuid4().hex[:10]}"
+        # Ensure fresh isolated guest database clone is created
+        resolve_guest_db_path(guest_id, db_path)
+        token = create_session_token("guest", guest_id)
+        bottle.response.set_cookie("job_accel_session", token, path="/", max_age=30*86400, httponly=False, samesite="Lax")
+        bottle.response.content_type = "application/json"
+        return json.dumps({
+            "success": True,
+            "role": "guest",
+            "guest_id": guest_id,
+            "token": token,
+            "message": "Guest sandbox database initialized. Your changes are private and will not affect the Admin database."
+        })
+
+    @app.route("/api/auth/reset-sandbox", method=["POST", "OPTIONS"])
+    def api_reset_sandbox():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        session = get_current_session()
+        if not session or session.get("role") != "guest":
+            bottle.response.status = 400
+            bottle.response.content_type = "application/json"
+            return json.dumps({"success": False, "error": "Sandbox reset is only available for guest sessions."})
+            
+        guest_id = session.get("id", "guest_sandbox")
+        reset_guest_db(guest_id, db_path)
+        bottle.response.content_type = "application/json"
+        return json.dumps({"success": True, "message": "Guest sandbox re-cloned to fresh state."})
+
+    @app.route("/api/auth/logout", method=["POST", "OPTIONS"])
+    def api_logout():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        bottle.response.set_cookie("job_accel_session", "", path="/", max_age=0, httponly=False, samesite="Lax")
+        bottle.response.content_type = "application/json"
+        return json.dumps({"success": True, "message": "Logged out and dashboard locked."})
+
+    # -------------------------------------------------------------------------
+    # CORE JOB ACCELERATOR DATA API (SESSION-ROUTED TO MASTER OR GUEST DB)
+    # -------------------------------------------------------------------------
     @app.route("/api/jobs/export/csv", method="GET")
     def api_export_csv():
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
         status = bottle.request.query.get("status", "applied")
-        csv_text = export_jobs_csv(db_path, status=status)
+        csv_text = export_jobs_csv(target_db, status=status)
         bottle.response.content_type = "text/csv; charset=utf-8"
         bottle.response.headers["Content-Disposition"] = 'attachment; filename="job_applications.csv"'
         return csv_text
 
     @app.route("/api/jobs", method="GET")
     def api_get_jobs():
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
+
         status = bottle.request.query.get("status", "new")
         role = bottle.request.query.get("role", "All")
         level = bottle.request.query.get("experience_level", "All")
@@ -46,7 +205,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         query_status = status
 
         jobs = get_jobs(
-            db_path=db_path,
+            db_path=target_db,
             status=query_status if status != "all" else None,
             role_category=role,
             experience_level=level,
@@ -65,13 +224,18 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
 
     @app.route("/api/jobs/<job_id:int>/status", method=["POST", "PUT"])
     def api_update_status(job_id: int):
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
+
         data = bottle.request.json or {}
         new_status = data.get("status")
         notes = data.get("notes")
         pipeline_stage = data.get("stage") or data.get("pipeline_stage")
         follow_up_date = data.get("follow_up_date")
         success = update_job_status(
-            db_path=db_path,
+            db_path=target_db,
             job_id=job_id,
             status=new_status,
             notes=notes,
@@ -83,7 +247,11 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
 
     @app.route("/api/stats", method="GET")
     def api_get_stats():
-        stats = get_stats(db_path)
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
+        stats = get_stats(target_db)
         bottle.response.content_type = "application/json"
         return json.dumps(stats)
 
@@ -93,7 +261,12 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     def api_get_all_settings():
         if bottle.request.method == "OPTIONS":
             return ""
-        settings = get_all_user_settings(db_path)
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
+
+        settings = get_all_user_settings(target_db)
         if "target_stack" not in settings:
             settings["target_stack"] = DEFAULT_TARGET_STACK
         bottle.response.content_type = "application/json"
@@ -101,11 +274,19 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
 
     @app.route("/api/settings", method=["POST", "PUT"])
     def api_save_settings():
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
+
         data = bottle.request.json or {}
         for k, v in data.items():
+            # Don't allow guest to overwrite master admin_totp_secret
+            if k == "admin_totp_secret":
+                continue
             val_str = json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v)
-            set_user_setting(db_path, str(k), val_str)
-        settings = get_all_user_settings(db_path)
+            set_user_setting(target_db, str(k), val_str)
+        settings = get_all_user_settings(target_db)
         if "target_stack" not in settings:
             settings["target_stack"] = DEFAULT_TARGET_STACK
         bottle.response.content_type = "application/json"
@@ -115,12 +296,22 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     def api_get_stack_setting():
         if bottle.request.method == "OPTIONS":
             return ""
-        stack = get_user_setting(db_path, "target_stack", DEFAULT_TARGET_STACK)
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
+
+        stack = get_user_setting(target_db, "target_stack", DEFAULT_TARGET_STACK)
         bottle.response.content_type = "application/json"
         return json.dumps({"stack": stack})
 
     @app.route("/api/settings/stack", method=["POST", "PUT"])
     def api_save_stack_setting():
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
+
         data = bottle.request.json or {}
         stack = data.get("stack", "")
         if isinstance(stack, list):
@@ -128,12 +319,22 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         elif isinstance(stack, str):
             stack = stack.strip()
 
-        set_user_setting(db_path, "target_stack", stack)
+        set_user_setting(target_db, "target_stack", stack)
         bottle.response.content_type = "application/json"
         return json.dumps({"success": True, "stack": stack})
 
+    # System cron & automated daily digest runs against master database (Admin or internal Vercel Cron only)
     @app.route("/api/notify/daily", method=["GET", "POST"])
     def api_notify_daily():
+        session = get_current_session()
+        is_cron = bool(bottle.request.headers.get("x-vercel-cron"))
+        if not is_cron and (not session or session.get("role") != "admin"):
+            bottle.response.status = 403
+            bottle.response.content_type = "application/json"
+            return json.dumps({
+                "success": False,
+                "error": "Forbidden: Only Admin can trigger email digests to michael18ricafrente@gmail.com."
+            })
         try:
             from scripts.daily_notifier import send_daily_email
             result = send_daily_email(db_path)
@@ -144,6 +345,9 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
 
     @app.route("/api/sync/status", method="GET")
     def api_sync_status():
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
         bottle.response.content_type = "application/json"
         telemetry = aggregator.get_telemetry()
         telemetry["last_result"] = aggregator.last_sync_result
@@ -153,6 +357,21 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     def api_sync():
         if bottle.request.method == "OPTIONS":
             return ""
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+
+        session = get_current_session()
+        # Strictly admin only! Adding/harvesting jobs is reserved exclusively for Admin.
+        if not session or session.get("role") != "admin":
+            bottle.response.status = 403
+            bottle.response.content_type = "application/json"
+            return json.dumps({
+                "status": "forbidden",
+                "error": "Forbidden: Only Admin can harvest and add new job opportunities to the system. Guests can explore, filter, save, and star existing opportunities.",
+                "is_admin_only": True
+            })
+
         data = bottle.request.json or {}
         keywords = data.get("keywords")
         is_background = data.get("background", False) or (bottle.request.query.get("background") in ("1", "true"))
