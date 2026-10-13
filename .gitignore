@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 
 .vercel
+.env
 data/*.tmp
 data/*.log
 data/*.html
