@@ -229,11 +229,10 @@ const ICONS = {
 };
 
 // --------------------------------------------------------------------------
-// SECURITY GATEWAY & MULTI-TENANT ACCESS CONTROL (GOOGLE 2FA / GUEST SANDBOX)
+// SECURITY GATEWAY & MULTI-TENANT ACCESS CONTROL (ADMIN / GUEST SANDBOX)
 // --------------------------------------------------------------------------
 let currentUserRole = null; // 'admin' | 'guest'
 let currentSessionToken = localStorage.getItem('job_accel_session_token') || '';
-let totpSetupData = null;
 let isDashboardBootstrapped = false;
 
 // Universal fetch interceptor to attach bearer token and intercept 401s
@@ -307,12 +306,12 @@ function updateAuthUI() {
       pill.className = 'auth-pill admin-pill';
       pill.title = 'Admin session active — master database (data/jobs.db) unlocked';
     }
-    if (pillText) pillText.textContent = 'Admin Mode';
+    if (pillText) pillText.textContent = 'Admin';
     if (btn2fa) btn2fa.style.display = 'inline-flex';
-    if (actionText) actionText.textContent = 'Lock';
+    if (actionText) actionText.textContent = 'Logout';
     if (btnAction) {
-      btnAction.title = 'Lock admin session & return to security gate';
-      btnAction.className = 'btn-subtle';
+      btnAction.title = 'Log out from Admin session & lock workstation';
+      btnAction.className = 'btn-logout';
     }
     if (syncBtn) {
       syncBtn.title = 'Scrape 15 job boards including OnlineJobs.ph for latest postings';
@@ -327,10 +326,10 @@ function updateAuthUI() {
     }
     if (pillText) pillText.textContent = 'Guest Sandbox';
     if (btn2fa) btn2fa.style.display = 'none';
-    if (actionText) actionText.textContent = 'Admin Unlock';
+    if (actionText) actionText.textContent = 'Exit';
     if (btnAction) {
-      btnAction.title = 'Switch to Admin mode (requires Google Authenticator)';
-      btnAction.className = 'btn-primary';
+      btnAction.title = 'Exit Guest Sandbox';
+      btnAction.className = 'btn-logout';
     }
     if (syncBtn) {
       syncBtn.title = '🔒 Only Admin can harvest and add new data to the system.';
@@ -346,15 +345,20 @@ function updateAuthUI() {
   }
 }
 
+
 function showAuthGate() {
   const modal = document.getElementById('auth-gate-modal');
   if (modal) {
     modal.style.display = 'flex';
-    const input = document.getElementById('totp-code-input');
-    if (input) {
-      input.value = '';
-      setTimeout(() => input.focus(), 100);
-    }
+    const errBox = document.getElementById('auth-error-msg');
+    if (errBox) errBox.style.display = 'none';
+    setTimeout(() => {
+      const pwd = document.getElementById('admin-password');
+      if (pwd) {
+        pwd.focus();
+        pwd.select();
+      }
+    }, 120);
   }
 }
 
@@ -370,7 +374,7 @@ function switchAuthTab(tab) {
   const tabGuest = document.getElementById('tab-guest');
   const panelAdmin = document.getElementById('auth-panel-admin');
   const panelGuest = document.getElementById('auth-panel-guest');
-  const errBox = document.getElementById('totp-error-msg');
+  const errBox = document.getElementById('auth-error-msg');
   if (errBox) errBox.style.display = 'none';
 
   if (tab === 'admin') {
@@ -378,8 +382,8 @@ function switchAuthTab(tab) {
     tabGuest?.classList.remove('active');
     if (panelAdmin) panelAdmin.style.display = 'flex';
     if (panelGuest) panelGuest.style.display = 'none';
-    const input = document.getElementById('totp-code-input');
-    if (input) setTimeout(() => input.focus(), 80);
+    const pwd = document.getElementById('admin-password');
+    if (pwd) { pwd.focus(); pwd.select(); }
   } else {
     tabGuest?.classList.add('active');
     tabAdmin?.classList.remove('active');
@@ -388,47 +392,91 @@ function switchAuthTab(tab) {
   }
 }
 
-async function submitAdminTotp() {
-  const input = document.getElementById('totp-code-input');
-  const btn = document.getElementById('btn-unlock-admin');
-  const errBox = document.getElementById('totp-error-msg');
-  if (!input) return;
+function handleAdminLoginKeyDown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    submitAdminLogin();
+  }
+}
 
-  const code = input.value.trim().replace(/\s+/g, '');
-  if (code.length !== 6 || !/^\d{6}$/.test(code)) {
+function fillAdminCreds() {
+  const u = document.getElementById('admin-username');
+  const p = document.getElementById('admin-password');
+  if (u) u.value = 'admin';
+  if (p) p.value = 'admin';
+  submitAdminLogin();
+}
+
+function togglePasswordVisibility() {
+  const pwd = document.getElementById('admin-password');
+  const icon = document.getElementById('eye-icon');
+  if (!pwd) return;
+  if (pwd.type === 'password') {
+    pwd.type = 'text';
+    if (icon) {
+      icon.innerHTML = `
+        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+        <line x1="1" y1="1" x2="23" y2="23"/>
+      `;
+    }
+  } else {
+    pwd.type = 'password';
+    if (icon) {
+      icon.innerHTML = `
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+        <circle cx="12" cy="12" r="3"/>
+      `;
+    }
+  }
+}
+
+async function submitAdminLogin() {
+  const usernameInput = document.getElementById('admin-username');
+  const passwordInput = document.getElementById('admin-password');
+  const btn = document.getElementById('btn-unlock-admin');
+  const errBox = document.getElementById('auth-error-msg');
+
+  const username = usernameInput ? usernameInput.value.trim().toLowerCase() : 'admin';
+  const password = passwordInput ? passwordInput.value.trim() : '';
+
+  if (!password) {
     if (errBox) {
-      errBox.textContent = 'Please enter a valid 6-digit verification code.';
+      errBox.textContent = 'Please enter your admin password (default: admin).';
       errBox.style.display = 'block';
     }
-    input.focus();
+    passwordInput?.focus();
     return;
   }
 
-  if (btn) btn.disabled = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="loading-spinner" style="width:14px;height:14px;border-width:2px;margin-right:6px;"></span> Signing in...`;
+  }
   if (errBox) errBox.style.display = 'none';
 
   try {
     const res = await originalFetch('/api/auth/login-admin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code })
+      body: JSON.stringify({ username, password })
     });
     const data = await res.json();
     if (res.ok && data.success) {
       currentUserRole = 'admin';
       currentSessionToken = data.token;
+      // Persistent login session: stored in localStorage and cookie
       localStorage.setItem('job_accel_session_token', data.token);
       hideAuthGate();
       updateAuthUI();
-      showToast('👑 Welcome back, Admin! Master database unlocked with all your data.');
+      showToast('👑 Welcome back, Louis! Master database unlocked.');
       await bootstrapDashboard();
     } else {
       if (errBox) {
-        errBox.textContent = data.error || 'Invalid 6-digit code. Check your Google Authenticator app.';
+        errBox.textContent = data.error || 'Incorrect password. Default: admin / admin.';
         errBox.style.display = 'block';
       }
-      input.select();
-      input.focus();
+      passwordInput?.select();
+      passwordInput?.focus();
     }
   } catch (err) {
     if (errBox) {
@@ -436,9 +484,19 @@ async function submitAdminTotp() {
       errBox.style.display = 'block';
     }
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `
+        <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        <span>Sign In as Admin</span>
+      `;
+    }
   }
 }
+
 
 async function submitGuestAccess() {
   const btn = document.getElementById('btn-enter-guest');
@@ -504,125 +562,6 @@ function handleAuthAction() {
   }
 }
 
-async function loadTotpSetupInfo() {
-  if (totpSetupData) return totpSetupData;
-  try {
-    const res = await originalFetch('/api/auth/setup');
-    if (res.ok) {
-      totpSetupData = await res.json();
-      return totpSetupData;
-    }
-  } catch (e) {
-    console.warn('Could not load TOTP setup:', e);
-  }
-  return null;
-}
-
-async function toggleTotpSetupDrawer() {
-  const drawer = document.getElementById('totp-setup-drawer');
-  const btnLabel = document.getElementById('setup-drawer-btn-label');
-  if (!drawer) return;
-
-  const isOpening = drawer.style.display === 'none';
-  if (isOpening) {
-    drawer.style.display = 'block';
-    if (btnLabel) btnLabel.textContent = 'Hide Google Authenticator Setup';
-    const info = await loadTotpSetupInfo();
-    if (info) {
-      const codeEl = document.getElementById('totp-secret-text');
-      if (codeEl) codeEl.textContent = info.secret;
-      renderQrCodeInBox('totp-qrcode', info.otpauth_uri);
-    }
-  } else {
-    drawer.style.display = 'none';
-    if (btnLabel) btnLabel.textContent = 'Show Google Authenticator QR Code & Secret Key';
-  }
-}
-
-async function show2FASetupModal() {
-  const modal = document.getElementById('totp-manage-modal');
-  if (!modal) return;
-  modal.style.display = 'flex';
-  const info = await loadTotpSetupInfo();
-  if (info) {
-    const codeEl = document.getElementById('totp-secret-text-manage');
-    if (codeEl) codeEl.textContent = info.secret;
-    renderQrCodeInBox('totp-qrcode-manage', info.otpauth_uri);
-  }
-}
-
-function toggle2FAModal() {
-  const modal = document.getElementById('totp-manage-modal');
-  if (modal) modal.style.display = 'none';
-}
-
-function renderQrCodeInBox(containerId, otpauthUri) {
-  const box = document.getElementById(containerId);
-  if (!box || !otpauthUri) return;
-  box.innerHTML = '';
-  if (typeof QRCode !== 'undefined') {
-    try {
-      new QRCode(box, {
-        text: otpauthUri,
-        width: 160,
-        height: 160,
-        colorDark: '#000000',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M
-      });
-      return;
-    } catch (e) {
-      console.warn('qrcode.js rendering error:', e);
-    }
-  }
-  const img = document.createElement('img');
-  img.src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(otpauthUri)}`;
-  img.alt = 'Google Authenticator QR Code';
-  box.appendChild(img);
-}
-
-function copyTotpSecret() {
-  const secret = totpSetupData ? totpSetupData.secret : 'Q5KCQIMSEQDW6XUUFG6HLC7VEIJPYREA';
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(secret).then(() => {
-      showToast('Base32 Secret Key copied to clipboard!');
-    }).catch(() => {
-      showToast('Key: ' + secret);
-    });
-  } else {
-    showToast('Key: ' + secret);
-  }
-}
-
-function setupTotpInputAutoSubmit() {
-  const input = document.getElementById('totp-code-input');
-  if (!input) return;
-
-  input.addEventListener('input', (e) => {
-    const cleaned = e.target.value.replace(/\D/g, '').slice(0, 6);
-    e.target.value = cleaned;
-    if (cleaned.length === 6) {
-      submitAdminTotp();
-    }
-  });
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      submitAdminTotp();
-    }
-  });
-
-  input.addEventListener('paste', (e) => {
-    setTimeout(() => {
-      const cleaned = input.value.replace(/\D/g, '').slice(0, 6);
-      input.value = cleaned;
-      if (cleaned.length === 6) {
-        submitAdminTotp();
-      }
-    }, 20);
-  });
-}
-
 async function bootstrapDashboard() {
   if (isDashboardBootstrapped) {
     await loadStats();
@@ -639,7 +578,6 @@ async function bootstrapDashboard() {
 
 // Lifecycle Bootstrap
 document.addEventListener('DOMContentLoaded', async () => {
-  setupTotpInputAutoSubmit();
   const isAuthenticated = await checkAuthStatus();
   if (isAuthenticated) {
     hideAuthGate();
