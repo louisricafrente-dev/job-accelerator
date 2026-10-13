@@ -2716,37 +2716,7 @@ a {
   line-height: 1.3;
 }
 
-/* Quick Fill Credentials Pill */
-.auth-quick-hint {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 0.78rem;
-  color: #64748b;
-  margin-top: 4px;
-}
 
-.btn-fill-creds {
-  background: rgba(56, 189, 248, 0.08);
-  border: 1px solid rgba(56, 189, 248, 0.2);
-  border-radius: 6px;
-  padding: 3px 8px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.btn-fill-creds:hover {
-  background: rgba(56, 189, 248, 0.18);
-  border-color: #38bdf8;
-}
-
-.btn-fill-creds code {
-  color: #38bdf8;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.78rem;
-  font-weight: 600;
-}
 
 .auth-error-msg {
   font-size: 0.78rem;

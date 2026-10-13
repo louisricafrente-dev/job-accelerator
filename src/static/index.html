@@ -628,21 +628,18 @@
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
               <circle cx="12" cy="7" r="4"/>
             </svg>
-            <input type="text" id="admin-username" class="auth-text-input" value="admin" autocomplete="username" placeholder="Username" onkeydown="handleAdminLoginKeyDown(event)">
+            <input type="text" id="admin-username" class="auth-text-input" autocomplete="username" placeholder="Username" onkeydown="handleAdminLoginKeyDown(event)">
           </div>
         </div>
 
         <div class="auth-field-group">
-          <label class="auth-label" for="admin-password">
-            <span>Password</span>
-            <span class="auth-label-hint">Default: admin</span>
-          </label>
+          <label class="auth-label" for="admin-password">Password</label>
           <div class="auth-text-input-wrapper">
             <svg class="auth-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
             </svg>
-            <input type="password" id="admin-password" class="auth-text-input" value="admin" autocomplete="current-password" placeholder="Enter password (admin)" onkeydown="handleAdminLoginKeyDown(event)">
+            <input type="password" id="admin-password" class="auth-text-input" autocomplete="current-password" placeholder="Password" onkeydown="handleAdminLoginKeyDown(event)">
             <button type="button" class="auth-password-toggle" onclick="togglePasswordVisibility()" aria-label="Toggle password visibility" title="Show/Hide password">
               <svg id="eye-icon" class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -669,13 +666,6 @@
           </svg>
           <span>Sign In as Admin</span>
         </button>
-
-        <div class="auth-quick-hint">
-          <span>Quick Login:</span>
-          <button type="button" class="btn-fill-creds" onclick="fillAdminCreds()" title="Auto-fill default admin credentials">
-            <code>admin</code> / <code>admin</code>
-          </button>
-        </div>
       </div>
 
       <!-- Tab Content: Guest Mode -->

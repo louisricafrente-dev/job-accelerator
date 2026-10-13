@@ -399,14 +399,6 @@ function handleAdminLoginKeyDown(e) {
   }
 }
 
-function fillAdminCreds() {
-  const u = document.getElementById('admin-username');
-  const p = document.getElementById('admin-password');
-  if (u) u.value = 'admin';
-  if (p) p.value = 'admin';
-  submitAdminLogin();
-}
-
 function togglePasswordVisibility() {
   const pwd = document.getElementById('admin-password');
   const icon = document.getElementById('eye-icon');
@@ -436,12 +428,21 @@ async function submitAdminLogin() {
   const btn = document.getElementById('btn-unlock-admin');
   const errBox = document.getElementById('auth-error-msg');
 
-  const username = usernameInput ? usernameInput.value.trim().toLowerCase() : 'admin';
+  const username = usernameInput ? usernameInput.value.trim().toLowerCase() : '';
   const password = passwordInput ? passwordInput.value.trim() : '';
+
+  if (!username) {
+    if (errBox) {
+      errBox.textContent = 'Please enter your username.';
+      errBox.style.display = 'block';
+    }
+    usernameInput?.focus();
+    return;
+  }
 
   if (!password) {
     if (errBox) {
-      errBox.textContent = 'Please enter your admin password (default: admin).';
+      errBox.textContent = 'Please enter your password.';
       errBox.style.display = 'block';
     }
     passwordInput?.focus();
@@ -468,11 +469,11 @@ async function submitAdminLogin() {
       localStorage.setItem('job_accel_session_token', data.token);
       hideAuthGate();
       updateAuthUI();
-      showToast('👑 Welcome back, Louis! Master database unlocked.');
+      showToast('👑 Welcome back! Master database unlocked.');
       await bootstrapDashboard();
     } else {
       if (errBox) {
-        errBox.textContent = data.error || 'Incorrect password. Default: admin / admin.';
+        errBox.textContent = data.error || 'Invalid username or password.';
         errBox.style.display = 'block';
       }
       passwordInput?.select();

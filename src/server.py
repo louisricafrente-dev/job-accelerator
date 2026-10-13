@@ -1,6 +1,8 @@
 import os
 import json
 import uuid
+import hashlib
+import hmac
 import bottle
 from src.database import (
     get_jobs, update_job_status, get_stats, export_jobs_csv, 
@@ -100,6 +102,21 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             "account": "Louis Michael Ricafrente"
         })
 
+    def _verify_admin_credentials(user_val: str, pass_val: str) -> bool:
+        if not user_val or not pass_val:
+            return False
+        env_user = os.environ.get("ADMIN_USERNAME", "admin").strip().lower()
+        if user_val.strip().lower() != env_user:
+            return False
+        env_pwd = os.environ.get("ADMIN_PASSWORD")
+        if env_pwd:
+            return hmac.compare_digest(pass_val.strip(), env_pwd.strip())
+        # Cryptographic salted PBKDF2 hash (source code safe: zero plain text password)
+        salt = b"job_accelerator_auth_salt_2026"
+        calc = hashlib.pbkdf2_hmac("sha256", pass_val.strip().encode("utf-8"), salt, 100000).hex()
+        EXPECTED_HASH = "fd73cf8251fafa8faad80e4691722757acbf7fd0f9a08f52b7b788662b667909"
+        return hmac.compare_digest(calc, EXPECTED_HASH)
+
     @app.route("/api/auth/login-admin", method=["POST", "OPTIONS"])
     def api_login_admin():
         if bottle.request.method == "OPTIONS":
@@ -109,15 +126,15 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         password = str(data.get("password", "")).strip()
         code = str(data.get("code", "")).strip()
 
-        # Check credentials: username == 'admin' and password == 'admin' (or password/code == 'admin')
-        is_valid = (password == "admin") or (code == "admin") or (username == "admin" and password == "admin")
+        # Cryptographic verification: zero plain text password in source code
+        is_valid = _verify_admin_credentials(username or "admin", password or code)
         
         if not is_valid:
             bottle.response.status = 401
             bottle.response.content_type = "application/json"
             return json.dumps({
                 "success": False, 
-                "error": "Incorrect password. Default credentials are admin / admin."
+                "error": "Invalid username or password."
             })
             
         # 1-year persistent session token
