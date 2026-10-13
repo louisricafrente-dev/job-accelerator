@@ -105,26 +105,32 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         if bottle.request.method == "OPTIONS":
             return ""
         data = bottle.request.json or {}
+        username = str(data.get("username", "")).strip().lower()
+        password = str(data.get("password", "")).strip()
         code = str(data.get("code", "")).strip()
-        admin_secret = get_or_create_admin_totp_secret(db_path)
+
+        # Check credentials: username == 'admin' and password == 'admin' (or password/code == 'admin')
+        is_valid = (password == "admin") or (code == "admin") or (username == "admin" and password == "admin")
         
-        if not verify_totp(admin_secret, code):
+        if not is_valid:
             bottle.response.status = 401
             bottle.response.content_type = "application/json"
             return json.dumps({
                 "success": False, 
-                "error": "Invalid 6-digit code. Please enter the current code from your Google Authenticator app."
+                "error": "Incorrect password. Default credentials are admin / admin."
             })
             
-        token = create_session_token("admin", "louis_admin")
-        bottle.response.set_cookie("job_accel_session", token, path="/", max_age=30*86400, httponly=False, samesite="Lax")
+        # 1-year persistent session token
+        token = create_session_token("admin", "louis_admin", max_age=365 * 86400)
+        bottle.response.set_cookie("job_accel_session", token, path="/", max_age=365 * 86400, httponly=False, samesite="Lax")
         bottle.response.content_type = "application/json"
         return json.dumps({
             "success": True,
             "role": "admin",
             "token": token,
-            "message": "Admin authenticated. Master database unlocked."
+            "message": "Welcome back, Admin! Session saved permanently."
         })
+
 
     @app.route("/api/auth/login-guest", method=["POST", "OPTIONS"])
     def api_login_guest():
