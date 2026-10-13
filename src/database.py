@@ -215,6 +215,7 @@ def get_jobs(
     remote_only: bool = False,
     hide_senior: bool = False,
     include_va: bool = False,
+    platform: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
@@ -350,6 +351,10 @@ def get_jobs(
     if tier:
         clauses.append("tier = ?")
         params.append(tier)
+    if platform and platform != "All":
+        p_clean = platform.strip()
+        clauses.append("(platform = ? OR sources LIKE ?)")
+        params.extend([p_clean, f'%"{p_clean}"%'])
     if has_salary:
         clauses.append("(salary IS NOT NULL AND salary != '')")
     if remote_only:

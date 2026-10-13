@@ -8,6 +8,7 @@ let currentStatus = 'new';
 let selectedLevels = new Set(['All']);
 let currentLevel = 'All';
 let currentRole = 'All';
+let currentPlatform = 'All';
 let currentDateFilter = '7days';
 let hasSalaryOnly = false;
 let remoteOnly = false;
@@ -315,6 +316,9 @@ async function loadAllUserSettings() {
   if (settings.role) {
     currentRole = settings.role;
   }
+  if (settings.platform) {
+    currentPlatform = settings.platform;
+  }
   if (settings.status) {
     currentStatus = settings.status;
   }
@@ -369,6 +373,12 @@ function syncFilterControlsUI() {
   document.querySelectorAll('#role-group .filter-chip').forEach(chip => {
     const val = chip.getAttribute('data-val');
     chip.classList.toggle('active', val === currentRole);
+  });
+
+  // Platform / Job Board chips
+  document.querySelectorAll('#platform-group .filter-chip').forEach(chip => {
+    const val = chip.getAttribute('data-val');
+    chip.classList.toggle('active', val === currentPlatform);
   });
 
   // Seniority chips
@@ -475,6 +485,9 @@ async function loadJobs() {
     if (hideSenior) params.set('hide_senior', '1');
     if (vaTrainingEnabled || currentRole === 'Virtual Assistant') {
       params.set('include_va', '1');
+    }
+    if (currentPlatform && currentPlatform !== 'All') {
+      params.set('platform', currentPlatform);
     }
 
     const res = await fetch(`/api/jobs?${params.toString()}`);
@@ -1429,6 +1442,24 @@ function setRole(role, elem) {
   persistSetting('role', role);
   document.querySelectorAll('#role-group .filter-chip').forEach(c => c.classList.remove('active'));
   elem.classList.add('active');
+  loadJobs();
+}
+
+function setPlatform(platform, elem) {
+  currentPlatform = platform;
+  persistSetting('platform', platform);
+  document.querySelectorAll('#platform-group .filter-chip').forEach(c => c.classList.remove('active'));
+  if (elem) elem.classList.add('active');
+  showToast(`Filtered feed to ${platform === 'All' ? 'All Job Boards' : platform}.`);
+  loadJobs();
+}
+
+function filterByPlatformDirect(platform, event) {
+  if (event) event.stopPropagation();
+  currentPlatform = platform;
+  persistSetting('platform', platform);
+  syncFilterControlsUI();
+  showToast(`Filtered feed to ${platform}.`);
   loadJobs();
 }
 
