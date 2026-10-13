@@ -50,36 +50,50 @@ class WeWorkRemotelyConnector(BaseConnector):
     tier = 3
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
-        rss_url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
-        req = urllib.request.Request(rss_url, headers=HEADERS)
+        feed_urls = [
+            "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+            "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss",
+            "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss",
+            "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
+            "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss"
+        ]
         jobs: List[Job] = []
-        try:
-            with urllib.request.urlopen(req, timeout=12) as resp:
-                tree = ET.fromstring(resp.read().decode("utf-8"))
-                for item in tree.findall(".//item"):
-                    title_elem = item.find("title")
-                    link_elem = item.find("link")
-                    pub_date = item.find("pubDate")
-                    raw_title = title_elem.text if title_elem is not None and title_elem.text else ""
-                    parts = raw_title.split(":", 1)
-                    company = parts[0].strip() if len(parts) > 1 else "Unknown"
-                    title = parts[1].strip() if len(parts) > 1 else raw_title
-                    link = link_elem.text if link_elem is not None and link_elem.text else ""
-                    job = Job(
-                        title=title,
-                        company=company,
-                        location="Remote",
-                        platform=self.platform,
-                        tier=self.tier,
-                        job_url=link,
-                        salary="",
-                        role_category=classify_role(title),
-                        experience_level=classify_experience_level(title),
-                        date_posted=pub_date.text.strip() if pub_date is not None and pub_date.text else ""
-                    )
-                    jobs.append(job)
-        except Exception as e:
-            logger.error(f"[{self.platform}] fetch failed: {e}")
+        seen_links = set()
+
+        for rss_url in feed_urls:
+            try:
+                req = urllib.request.Request(rss_url, headers=HEADERS)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    tree = ET.fromstring(resp.read().decode("utf-8"))
+                    for item in tree.findall(".//item"):
+                        link_elem = item.find("link")
+                        link = link_elem.text.strip() if link_elem is not None and link_elem.text else ""
+                        if not link or link in seen_links:
+                            continue
+                        seen_links.add(link)
+
+                        title_elem = item.find("title")
+                        pub_date = item.find("pubDate")
+                        raw_title = title_elem.text if title_elem is not None and title_elem.text else ""
+                        parts = raw_title.split(":", 1)
+                        company = parts[0].strip() if len(parts) > 1 else "Unknown"
+                        title = parts[1].strip() if len(parts) > 1 else raw_title
+
+                        job = Job(
+                            title=title,
+                            company=company,
+                            location="Remote Worldwide",
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=link,
+                            salary="",
+                            role_category=classify_role(title),
+                            experience_level=classify_experience_level(title),
+                            date_posted=pub_date.text.strip() if pub_date is not None and pub_date.text else ""
+                        )
+                        jobs.append(job)
+            except Exception as e:
+                logger.warning(f"[{self.platform}] feed notice for {rss_url}: {e}")
         return jobs
 
 class ArcConnector(BaseConnector):

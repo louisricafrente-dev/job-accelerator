@@ -13,7 +13,7 @@ class KalibrrConnector(BaseConnector):
     tier = 1
 
     def fetch(self, query: str = "software engineer", location: str = "Philippines") -> List[Job]:
-        params = urllib.parse.urlencode({"name": query, "limit": 25})
+        params = urllib.parse.urlencode({"name": query, "limit": 75})
         url = f"https://www.kalibrr.com/api/job_board/search?{params}"
         req = urllib.request.Request(url, headers=HEADERS)
         jobs: List[Job] = []
@@ -173,65 +173,76 @@ class OnlineJobsConnector(BaseConnector):
             from bs4 import BeautifulSoup
 
             clean_q = urllib.parse.quote(query.strip())
-            url = f"https://www.onlinejobs.ph/jobseekers/jobsearch?jobkeyword={clean_q}&fullTime=on&partTime=on"
-            req = urllib.request.Request(url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=12) as resp:
-                html = resp.read().decode("utf-8")
-                soup = BeautifulSoup(html, "html.parser")
-                cards = soup.select(".jobpost-cat-box")
-                for c in cards:
-                    h4 = c.select_one("h4")
-                    if not h4:
-                        continue
-                    badge = h4.select_one(".badge")
-                    if badge:
-                        badge.extract()
-                    title = h4.get_text(strip=True)
-                    if not title:
-                        continue
+            seen_urls = set()
 
-                    a = c.find("a", href=lambda h: h and "/jobseekers/job/" in h)
-                    link = a["href"] if a else ""
-                    if link and not link.startswith("http"):
-                        link = "https://www.onlinejobs.ph" + link
+            for page in (1, 2):
+                url = f"https://www.onlinejobs.ph/jobseekers/jobsearch?jobkeyword={clean_q}&fullTime=on&partTime=on&page={page}"
+                req = urllib.request.Request(url, headers=HEADERS)
+                try:
+                    with urllib.request.urlopen(req, timeout=12) as resp:
+                        html = resp.read().decode("utf-8")
+                        soup = BeautifulSoup(html, "html.parser")
+                        cards = soup.select(".jobpost-cat-box")
+                        for c in cards:
+                            h4 = c.select_one("h4")
+                            if not h4:
+                                continue
+                            badge = h4.select_one(".badge")
+                            if badge:
+                                badge.extract()
+                            title = h4.get_text(strip=True)
+                            if not title:
+                                continue
 
-                    sal_el = c.select_one("dd.col")
-                    salary = sal_el.get_text(strip=True) if sal_el else ""
+                            a = c.find("a", href=lambda h: h and "/jobseekers/job/" in h)
+                            link = a["href"] if a else ""
+                            if link and not link.startswith("http"):
+                                link = "https://www.onlinejobs.ph" + link
 
-                    date_el = c.select_one("p.fs-13")
-                    date_val = ""
-                    if date_el:
-                        date_val = date_el.get("data-temp", "")[:10]
-                        if not date_val:
-                            raw_t = date_el.get_text(strip=True)
-                            if "Posted on " in raw_t:
-                                date_val = raw_t.replace("Posted on ", "")[:10]
+                            if not link or link in seen_urls:
+                                continue
+                            seen_urls.add(link)
 
-                    company = "Direct Client (OnlineJobs.ph)"
-                    desc_el = c.select_one(".desc")
-                    if desc_el:
-                        desc_text = desc_el.get_text()
-                        for prefix in ("Company:", "About Us:", "Client:"):
-                            if prefix in desc_text:
-                                parts = desc_text.split(prefix)
-                                if len(parts) > 1:
-                                    first_line = parts[1].strip().split("\n")[0].split(".")[0].strip()
-                                    if 2 < len(first_line) < 40:
-                                        company = first_line
-                                        break
+                            sal_el = c.select_one("dd.col")
+                            salary = sal_el.get_text(strip=True) if sal_el else ""
 
-                    jobs.append(Job(
-                        title=title,
-                        company=company,
-                        location="Philippines (Remote / Direct Client)",
-                        platform=self.platform,
-                        tier=self.tier,
-                        job_url=link,
-                        salary=salary,
-                        role_category=classify_role(title),
-                        experience_level=classify_experience_level(title),
-                        date_posted=date_val
-                    ))
+                            date_el = c.select_one("p.fs-13")
+                            date_val = ""
+                            if date_el:
+                                date_val = date_el.get("data-temp", "")[:10]
+                                if not date_val:
+                                    raw_t = date_el.get_text(strip=True)
+                                    if "Posted on " in raw_t:
+                                        date_val = raw_t.replace("Posted on ", "")[:10]
+
+                            company = "Direct Client (OnlineJobs.ph)"
+                            desc_el = c.select_one(".desc")
+                            if desc_el:
+                                desc_text = desc_el.get_text()
+                                for prefix in ("Company:", "About Us:", "Client:"):
+                                    if prefix in desc_text:
+                                        parts = desc_text.split(prefix)
+                                        if len(parts) > 1:
+                                            first_line = parts[1].strip().split("\n")[0].split(".")[0].strip()
+                                            if 2 < len(first_line) < 40:
+                                                company = first_line
+                                                break
+
+                            jobs.append(Job(
+                                title=title,
+                                company=company,
+                                location="Philippines (Remote / Direct Client)",
+                                platform=self.platform,
+                                tier=self.tier,
+                                job_url=link,
+                                salary=salary,
+                                role_category=classify_role(title),
+                                experience_level=classify_experience_level(title),
+                                date_posted=date_val
+                            ))
+                except Exception as page_e:
+                    logger.warning(f"[{self.platform}] page {page} fetch notice: {page_e}")
+                    break
         except Exception as e:
             logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
