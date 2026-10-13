@@ -421,6 +421,21 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         static_dir = os.path.join(os.path.dirname(__file__), "static")
         return bottle.static_file("index.html", root=static_dir)
 
+    @app.route("/favicon.ico")
+    def favicon_ico():
+        static_dir = os.path.join(os.path.dirname(__file__), "static")
+        return bottle.static_file("favicon.ico", root=static_dir)
+
+    @app.route("/favicon.svg")
+    def favicon_svg():
+        static_dir = os.path.join(os.path.dirname(__file__), "static")
+        return bottle.static_file("favicon.svg", root=static_dir, mimetype="image/svg+xml")
+
+    @app.route("/apple-touch-icon.png")
+    def apple_touch_icon():
+        static_dir = os.path.join(os.path.dirname(__file__), "static")
+        return bottle.static_file("apple-touch-icon.png", root=static_dir)
+
     @app.route("/static/<filepath:path>")
     def static_files(filepath: str):
         static_dir = os.path.join(os.path.dirname(__file__), "static")
