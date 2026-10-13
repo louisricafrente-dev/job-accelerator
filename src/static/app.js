@@ -264,6 +264,110 @@ window.fetch = function(url, options = {}) {
   });
 };
 
+// Resilient fetch with exponential backoff and timeout guard for serverless cold starts & wake-from-sleep
+async function resilientFetchWithRetry(url, options = {}, retries = 3, backoff = 500) {
+  let attempt = 0;
+  while (attempt < retries) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
+      const fetchOpts = { ...options, signal: controller.signal };
+      const res = await window.fetch(url, fetchOpts);
+      clearTimeout(timeoutId);
+      if (res.ok || res.status === 401 || res.status === 404) {
+        return res;
+      }
+      attempt++;
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt - 1)));
+      }
+    } catch (err) {
+      attempt++;
+      if (attempt >= retries) {
+        console.warn(`Resilient fetch warning for ${url}:`, err);
+        throw err;
+      }
+      await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt - 1)));
+    }
+  }
+  return window.fetch(url, options);
+}
+
+// --------------------------------------------------------------------------
+// LOCAL-FIRST PERSISTENCE ENGINE (OFFLINE & IDLE-PROOF CLIENT ARCHITECTURE)
+// --------------------------------------------------------------------------
+const LOCAL_STATUS_KEY = 'job_accel_status_overrides';
+
+function getLocalStatusOverrides() {
+  try {
+    const raw = localStorage.getItem(LOCAL_STATUS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveLocalStatusOverride(jobId, updates) {
+  try {
+    const overrides = getLocalStatusOverrides();
+    const idKey = String(jobId);
+    overrides[idKey] = {
+      ...(overrides[idKey] || {}),
+      ...updates,
+      updated_at: new Date().toISOString()
+    };
+    localStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(overrides));
+  } catch (e) {
+    console.error('Failed to save local status override:', e);
+  }
+}
+
+function removeLocalStatusOverride(jobId) {
+  try {
+    const overrides = getLocalStatusOverrides();
+    delete overrides[String(jobId)];
+    localStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(overrides));
+  } catch (e) {}
+}
+
+async function syncLocalOverridesToServer() {
+  const overrides = getLocalStatusOverrides();
+  const jobIds = Object.keys(overrides);
+  if (jobIds.length === 0) return;
+
+  for (const jid of jobIds) {
+    const ov = overrides[jid];
+    try {
+      const payload = {};
+      if (ov.status !== undefined && ov.status !== null) payload.status = ov.status;
+      if (ov.notes !== undefined && ov.notes !== null) payload.notes = ov.notes;
+      if (ov.stage !== undefined && ov.stage !== null) payload.stage = ov.stage;
+      if (ov.follow_up_date !== undefined && ov.follow_up_date !== null) payload.follow_up_date = ov.follow_up_date;
+
+      await window.fetch(`/api/jobs/${jid}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {
+      // Background sync retry
+    }
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    syncLocalOverridesToServer();
+    loadStats();
+  }
+});
+
+window.addEventListener('online', () => {
+  syncLocalOverridesToServer();
+  loadStats();
+  loadJobs();
+});
+
 async function checkAuthStatus() {
   try {
     const res = await originalFetch('/api/auth/status', {
@@ -842,9 +946,44 @@ async function loadJobs() {
       params.set('platform', currentPlatform);
     }
 
-    const res = await fetch(`/api/jobs?${params.toString()}`);
+    const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, {}, 3);
     const data = await res.json();
     let jobs = data.jobs || [];
+
+    // Local-First Overrides Overlay
+    const overrides = getLocalStatusOverrides();
+    jobs.forEach(j => {
+      const ov = overrides[String(j.id)];
+      if (ov) {
+        if (ov.status !== undefined && ov.status !== null) j.status = ov.status;
+        if (ov.notes !== undefined && ov.notes !== null) j.notes = ov.notes;
+        if (ov.stage !== undefined && ov.stage !== null) j.pipeline_stage = ov.stage;
+        if (ov.follow_up_date !== undefined && ov.follow_up_date !== null) j.follow_up_date = ov.follow_up_date;
+        if (ov.applied_at) j.applied_at = ov.applied_at;
+      }
+    });
+
+    // Filter out jobs whose overridden status doesn't match currentStatus
+    if (currentStatus !== 'all') {
+      jobs = jobs.filter(j => (j.status || 'new') === currentStatus);
+    }
+
+    // Inject any locally saved/applied jobs that the server might not have yet (e.g. serverless cold start / lag)
+    if (currentStatus === 'applied' || currentStatus === 'saved') {
+      const existingIds = new Set(jobs.map(j => j.id));
+      for (const [idStr, ov] of Object.entries(overrides)) {
+        const idNum = parseInt(idStr, 10);
+        if (!existingIds.has(idNum) && ov.status === currentStatus && ov.job) {
+          const injectedJob = { ...ov.job };
+          injectedJob.status = ov.status;
+          if (ov.notes) injectedJob.notes = ov.notes;
+          if (ov.stage) injectedJob.pipeline_stage = ov.stage;
+          if (ov.follow_up_date) injectedJob.follow_up_date = ov.follow_up_date;
+          if (ov.applied_at) injectedJob.applied_at = ov.applied_at;
+          jobs.unshift(injectedJob);
+        }
+      }
+    }
 
     // Client-side Senior suppression
     if (hideSenior && !selectedLevels.has('Senior / Lead')) {
@@ -1272,18 +1411,36 @@ function fallbackCopy(text, company) {
   showToast(`Tailored pitch copied for ${company}.`);
 }
 
-// Show toast notification
-function showToast(message) {
+// Show toast notification with optional Undo / action button
+function showToast(message, actionText = null, onAction = null) {
   const container = document.getElementById('toast-container');
   if (!container) return;
   const toast = document.createElement('div');
   toast.className = 'toast-item';
-  toast.textContent = message;
+
+  const textSpan = document.createElement('span');
+  textSpan.textContent = message;
+  toast.appendChild(textSpan);
+
+  if (actionText && typeof onAction === 'function') {
+    const btn = document.createElement('button');
+    btn.className = 'toast-undo-btn';
+    btn.type = 'button';
+    btn.textContent = actionText;
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      toast.remove();
+      onAction();
+    };
+    toast.appendChild(btn);
+  }
+
   container.appendChild(toast);
+  const duration = actionText ? 5000 : 2800;
   setTimeout(() => {
     toast.classList.add('fade-out');
     setTimeout(() => toast.remove(), 300);
-  }, 2600);
+  }, duration);
 }
 
 // Render cards
@@ -1443,13 +1600,21 @@ function selectCard(idx) {
   }
 }
 
-// Apply button handler
+// Apply button handler (Instant non-blocking local-first update with 1-click Undo)
 function handleApplyClick(e, jobId) {
-  setTimeout(() => {
-    if (confirm('Mark this position as "Applied" in your tracking pipeline?')) {
-      updateJobStatus(jobId, 'applied');
-    }
-  }, 400);
+  const job = jobsList.find(j => j.id === jobId);
+  if (!job) return;
+
+  // In applied view, simply let the external link open
+  if (currentStatus === 'applied' || job.status === 'applied') {
+    return;
+  }
+
+  const prevStatus = job.status || 'new';
+  updateJobStatus(jobId, 'applied');
+  showToast(`Marked ${job.company} as Applied. Moved to Pipeline.`, 'Undo', () => {
+    updateJobStatus(jobId, prevStatus);
+  });
 }
 
 // Stage change handler
@@ -1478,12 +1643,31 @@ function saveJobFollowUp(jobId, newDate) {
   }
 }
 
-// Update status via API (Optimistic in-place update without reloading the web page or feed)
+// Update status via API (Optimistic in-place update with Local-First persistence & auto-retry)
 async function updateJobStatus(jobId, status = null, notes = null, stage = null, followUp = null) {
   const jobIdx = jobsList.findIndex(j => j.id === jobId);
-  const targetJob = jobIdx >= 0 ? jobsList[jobIdx] : null;
+  let targetJob = jobIdx >= 0 ? jobsList[jobIdx] : null;
 
-  // 1. In-place Optimistic UI Updates
+  // Fallback to locally cached job object
+  if (!targetJob) {
+    const overrides = getLocalStatusOverrides();
+    if (overrides[String(jobId)] && overrides[String(jobId)].job) {
+      targetJob = overrides[String(jobId)].job;
+    }
+  }
+
+  // 1. Save immediately to Local-First storage (Instant offline/idle durability)
+  const overrideUpdate = {};
+  if (status !== null) overrideUpdate.status = status;
+  if (notes !== null) overrideUpdate.notes = notes;
+  if (stage !== null) overrideUpdate.stage = stage;
+  if (followUp !== null) overrideUpdate.follow_up_date = followUp;
+  if (status === 'applied') overrideUpdate.applied_at = (targetJob && targetJob.applied_at) || new Date().toISOString();
+  if (targetJob) overrideUpdate.job = { ...targetJob, ...overrideUpdate };
+
+  saveLocalStatusOverride(jobId, overrideUpdate);
+
+  // 2. In-place Optimistic UI Updates
   if (status === 'ignored') {
     const cardEl = document.getElementById(`job-card-${jobIdx}`);
     if (cardEl) {
@@ -1507,10 +1691,14 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
     if (targetJob) {
       if (currentStatus === 'saved') {
         targetJob.status = 'new';
+        overrideUpdate.status = 'new';
+        if (targetJob) overrideUpdate.job = { ...targetJob, status: 'new' };
+        saveLocalStatusOverride(jobId, overrideUpdate);
+
         const cardEl = document.getElementById(`job-card-${jobIdx}`);
         if (cardEl) cardEl.classList.add('card-dismissing');
         showToast('Opportunity unstarred and moved back to Inbox.');
-        jobsList.splice(jobIdx, 1);
+        if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
         updateSummaryText(jobsList.length);
         setTimeout(() => {
           renderJobs();
@@ -1524,7 +1712,7 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
         const cardEl = document.getElementById(`job-card-${jobIdx}`);
         if (cardEl) cardEl.classList.add('card-dismissing');
         showToast('Opportunity saved! Moved to Saved tab.');
-        jobsList.splice(jobIdx, 1);
+        if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
         updateSummaryText(jobsList.length);
         setTimeout(() => {
           renderJobs();
@@ -1537,12 +1725,19 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
     }
   } else if (status === 'applied') {
     if (targetJob) {
-      targetJob.status = 'applied';
-      if (currentStatus === 'new' || currentStatus === 'saved') {
+      if (currentStatus === 'applied') {
+        // Toggle back from Pipeline to Inbox
+        targetJob.status = 'new';
+        overrideUpdate.status = 'new';
+        if (targetJob) overrideUpdate.job = { ...targetJob, status: 'new' };
+        saveLocalStatusOverride(jobId, overrideUpdate);
+
         const cardEl = document.getElementById(`job-card-${jobIdx}`);
         if (cardEl) cardEl.classList.add('card-dismissing');
-        showToast('Marked as Applied! Moved to Pipeline.');
-        jobsList.splice(jobIdx, 1);
+        showToast(`Moved ${targetJob.company} back to Inbox.`, 'Undo', () => {
+          updateJobStatus(jobId, 'applied');
+        });
+        if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
         updateSummaryText(jobsList.length);
         setTimeout(() => {
           renderJobs();
@@ -1552,9 +1747,42 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
           selectCard(selectedIndex);
         }, 220);
       } else {
-        targetJob.pipeline_stage = stage || targetJob.pipeline_stage || 'applied';
-        renderJobs();
-        selectCard(selectedIndex);
+        // Mark as applied from new or saved feed
+        targetJob.status = 'applied';
+        targetJob.applied_at = targetJob.applied_at || new Date().toISOString();
+        const prevStatus = currentStatus === 'saved' ? 'saved' : 'new';
+        showToast(`Marked ${targetJob.company} as Applied! Moved to Pipeline.`, 'Undo', () => {
+          updateJobStatus(jobId, prevStatus);
+        });
+
+        const cardEl = document.getElementById(`job-card-${jobIdx}`);
+        if (cardEl) cardEl.classList.add('card-dismissing');
+        if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
+        updateSummaryText(jobsList.length);
+        setTimeout(() => {
+          renderJobs();
+          if (selectedIndex >= jobsList.length) {
+            selectedIndex = Math.max(0, jobsList.length - 1);
+          }
+          selectCard(selectedIndex);
+        }, 220);
+      }
+    }
+  } else if (status === 'new') {
+    if (targetJob) {
+      targetJob.status = 'new';
+      if (currentStatus === 'applied' || currentStatus === 'saved') {
+        const cardEl = document.getElementById(`job-card-${jobIdx}`);
+        if (cardEl) cardEl.classList.add('card-dismissing');
+        if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
+        updateSummaryText(jobsList.length);
+        setTimeout(() => {
+          renderJobs();
+          if (selectedIndex >= jobsList.length) {
+            selectedIndex = Math.max(0, jobsList.length - 1);
+          }
+          selectCard(selectedIndex);
+        }, 220);
       }
     }
   } else if (stage !== null && targetJob) {
@@ -1566,29 +1794,27 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
     targetJob.follow_up_date = followUp;
   }
 
-  // 2. Background Persistence to Server
+  // 3. Background Persistence to Server with Resilient Retries
   try {
     const payload = {};
-    if (status === 'saved') {
-      payload.status = targetJob ? targetJob.status : 'saved';
-    } else if (status !== null) {
+    if (status !== null) {
       payload.status = status;
     }
     if (notes !== null) payload.notes = notes;
     if (stage !== null) payload.stage = stage;
     if (followUp !== null) payload.follow_up_date = followUp;
 
-    const res = await fetch(`/api/jobs/${jobId}/status`, {
+    const res = await resilientFetchWithRetry(`/api/jobs/${jobId}/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
-    });
-    if (res.ok) {
+    }, 3);
+
+    if (res && res.ok) {
       loadStats(); // Silently update telemetry badges without reloading feed
     }
   } catch (err) {
-    console.error('Failed to persist status change:', err);
-    showToast(`Sync warning: ${err.message}`);
+    console.warn('Network sync warning (local storage is preserved):', err);
   }
 }
 
@@ -1719,8 +1945,12 @@ function setupKeyboardNavigation() {
       if (selectedJob) {
         e.preventDefault();
         window.open(selectedJob.job_url, '_blank');
-        if (confirm(`Mark "${selectedJob.title}" as Applied?`)) {
+        if (currentStatus !== 'applied' && selectedJob.status !== 'applied') {
+          const prevStatus = selectedJob.status || 'new';
           updateJobStatus(selectedJob.id, 'applied');
+          showToast(`Marked ${selectedJob.company} as Applied. Moved to Pipeline.`, 'Undo', () => {
+            updateJobStatus(selectedJob.id, prevStatus);
+          });
         }
       }
     } else if (e.key === 'p') {
@@ -1748,6 +1978,16 @@ function setStatus(status, elem) {
   persistSetting('status', status);
   document.querySelectorAll('.status-tab').forEach(t => t.classList.remove('active'));
   elem.classList.add('active');
+
+  // When switching to pipeline, default date filter to 'all' so no applied jobs are hidden
+  if (status === 'applied' && currentDateFilter !== 'all') {
+    currentDateFilter = 'all';
+    persistSetting('date_filter', 'all');
+    document.querySelectorAll('#date-group .filter-chip').forEach(chip => {
+      chip.classList.toggle('active', chip.getAttribute('data-val') === 'all');
+    });
+  }
+
   loadJobs();
 }
 

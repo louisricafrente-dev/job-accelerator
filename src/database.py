@@ -367,8 +367,14 @@ def get_jobs(
             params.extend([query_param, query_param, query_param, query_param, query_param])
 
     if date_filter and date_filter != "all":
-        clauses.append("date_posted GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'")
-        effective_date = "substr(date_posted, 1, 10)"
+        # If querying applied jobs, filter by when the user actually applied (COALESCE(applied_at, updated_at, date_posted))
+        if status == "applied" or (status and "applied" in status):
+            effective_date = "substr(COALESCE(applied_at, updated_at, date_posted), 1, 10)"
+            clauses.append("COALESCE(applied_at, updated_at, date_posted) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'")
+        else:
+            effective_date = "substr(date_posted, 1, 10)"
+            clauses.append("date_posted GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'")
+
         if date_filter == "today":
             clauses.append(f"{effective_date} >= date('now', 'localtime')")
         elif date_filter == "3days":
@@ -379,7 +385,8 @@ def get_jobs(
             clauses.append(f"{effective_date} >= date('now', '-14 days')")
 
     where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    query = f"SELECT * FROM jobs {where_sql} ORDER BY COALESCE(date_posted, '') DESC, updated_at DESC, id DESC LIMIT ? OFFSET ?"
+    order_by = "COALESCE(applied_at, updated_at) DESC, id DESC" if (status == "applied" or (status and "applied" in status)) else "COALESCE(date_posted, '') DESC, updated_at DESC, id DESC"
+    query = f"SELECT * FROM jobs {where_sql} ORDER BY {order_by} LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
     cursor = conn.execute(query, params)
