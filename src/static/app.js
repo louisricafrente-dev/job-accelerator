@@ -228,15 +228,428 @@ const ICONS = {
   saveDisk: `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>`
 };
 
-// Lifecycle Bootstrap
-document.addEventListener('DOMContentLoaded', async () => {
+// --------------------------------------------------------------------------
+// SECURITY GATEWAY & MULTI-TENANT ACCESS CONTROL (GOOGLE 2FA / GUEST SANDBOX)
+// --------------------------------------------------------------------------
+let currentUserRole = null; // 'admin' | 'guest'
+let currentSessionToken = localStorage.getItem('job_accel_session_token') || '';
+let totpSetupData = null;
+let isDashboardBootstrapped = false;
+
+// Universal fetch interceptor to attach bearer token and intercept 401s
+const originalFetch = window.fetch;
+window.fetch = function(url, options = {}) {
+  options = options || {};
+  options.headers = options.headers || {};
+  if (currentSessionToken) {
+    if (options.headers instanceof Headers) {
+      if (!options.headers.has('Authorization')) {
+        options.headers.set('Authorization', `Bearer ${currentSessionToken}`);
+      }
+    } else if (Array.isArray(options.headers)) {
+      options.headers.push(['Authorization', `Bearer ${currentSessionToken}`]);
+    } else {
+      if (!options.headers['Authorization']) {
+        options.headers['Authorization'] = `Bearer ${currentSessionToken}`;
+      }
+    }
+  }
+  return originalFetch(url, options).then(response => {
+    const urlStr = typeof url === 'string' ? url : (url.url || '');
+    if (response.status === 401 && !urlStr.includes('/api/auth/')) {
+      currentUserRole = null;
+      updateAuthUI();
+      showAuthGate();
+    }
+    return response;
+  });
+};
+
+async function checkAuthStatus() {
+  try {
+    const res = await originalFetch('/api/auth/status', {
+      headers: currentSessionToken ? { 'Authorization': `Bearer ${currentSessionToken}` } : {}
+    });
+    if (!res.ok) {
+      currentUserRole = null;
+      updateAuthUI();
+      return false;
+    }
+    const data = await res.json();
+    if (data.authenticated) {
+      currentUserRole = data.role;
+      updateAuthUI();
+      return true;
+    }
+    currentUserRole = null;
+    updateAuthUI();
+    return false;
+  } catch (err) {
+    currentUserRole = null;
+    updateAuthUI();
+    return false;
+  }
+}
+
+function updateAuthUI() {
+  const pill = document.getElementById('auth-mode-pill');
+  const pillText = document.getElementById('auth-pill-text');
+  const btn2fa = document.getElementById('btn-2fa-setup');
+  const btnAction = document.getElementById('btn-auth-action');
+  const actionText = document.getElementById('auth-action-text');
+
+  const syncBtn = document.getElementById('sync-btn');
+  const syncTxt = document.getElementById('sync-text');
+  const digestBtn = document.getElementById('btn-daily-digest');
+
+  if (currentUserRole === 'admin') {
+    if (pill) {
+      pill.className = 'auth-pill admin-pill';
+      pill.title = 'Admin session active — master database (data/jobs.db) unlocked';
+    }
+    if (pillText) pillText.textContent = 'Admin Mode';
+    if (btn2fa) btn2fa.style.display = 'inline-flex';
+    if (actionText) actionText.textContent = 'Lock';
+    if (btnAction) {
+      btnAction.title = 'Lock admin session & return to security gate';
+      btnAction.className = 'btn-subtle';
+    }
+    if (syncBtn) {
+      syncBtn.title = 'Scrape 15 job boards including OnlineJobs.ph for latest postings';
+      syncBtn.classList.remove('btn-locked');
+    }
+    if (syncTxt) syncTxt.textContent = 'Sync 15 Boards';
+    if (digestBtn) digestBtn.style.opacity = '1';
+  } else if (currentUserRole === 'guest') {
+    if (pill) {
+      pill.className = 'auth-pill guest-pill';
+      pill.title = 'Guest Sandbox active — private temporary database in use';
+    }
+    if (pillText) pillText.textContent = 'Guest Sandbox';
+    if (btn2fa) btn2fa.style.display = 'none';
+    if (actionText) actionText.textContent = 'Admin Unlock';
+    if (btnAction) {
+      btnAction.title = 'Switch to Admin mode (requires Google Authenticator)';
+      btnAction.className = 'btn-primary';
+    }
+    if (syncBtn) {
+      syncBtn.title = '🔒 Only Admin can harvest and add new data to the system.';
+      syncBtn.classList.add('btn-locked');
+    }
+    if (syncTxt) syncTxt.textContent = 'Sync (Admin Only)';
+    if (digestBtn) digestBtn.style.opacity = '0.5';
+  } else {
+    if (pill) pill.className = 'auth-pill';
+    if (pillText) pillText.textContent = 'Locked';
+    if (btn2fa) btn2fa.style.display = 'none';
+    if (actionText) actionText.textContent = 'Unlock';
+  }
+}
+
+function showAuthGate() {
+  const modal = document.getElementById('auth-gate-modal');
+  if (modal) {
+    modal.style.display = 'flex';
+    const input = document.getElementById('totp-code-input');
+    if (input) {
+      input.value = '';
+      setTimeout(() => input.focus(), 100);
+    }
+  }
+}
+
+function hideAuthGate() {
+  const modal = document.getElementById('auth-gate-modal');
+  if (modal) {
+    modal.style.display = 'none';
+  }
+}
+
+function switchAuthTab(tab) {
+  const tabAdmin = document.getElementById('tab-admin');
+  const tabGuest = document.getElementById('tab-guest');
+  const panelAdmin = document.getElementById('auth-panel-admin');
+  const panelGuest = document.getElementById('auth-panel-guest');
+  const errBox = document.getElementById('totp-error-msg');
+  if (errBox) errBox.style.display = 'none';
+
+  if (tab === 'admin') {
+    tabAdmin?.classList.add('active');
+    tabGuest?.classList.remove('active');
+    if (panelAdmin) panelAdmin.style.display = 'flex';
+    if (panelGuest) panelGuest.style.display = 'none';
+    const input = document.getElementById('totp-code-input');
+    if (input) setTimeout(() => input.focus(), 80);
+  } else {
+    tabGuest?.classList.add('active');
+    tabAdmin?.classList.remove('active');
+    if (panelGuest) panelGuest.style.display = 'flex';
+    if (panelAdmin) panelAdmin.style.display = 'none';
+  }
+}
+
+async function submitAdminTotp() {
+  const input = document.getElementById('totp-code-input');
+  const btn = document.getElementById('btn-unlock-admin');
+  const errBox = document.getElementById('totp-error-msg');
+  if (!input) return;
+
+  const code = input.value.trim().replace(/\s+/g, '');
+  if (code.length !== 6 || !/^\d{6}$/.test(code)) {
+    if (errBox) {
+      errBox.textContent = 'Please enter a valid 6-digit verification code.';
+      errBox.style.display = 'block';
+    }
+    input.focus();
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  if (errBox) errBox.style.display = 'none';
+
+  try {
+    const res = await originalFetch('/api/auth/login-admin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      currentUserRole = 'admin';
+      currentSessionToken = data.token;
+      localStorage.setItem('job_accel_session_token', data.token);
+      hideAuthGate();
+      updateAuthUI();
+      showToast('👑 Welcome back, Admin! Master database unlocked with all your data.');
+      await bootstrapDashboard();
+    } else {
+      if (errBox) {
+        errBox.textContent = data.error || 'Invalid 6-digit code. Check your Google Authenticator app.';
+        errBox.style.display = 'block';
+      }
+      input.select();
+      input.focus();
+    }
+  } catch (err) {
+    if (errBox) {
+      errBox.textContent = `Connection error: ${err.message}`;
+      errBox.style.display = 'block';
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function submitGuestAccess() {
+  const btn = document.getElementById('btn-enter-guest');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await originalFetch('/api/auth/login-guest', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      currentUserRole = 'guest';
+      currentSessionToken = data.token;
+      localStorage.setItem('job_accel_session_token', data.token);
+      hideAuthGate();
+      updateAuthUI();
+      showToast('🧪 Guest Sandbox initialized! Your edits are saved to your private local database.');
+      await bootstrapDashboard();
+    } else {
+      showToast('Could not initialize sandbox: ' + (data.error || 'Unknown error'));
+    }
+  } catch (err) {
+    showToast(`Error initializing guest workspace: ${err.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function resetGuestSandbox() {
+  if (!confirm('Are you sure you want to reset your Guest Sandbox? This will re-initialize your temporary database with clean demo opportunities.')) {
+    return;
+  }
+  try {
+    const res = await fetch('/api/auth/reset-sandbox', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast('Guest Sandbox re-initialized to clean state.');
+      await loadStats();
+      await loadJobs();
+    } else {
+      showToast(data.error || 'Reset error');
+    }
+  } catch (err) {
+    showToast(`Reset error: ${err.message}`);
+  }
+}
+
+async function lockSession() {
+  try {
+    await originalFetch('/api/auth/logout', { method: 'POST' });
+  } catch (e) {}
+  localStorage.removeItem('job_accel_session_token');
+  currentSessionToken = '';
+  currentUserRole = null;
+  updateAuthUI();
+  showAuthGate();
+  showToast('Dashboard locked.');
+}
+
+function handleAuthAction() {
+  if (currentUserRole === 'admin') {
+    lockSession();
+  } else {
+    switchAuthTab('admin');
+    showAuthGate();
+  }
+}
+
+async function loadTotpSetupInfo() {
+  if (totpSetupData) return totpSetupData;
+  try {
+    const res = await originalFetch('/api/auth/setup');
+    if (res.ok) {
+      totpSetupData = await res.json();
+      return totpSetupData;
+    }
+  } catch (e) {
+    console.warn('Could not load TOTP setup:', e);
+  }
+  return null;
+}
+
+async function toggleTotpSetupDrawer() {
+  const drawer = document.getElementById('totp-setup-drawer');
+  const btnLabel = document.getElementById('setup-drawer-btn-label');
+  if (!drawer) return;
+
+  const isOpening = drawer.style.display === 'none';
+  if (isOpening) {
+    drawer.style.display = 'block';
+    if (btnLabel) btnLabel.textContent = 'Hide Google Authenticator Setup';
+    const info = await loadTotpSetupInfo();
+    if (info) {
+      const codeEl = document.getElementById('totp-secret-text');
+      if (codeEl) codeEl.textContent = info.secret;
+      renderQrCodeInBox('totp-qrcode', info.otpauth_uri);
+    }
+  } else {
+    drawer.style.display = 'none';
+    if (btnLabel) btnLabel.textContent = 'Show Google Authenticator QR Code & Secret Key';
+  }
+}
+
+async function show2FASetupModal() {
+  const modal = document.getElementById('totp-manage-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  const info = await loadTotpSetupInfo();
+  if (info) {
+    const codeEl = document.getElementById('totp-secret-text-manage');
+    if (codeEl) codeEl.textContent = info.secret;
+    renderQrCodeInBox('totp-qrcode-manage', info.otpauth_uri);
+  }
+}
+
+function toggle2FAModal() {
+  const modal = document.getElementById('totp-manage-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function renderQrCodeInBox(containerId, otpauthUri) {
+  const box = document.getElementById(containerId);
+  if (!box || !otpauthUri) return;
+  box.innerHTML = '';
+  if (typeof QRCode !== 'undefined') {
+    try {
+      new QRCode(box, {
+        text: otpauthUri,
+        width: 160,
+        height: 160,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M
+      });
+      return;
+    } catch (e) {
+      console.warn('qrcode.js rendering error:', e);
+    }
+  }
+  const img = document.createElement('img');
+  img.src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(otpauthUri)}`;
+  img.alt = 'Google Authenticator QR Code';
+  box.appendChild(img);
+}
+
+function copyTotpSecret() {
+  const secret = totpSetupData ? totpSetupData.secret : 'Q5KCQIMSEQDW6XUUFG6HLC7VEIJPYREA';
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(secret).then(() => {
+      showToast('Base32 Secret Key copied to clipboard!');
+    }).catch(() => {
+      showToast('Key: ' + secret);
+    });
+  } else {
+    showToast('Key: ' + secret);
+  }
+}
+
+function setupTotpInputAutoSubmit() {
+  const input = document.getElementById('totp-code-input');
+  if (!input) return;
+
+  input.addEventListener('input', (e) => {
+    const cleaned = e.target.value.replace(/\D/g, '').slice(0, 6);
+    e.target.value = cleaned;
+    if (cleaned.length === 6) {
+      submitAdminTotp();
+    }
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      submitAdminTotp();
+    }
+  });
+
+  input.addEventListener('paste', (e) => {
+    setTimeout(() => {
+      const cleaned = input.value.replace(/\D/g, '').slice(0, 6);
+      input.value = cleaned;
+      if (cleaned.length === 6) {
+        submitAdminTotp();
+      }
+    }, 20);
+  });
+}
+
+async function bootstrapDashboard() {
+  if (isDashboardBootstrapped) {
+    await loadStats();
+    await loadJobs();
+    return;
+  }
+  isDashboardBootstrapped = true;
   await loadAllUserSettings();
   renderSkillChips();
   updateActiveSkillsBadge();
-  loadStats();
-  loadJobs();
+  await loadStats();
+  await loadJobs();
+}
+
+// Lifecycle Bootstrap
+document.addEventListener('DOMContentLoaded', async () => {
+  setupTotpInputAutoSubmit();
+  const isAuthenticated = await checkAuthStatus();
+  if (isAuthenticated) {
+    hideAuthGate();
+    await bootstrapDashboard();
+  } else {
+    showAuthGate();
+  }
   setupKeyboardNavigation();
 });
+
 
 // Universal persistence helper (saves to both localStorage & server SQLite)
 function persistSetting(key, value) {
@@ -1244,6 +1657,10 @@ let syncPollTimer = null;
 
 // Trigger Sync (Non-blocking Background Execution with Live Polling)
 async function triggerSync() {
+  if (currentUserRole !== 'admin') {
+    showToast('🔒 Only Admin can harvest and add new opportunities to the system. As a guest, you can explore, filter, and save opportunities!');
+    return;
+  }
   const btn = document.getElementById('sync-btn');
   const spinner = document.getElementById('sync-spinner');
   const txt = document.getElementById('sync-text');
@@ -1757,6 +2174,10 @@ function filterRemoteVAJobs() {
 // AUTOMATED DAILY EMAIL DIGEST
 // --------------------------------------------------------------------------
 async function triggerEmailDigest() {
+  if (currentUserRole !== 'admin') {
+    showToast('🔒 Daily email digest is reserved for Admin.');
+    return;
+  }
   const btn = document.getElementById('btn-daily-digest');
   if (btn) btn.disabled = true;
   showToast('Compiling and dispatching daily job digest to michael18ricafrente@gmail.com...');
