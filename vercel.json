@@ -7,7 +7,8 @@
       "config": {
         "includeFiles": [
           "src/**",
-          "data/**"
+          "data/**",
+          "scripts/**"
         ]
       }
     }
@@ -16,6 +17,12 @@
     {
       "src": "/(.*)",
       "dest": "api/index.py"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/notify/daily",
+      "schedule": "0 0 * * *"
     }
   ]
 }
