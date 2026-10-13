@@ -850,6 +850,12 @@ a {
   color: var(--accent-cyan);
 }
 
+.toggle-pill-btn.va-active {
+  background-color: rgba(168, 85, 247, 0.12);
+  border-color: rgba(168, 85, 247, 0.45);
+  color: #c084fc;
+}
+
 .toggle-indicator {
   width: 7px;
   height: 7px;
@@ -861,6 +867,11 @@ a {
 .toggle-pill-btn.active .toggle-indicator {
   background-color: var(--accent-cyan);
   box-shadow: 0 0 6px var(--accent-cyan);
+}
+
+.toggle-pill-btn.va-active .toggle-indicator {
+  background-color: #a855f7;
+  box-shadow: 0 0 6px rgba(168, 85, 247, 0.8);
 }
 
 .toggle-switch-label {

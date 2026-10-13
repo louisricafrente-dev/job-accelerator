@@ -214,6 +214,7 @@ def get_jobs(
     has_salary: bool = False,
     remote_only: bool = False,
     hide_senior: bool = False,
+    include_va: bool = False,
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
@@ -233,7 +234,24 @@ def get_jobs(
             params.append(status)
     if role_category and role_category != "All":
         rc = role_category.strip()
-        if rc == "Frontend":
+        if rc in ("Virtual Assistant", "VA", "VA (With Training)"):
+            training_sub = [
+                "lower(title) LIKE '%training%'",
+                "lower(title) LIKE '%entry%'",
+                "lower(title) LIKE '%junior%'",
+                "lower(title) LIKE '%no experience%'",
+                "lower(title) LIKE '%trainee%'",
+                "lower(title) LIKE '%open for fresh%'",
+                "lower(title) LIKE '%open to fresh%'",
+                "lower(title) LIKE '%beginner%'",
+                "lower(title) LIKE '%cyberbacker%'",
+                "lower(title) LIKE '%athena%'",
+                "lower(title) LIKE '%virtudesk%'",
+                "lower(title) LIKE '%pineapple staffing%'",
+                "experience_level = 'Junior / Entry'"
+            ]
+            clauses.append(f"((role_category = 'Virtual Assistant' OR lower(title) LIKE '%virtual assistant%' OR lower(title) LIKE '%administrative assistant%') AND ({' OR '.join(training_sub)}))")
+        elif rc == "Frontend":
             frontend_pats = ["%frontend%", "%front-end%", "%react%", "%vue%", "%angular%", "%ui dev%", "%web designer%", "%svelte%"]
             sub_clauses = ["(role_category = 'Frontend' OR role_category = 'Both')"]
             for pat in frontend_pats:
@@ -283,10 +301,13 @@ def get_jobs(
                 params.append(pat)
             clauses.append(f"({' OR '.join(sub_clauses)})")
         elif rc == "Web/Software Dev":
-            clauses.append("(role_category = 'Web/Software Dev' OR role_category = 'Both' OR role_category != 'Data/AI/ML')")
+            clauses.append("(role_category = 'Web/Software Dev' OR role_category = 'Both' OR (role_category != 'Data/AI/ML' AND role_category != 'Virtual Assistant'))")
         else:
             clauses.append("(role_category = ? OR role_category = 'Both' OR lower(title) LIKE ?)")
             params.extend([rc, f"%{rc.lower()}%"])
+
+    if not include_va and role_category not in ("Virtual Assistant", "VA", "VA (With Training)"):
+        clauses.append("(role_category != 'Virtual Assistant' AND lower(title) NOT LIKE '%virtual assistant%' AND lower(title) NOT LIKE '%administrative assistant%')")
     if experience_level and experience_level != "All":
         raw_levels = [l.strip() for l in experience_level.split(",") if l.strip() and l.strip() != "All"]
         if raw_levels:

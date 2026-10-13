@@ -19,7 +19,7 @@ class JobSpyAdapter(BaseConnector):
                 site_name=[self.site_name],
                 search_term=query,
                 location=location,
-                results_wanted=20,
+                results_wanted=35,
                 country_indeed="philippines" if "indeed" in self.site_name else None,
                 hours_old=168
             )

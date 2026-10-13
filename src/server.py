@@ -39,6 +39,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         has_salary = bottle.request.query.get("has_salary", "0") in ("1", "true", "True")
         remote_only = bottle.request.query.get("remote_only", "0") in ("1", "true", "True")
         hide_senior = bottle.request.query.get("hide_senior", "0") in ("1", "true", "True")
+        include_va = bottle.request.query.get("include_va", "0") in ("1", "true", "True")
         tier = int(tier_str) if tier_str.isdigit() else None
 
         query_status = status
@@ -54,6 +55,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             has_salary=has_salary,
             remote_only=remote_only,
             hide_senior=hide_senior,
+            include_va=include_va,
             limit=200
         )
         bottle.response.content_type = "application/json"
