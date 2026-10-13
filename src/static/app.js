@@ -13,6 +13,7 @@ let hasSalaryOnly = false;
 let remoteOnly = false;
 let hideSenior = false;
 let filterBySkillsOnly = false;
+let vaTrainingEnabled = localStorage.getItem('job_accel_va_training_enabled') === 'true';
 let searchQuery = '';
 let jobsList = [];
 let selectedIndex = 0;
@@ -23,6 +24,16 @@ let userStack = localStorage.getItem('job_accel_user_stack') || CANDIDATE_DEFAUL
 
 // Categorized preset skills for developer clarity & fast discovery (Comprehensive Taxonomy A-M)
 const PRESET_CATEGORIES = [
+  {
+    category: "Virtual Assistant (Entry/Trainee Matrix)",
+    skills: [
+      "Virtual Assistant", "VA", "Executive Assistant", "Administrative Assistant",
+      "Remote Assistant", "Training Provided", "Paid Training", "Will Train",
+      "No Experience", "Entry Level", "Trainee", "Cyberbacker", "Athena",
+      "Virtudesk", "Pineapple Staffing", "Data Entry", "Email Management",
+      "Calendar Management", "Customer Support", "Research Assistant"
+    ]
+  },
   {
     category: "Job Titles & Seniority (Priority 1)",
     skills: [
@@ -333,6 +344,13 @@ function syncFilterControlsUI() {
   const skillsCb = document.getElementById('skills-only-checkbox');
   if (skillsCb) skillsCb.checked = filterBySkillsOnly;
 
+  const vaTrainingCb = document.getElementById('va-training-checkbox');
+  if (vaTrainingCb) vaTrainingCb.checked = vaTrainingEnabled;
+  const vaTrainingBtn = document.getElementById('toggle-va-training-btn');
+  if (vaTrainingBtn) {
+    vaTrainingBtn.classList.toggle('va-active', vaTrainingEnabled);
+  }
+
   updateFilterButtonState();
 
   // Status navigation tabs
@@ -455,6 +473,9 @@ async function loadJobs() {
     if (hasSalaryOnly) params.set('has_salary', '1');
     if (remoteOnly) params.set('remote_only', '1');
     if (hideSenior) params.set('hide_senior', '1');
+    if (vaTrainingEnabled || currentRole === 'Virtual Assistant') {
+      params.set('include_va', '1');
+    }
 
     const res = await fetch(`/api/jobs?${params.toString()}`);
     const data = await res.json();
@@ -803,6 +824,24 @@ function updateFilterButtonState() {
       btn.classList.remove('active');
     }
   }
+}
+
+function toggleVaTraining() {
+  vaTrainingEnabled = !vaTrainingEnabled;
+  localStorage.setItem('job_accel_va_training_enabled', vaTrainingEnabled.toString());
+  persistSetting('va_training_enabled', vaTrainingEnabled ? '1' : '0');
+  syncFilterControlsUI();
+  showToast(vaTrainingEnabled ? 'VA with training opportunities enabled in feed.' : 'Virtual Assistant opportunities hidden from main feed.');
+  loadJobs();
+}
+
+function toggleVaTrainingCheckbox(checkbox) {
+  vaTrainingEnabled = checkbox.checked;
+  localStorage.setItem('job_accel_va_training_enabled', vaTrainingEnabled.toString());
+  persistSetting('va_training_enabled', vaTrainingEnabled ? '1' : '0');
+  syncFilterControlsUI();
+  showToast(vaTrainingEnabled ? 'VA with training opportunities enabled in feed.' : 'Virtual Assistant opportunities hidden from main feed.');
+  loadJobs();
 }
 
 // Calculate days since a given date string
@@ -1381,6 +1420,12 @@ function setLevel(level, elem) {
 
 function setRole(role, elem) {
   currentRole = role;
+  if (role === 'Virtual Assistant') {
+    vaTrainingEnabled = true;
+    localStorage.setItem('job_accel_va_training_enabled', 'true');
+    persistSetting('va_training_enabled', '1');
+    syncFilterControlsUI();
+  }
   persistSetting('role', role);
   document.querySelectorAll('#role-group .filter-chip').forEach(c => c.classList.remove('active'));
   elem.classList.add('active');
@@ -1657,24 +1702,23 @@ function toggleVaHub() {
 }
 
 function filterRemoteVAJobs() {
-  const searchInput = document.getElementById('search-input');
-  const remoteCheckbox = document.getElementById('remote-only-checkbox');
-  
-  if (searchInput) searchInput.value = 'Virtual Assistant';
-  searchQuery = 'Virtual Assistant';
-  
-  if (remoteCheckbox) remoteCheckbox.checked = true;
+  vaTrainingEnabled = true;
+  localStorage.setItem('job_accel_va_training_enabled', 'true');
+  persistSetting('va_training_enabled', '1');
+  currentRole = 'Virtual Assistant';
   remoteOnly = true;
-
+  
+  const searchInput = document.getElementById('search-input');
+  if (searchInput) searchInput.value = '';
+  searchQuery = '';
+  
   // Reset seniority to All
   selectedLevels.clear();
   selectedLevels.add('All');
   currentLevel = 'All';
-  document.querySelectorAll('#level-group .filter-chip').forEach(c => {
-    c.classList.toggle('active', c.getAttribute('data-val') === 'All');
-  });
 
-  showToast('Filtered feed to Remote Virtual Assistant opportunities.');
+  syncFilterControlsUI();
+  showToast('Filtered feed to Remote Virtual Assistant opportunities (With Training).');
   loadJobs();
 }
 

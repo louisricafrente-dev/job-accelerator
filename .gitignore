@@ -1,7 +1,8 @@
 .superpowers/
 __pycache__/
 *.pyc
-data/
-*.db
 
 .vercel
+data/*.tmp
+data/*.log
+data/*.html

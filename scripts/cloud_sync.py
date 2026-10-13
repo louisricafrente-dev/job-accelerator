@@ -32,9 +32,15 @@ def run_cloud_sync():
     print(f"[*] Starting multi-board sync across {len(aggregator.connectors)} platforms...")
     start_time = time.time()
 
-    # Run synchronous multi-threaded sync
     stats = aggregator.run_sync()
     duration = time.time() - start_time
+
+    # Run safety purge to maintain 100% clean tech & training-VA database
+    try:
+        from scripts.purge_non_tech import purge_irrelevant_jobs
+        purge_irrelevant_jobs(db_path)
+    except Exception as e:
+        print(f"[*] Hygiene post-check notice: {e}")
 
     after_stats = get_stats(db_path)
     print("=" * 60)

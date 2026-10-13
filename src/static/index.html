@@ -197,6 +197,12 @@
             <span>Match Stack Only</span>
           </button>
 
+          <button id="toggle-va-training-btn" class="toggle-pill-btn" onclick="toggleVaTraining()" title="Toggle: Include Entry/Junior Virtual Assistant opportunities with training">
+            <input type="checkbox" id="va-training-checkbox" onchange="toggleVaTrainingCheckbox(this)" style="display: none;">
+            <span class="toggle-indicator"></span>
+            <span>VA (With Training)</span>
+          </button>
+
           <label class="toggle-switch-label" title="Show only listings with disclosed compensation">
             <input type="checkbox" id="salary-only-checkbox" onchange="toggleSalaryOnly(this)">
             <span class="switch-box"></span>
@@ -261,6 +267,7 @@
             <button class="filter-chip" data-val="DevOps / Cloud" onclick="setRole('DevOps / Cloud', this)">DevOps / Cloud</button>
             <button class="filter-chip" data-val="QA / Testing" onclick="setRole('QA / Testing', this)">QA &amp; Testing</button>
             <button class="filter-chip" data-val="Data/AI/ML" onclick="setRole('Data/AI/ML', this)">Data &amp; AI</button>
+            <button class="filter-chip" data-val="Virtual Assistant" onclick="setRole('Virtual Assistant', this)">VA (With Training)</button>
             <button class="filter-chip" data-val="Web/Software Dev" onclick="setRole('Web/Software Dev', this)">All Engineering</button>
           </div>
         </div>

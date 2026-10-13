@@ -107,6 +107,7 @@ class Job:
     date_posted: str = ""
     status: str = "new"
     notes: str = ""
+    description: str = ""
     dedup_hash: Optional[str] = None
     sources: Optional[List[Dict[str, str]]] = None
 

@@ -14,6 +14,7 @@ from src.connectors.remote_feed import (
 from src.connectors.ph_jobs import KalibrrConnector, BossjobConnector, JobStreetConnector, OnlineJobsConnector
 from src.connectors.jobspy_adapter import JobSpyAdapter
 from src.database import insert_jobs
+from src.classifier import is_relevant_opportunity
 import time
 from src.models import Job
 
@@ -243,8 +244,12 @@ class Aggregator:
                         platform_reports[conn.platform] = 0
 
             try:
-                added, skipped = insert_jobs(self.db_path, all_jobs)
-                self.log_event(f"[Database] Synchronized {len(all_jobs)} listings: +{added} new opportunities, {skipped} existing/cross-board merged.")
+                relevant_jobs = [j for j in all_jobs if is_relevant_opportunity(j.title, getattr(j, "description", ""), allow_va_training=True)]
+                dropped_cnt = len(all_jobs) - len(relevant_jobs)
+                if dropped_cnt > 0:
+                    self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} non-tech/unrelated listings; verified {len(relevant_jobs)} tech & training VA opportunities.")
+                added, skipped = insert_jobs(self.db_path, relevant_jobs)
+                self.log_event(f"[Database] Synchronized {len(relevant_jobs)} listings: +{added} new opportunities, {skipped} existing/cross-board merged.")
             except Exception as e:
                 added, skipped = 0, 0
                 self.log_event(f"[Database] Ingestion notice: {e}")

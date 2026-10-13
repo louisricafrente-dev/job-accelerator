@@ -98,8 +98,100 @@ DATA_AI_PATTERNS = [
     r"\blangchain\b", r"\blanggraph\b", r"\bllamaindex\b", r"\brag\b", r"\bprompt engineering\b"
 ]
 
+NON_TECH_BLACKLIST = [
+    r"\baccountant\b", r"\baccounting\b", r"\bbookkeeper\b", r"\bbookkeeping\b",
+    r"\bnurse\b", r"\bnursing\b", r"\bmedical billing\b", r"\bmedical coder\b",
+    r"\bmedical coding\b", r"\bmedical content\b", r"\bhemodialysis\b", r"\bpharmacist\b",
+    r"\bdoctor\b", r"\bphysician\b", r"\bphysical therapist\b", r"\bcashier\b", r"\bteller\b",
+    r"\btelemarketer\b", r"\bfinancial advisor\b", r"\baudit\b", r"\bauditor\b",
+    r"\bfinancial controller\b", r"\btax associate\b", r"\btax specialist\b",
+    r"\bpayroll\b", r"\bunderwriter\b", r"\breceptionist\b", r"\bcall center agent\b",
+    r"\bcustomer service representative\b", r"\bcsr\b", r"\bscientific communications\b",
+    r"\bpainter\b", r"\bgardening\b", r"\bfacility maintenance\b", r"\bbidding specialist\b",
+    r"\bleasing\b", r"\bleasing officer\b", r"\bpatient care\b", r"\bdental\b",
+    r"\bfinancial wellness\b", r"\brisk management officer\b", r"\baccounts receivable\b",
+    r"\baccounts payable\b", r"\btreasury analyst\b", r"\bcost accounting\b",
+    r"\bcivil registry\b", r"\bdata encoder\b", r"\bsocial media content intern\b",
+    r"\bschool engagement\b", r"\btechnical sales representative\b", r"\bsales and marketing\b",
+    r"\bsales representative\b", r"\bsales agent\b", r"\bsales development\b",
+    r"\bsales manager\b", r"\bsales assistant\b", r"\bmecánico\b", r"\bautomotriz\b",
+    r"\bdispense technician\b", r"\bcider\b", r"\bcrypto trader\b", r"\boperations manager\b",
+    r"\bhead of operations\b", r"\bpeople operations\b", r"\bhr specialist\b",
+    r"\bhuman resources\b", r"\brecruiter\b", r"\btalent acquisition\b", r"\bcredentialing specialist\b"
+]
+
+TECH_WHITELIST_OVERRIDE = [
+    r"\bdeveloper\b", r"\bengineer\b", r"\bprogrammer\b", r"\bsoftware\b",
+    r"\bdevops\b", r"\bsdet\b", r"\barchitect\b", r"\bfrontend\b", r"\bbackend\b",
+    r"\bfull[- ]?stack\b", r"\bandroid\b", r"\bios\b", r"\bdata engineer\b",
+    r"\bweb dev\b", r"\bweb application\b", r"\bdatabase administrator\b", r"\bdba\b",
+    r"\bcyber\s?security\b", r"\binfosec\b", r"\bweb designer\b", r"\bui/ux\b",
+    r"\bqa\b", r"\bquality assurance\b", r"\bsysadmin\b", r"\bsystem(?:s)? administrator\b",
+    r"\bnetwork engineer\b", r"\bcloud\b", r"\bproduct designer\b", r"\bquality engineering\b"
+]
+
+VA_PATTERNS = [
+    r"\bvirtual assistant\b",
+    r"\bvirtual administrative assistant\b",
+    r"(?<!,\s)\bva\b(?!\s*[-–/]\s*gov)(?!\s*,\s*(?:usa|us|united states))\b",
+    r"\bexecutive assistant\b",
+    r"\badmin assistant\b",
+    r"\badministrative assistant\b",
+    r"\bremote assistant\b"
+]
+
+VA_TRAINING_PATTERNS = [
+    r"\bwith training\b", r"\bpaid training\b", r"\bwill train\b", r"\btraining provided\b",
+    r"\btraining\b", r"\bno experience\b", r"\bno experience required\b", r"\bzero experience\b",
+    r"\bentry[- ]level\b", r"\bjunior\b", r"\btrainee\b", r"\bopen for fresh\b",
+    r"\bopen to fresh\b", r"\bbeginner\b", r"\bbeginners welcome\b", r"\bentry\b",
+    r"\bcyberbacker\b", r"\bathena\b", r"\bvirtudesk\b", r"\bpineapple staffing\b",
+    r"\bno work experience\b", r"\bcomplete training\b", r"\bfull training\b", r"\bfree training\b"
+]
+
+def is_virtual_assistant(title: str, description: str = "") -> bool:
+    title_lower = title.lower()
+    text = f"{title} {description}".lower()
+    if re.search(r"\bvirtual assistant\b", title_lower):
+        return True
+    # If title matches tech engineering override, do not misclassify as VA (e.g., Arlington, VA)
+    if any(re.search(pat, title_lower) for pat in TECH_WHITELIST_OVERRIDE):
+        return False
+    return any(re.search(pat, text) for pat in VA_PATTERNS)
+
+def is_entry_training_va(title: str, description: str = "") -> bool:
+    text = f"{title} {description}".lower()
+    if not is_virtual_assistant(title, description):
+        return False
+    return any(re.search(pat, text) for pat in VA_TRAINING_PATTERNS)
+
+def is_non_tech(title: str, description: str = "") -> bool:
+    title_lower = title.lower()
+    text = f"{title} {description}".lower()
+    has_tech_override = any(re.search(pat, title_lower) for pat in TECH_WHITELIST_OVERRIDE)
+    if has_tech_override:
+        return False
+    return any(re.search(pat, text) for pat in NON_TECH_BLACKLIST)
+
+def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True) -> bool:
+    if is_non_tech(title, description):
+        return False
+    
+    if is_virtual_assistant(title, description):
+        if allow_va_training:
+            return is_entry_training_va(title, description)
+        return False
+    
+    text = f"{title} {description}".lower()
+    is_web = any(re.search(pat, text) for pat in WEB_PATTERNS)
+    is_data = any(re.search(pat, text) for pat in DATA_AI_PATTERNS)
+    is_tech = any(re.search(pat, text) for pat in TECH_WHITELIST_OVERRIDE)
+    return is_web or is_data or is_tech
+
 def classify_experience_level(title: str, description: str = "") -> str:
     text = f"{title} {description}".lower()
+    if is_entry_training_va(title, description):
+        return "Junior / Entry"
     is_junior = any(re.search(pat, text) for pat in JUNIOR_PATTERNS)
     is_senior = any(re.search(pat, text) for pat in SENIOR_PATTERNS)
     is_mid = any(re.search(pat, text) for pat in MID_PATTERNS)
@@ -118,6 +210,8 @@ def classify_experience_level(title: str, description: str = "") -> str:
 
 def classify_role(title: str, description: str = "") -> str:
     text = f"{title} {description}".lower()
+    if is_virtual_assistant(title, description):
+        return "Virtual Assistant"
     matches_web = any(re.search(pat, text) for pat in WEB_PATTERNS)
     matches_data = any(re.search(pat, text) for pat in DATA_AI_PATTERNS)
 
