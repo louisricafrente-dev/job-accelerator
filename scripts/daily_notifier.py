@@ -21,6 +21,21 @@ root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
+# Load local .env variables if present
+env_file = os.path.join(root_dir, ".env")
+if os.path.exists(env_file):
+    try:
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k, v = k.strip(), v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+    except Exception:
+        pass
+
 from src.database import get_jobs, get_stats, init_db
 
 RECIPIENT_EMAIL = "michael18ricafrente@gmail.com"
@@ -76,7 +91,7 @@ def build_html_content(data: dict, dashboard_url: str = "") -> str:
     top_matches = data["top_matches"]
     date_str = data["date_str"]
 
-    dash_link = dashboard_url or "https://louisricafrente-dev.vercel.app"
+    dash_link = dashboard_url or "https://job-accelerator.vercel.app"
 
     platform_rows = ""
     for plat, count in sorted(platform_counts.items(), key=lambda x: x[1], reverse=True):
