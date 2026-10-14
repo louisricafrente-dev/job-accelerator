@@ -149,6 +149,7 @@ class Aggregator:
                         }
                         return cached_entry["jobs"]
 
+                results: List[Job] = []
                 # 2. Distinguish feed connectors from query-based scrapers
                 is_feed = hasattr(conn, "is_feed") or conn.platform in (
                     "Remote OK", "We Work Remotely", "Arc", "Foundit", "Upwork", "Wellfound", "Remotive", "Himalayas"
