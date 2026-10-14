@@ -149,10 +149,9 @@ class Aggregator:
                         }
                         return cached_entry["jobs"]
 
-                results: List[Job] = []
                 # 2. Distinguish feed connectors from query-based scrapers
                 is_feed = hasattr(conn, "is_feed") or conn.platform in (
-                    "Remote OK", "We Work Remotely", "Arc", "Foundit", "Upwork", "Wellfound", "JobStreet", "Remotive", "Himalayas"
+                    "Remote OK", "We Work Remotely", "Arc", "Foundit", "Upwork", "Wellfound", "Remotive", "Himalayas"
                 )
 
                 if is_feed:
@@ -177,32 +176,31 @@ class Aggregator:
                             "timestamp": time.strftime("%H:%M:%S")
                         }
                 else:
-                    # Scrapers (LinkedIn, Indeed, Glassdoor) or search APIs (Kalibrr, Bossjob):
-                    # Smart multi-discipline query selection ensuring full coverage
-                    tech_q = [q for q in search_queries if not any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad"])]
+                    # MAX MODE: Multi-track dynamic query selection covering the user's entire stack
+                    tech_q = [q for q in search_queries if not any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad", "android", "mobile", "kotlin", "flutter", "react native", "ios"])]
                     jr_q = [q for q in search_queries if any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad"])]
                     mob_q = [q for q in search_queries if any(m in q.lower() for m in ["android", "mobile", "kotlin", "flutter", "react native", "ios"])]
 
                     active_queries = []
-                    # 1. Always prioritize a targeted junior / entry query
+                    # 1. Junior / Entry tracks (take up to 2 variations)
                     if jr_q:
-                        active_queries.append(jr_q[0])
+                        active_queries.extend(jr_q[:2])
                     else:
                         active_queries.append("junior software engineer")
 
-                    # 2. Pair with candidate's primary mobile / Android domain
+                    # 2. Mobile / Android tracks (take up to 2 variations)
                     if mob_q:
-                        active_queries.append(mob_q[0])
+                        active_queries.extend(mob_q[:2])
                     else:
                         active_queries.append("android developer")
 
-                    # 3. Pair with broader engineering / tech query
+                    # 3. Web / Fullstack / Backend tracks (take up to 3 variations, e.g. React, Node, Next.js)
                     if tech_q:
-                        active_queries.append(tech_q[0])
-                    elif len(jr_q) > 1:
-                        active_queries.append(jr_q[1])
+                        active_queries.extend(tech_q[:3])
+                    else:
+                        active_queries.append("software developer")
 
-                    # Deduplicate while preserving priority order
+                    # Deduplicate while preserving priority order (up to 5-6 queries in parallel)
                     seen_q = set()
                     final_queries = []
                     for q in active_queries:
@@ -232,7 +230,7 @@ class Aggregator:
                 self._cache[conn.platform] = {"timestamp": now, "jobs": results}
                 return results
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
                 futures = {executor.submit(execute_connector, conn): conn for conn in self.connectors}
                 for future in concurrent.futures.as_completed(futures):
                     conn = futures[future]
