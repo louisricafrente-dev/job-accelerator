@@ -59,6 +59,33 @@ async function main() {
   release({ ok: true, json: async () => ({ jobs: [{ id: 1, status: 'new' }], has_more: false }) });
   await oldRequest;
   assert.equal(context.jobsList[0].id, 999, 'an old response must not overwrite newer filters');
-  console.log('Frontend regressions passed: seniority, account isolation, replay, pagination, response ordering');
+
+  vm.runInContext(code.slice(code.indexOf('async function triggerSync()'), code.indexOf('function startSyncPoller()')), context);
+  const matrix = vm.runInNewContext(code.slice(code.indexOf('const PRESET_CATEGORIES ='), code.indexOf('const PRESET_SKILLS =')) + ';PRESET_CATEGORIES.flatMap(c=>c.skills)');
+  const classes = { contains: () => false, add() {}, remove() {} };
+  elements.set('sync-btn', { classList: classes });
+  elements.set('sync-spinner', { classList: classes });
+  elements.set('user-stack-input', { value: matrix.join(', ') });
+  const toasts = [];
+  context.currentUserRole = 'admin';
+  context.showToast = message => toasts.push(message);
+  context.stopSyncIndicator = () => {};
+  context.startSyncPoller = () => {};
+  context.loadStats = async () => {};
+  let sent;
+  context.fetch = async (_, options) => {
+    sent = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ status: 'ok', added: 0 }) };
+  };
+  await context.triggerSync();
+  assert.equal(sent.keywords.length, matrix.length, 'Sync must send the entire selected matrix');
+  assert.ok(toasts.at(-1).startsWith('Sync complete!'));
+  context.fetch = async () => ({ ok: false, status: 400, json: async () => ({ status: 'error', error: 'Keyword matrix is too long' }) });
+  await context.triggerSync();
+  assert.ok(toasts.at(-1).includes('Keyword matrix is too long'));
+  context.fetch = async () => ({ ok: false, status: 502, json: async () => { throw new SyntaxError('HTML response'); } });
+  await context.triggerSync();
+  assert.ok(toasts.at(-1).includes('Sync failed (502)'));
+  console.log('Frontend regressions passed: seniority, account isolation, replay, pagination, response ordering, full-matrix sync, API errors');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

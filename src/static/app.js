@@ -1887,7 +1887,12 @@ async function triggerSync() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keywords, background: true })
     });
-    const data = await res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch (_) {
+      throw new Error(`Sync failed (${res.status}): the server did not return a valid response.`);
+    }
 
     if (!res.ok || data.status === 'error') {
       throw new Error(data.error || `Sync failed (${res.status})`);
