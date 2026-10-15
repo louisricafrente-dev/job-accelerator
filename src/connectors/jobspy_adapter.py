@@ -28,6 +28,12 @@ class JobSpyAdapter(BaseConnector):
                 title = str(row.get("title", "")).strip()
                 company = str(row.get("company", "")).strip()
                 url = str(row.get("job_url", "")).strip()
+                if not title or title.lower() in ("nan", "none", "null"):
+                    continue
+                if not url or url.lower() in ("nan", "none", "null"):
+                    continue
+                if company.lower() in ("nan", "none", "null", ""):
+                    company = "Direct Employer"
                 raw_loc = row.get("location")
                 loc = location if pd.isna(raw_loc) or str(raw_loc).lower() in ("nan", "none", "") else str(raw_loc).strip()
                 raw_sal = row.get("min_amount")

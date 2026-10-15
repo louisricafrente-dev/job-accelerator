@@ -66,6 +66,7 @@ def get_default_connectors() -> List[BaseConnector]:
         JobSpyAdapter("Glassdoor", "glassdoor", tier=4),
     ]
 
+import collections
 import threading
 
 class Aggregator:
@@ -73,12 +74,14 @@ class Aggregator:
         self.db_path = db_path
         self.connectors = connectors or get_default_connectors()
         self._sync_lock = threading.Lock()
+        self._cache_lock = threading.Lock()
         self.is_syncing = False
         self.last_sync_result: Dict[str, Any] = {"added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}}
         self.last_sync_time: float = 0.0
-        self.sync_logs: List[str] = [
-            f"[{time.strftime('%H:%M:%S')}] System initialized with {len(self.connectors)} job board connectors."
-        ]
+        self.sync_logs: collections.deque = collections.deque(
+            [f"[{time.strftime('%H:%M:%S')}] System initialized with {len(self.connectors)} job board connectors."],
+            maxlen=120
+        )
         self.platform_telemetry: Dict[str, Dict[str, Any]] = {
             conn.platform: {"status": "ready", "count": 0, "tier": conn.tier} for conn in self.connectors
         }
@@ -88,17 +91,18 @@ class Aggregator:
     def log_event(self, msg: str) -> None:
         entry = f"[{time.strftime('%H:%M:%S')}] {msg}"
         self.sync_logs.append(entry)
-        if len(self.sync_logs) > 120:
-            self.sync_logs.pop(0)
 
     def get_telemetry(self) -> Dict[str, Any]:
+        with self._cache_lock:
+            cached_logs = list(self.sync_logs)
+            cached_telem = dict(self.platform_telemetry)
         return {
             "is_syncing": self.is_syncing,
             "last_sync_time": self.last_sync_time,
             "total_boards": len(self.connectors),
-            "telemetry": self.platform_telemetry,
+            "telemetry": cached_telem,
             "platforms": self.last_sync_result.get("platforms", {}),
-            "logs": list(self.sync_logs)
+            "logs": cached_logs
         }
 
     def start_background_sync(self, queries: Optional[List[str]] = None, force: bool = False) -> bool:
@@ -243,7 +247,7 @@ class Aggregator:
                         platform_reports[conn.platform] = 0
 
             try:
-                relevant_jobs = [j for j in all_jobs if is_relevant_opportunity(j.title, getattr(j, "description", ""), allow_va_training=True)]
+                relevant_jobs = [j for j in all_jobs if is_relevant_opportunity(getattr(j, "title", "") or "", getattr(j, "description", "") or "", allow_va_training=True)]
                 dropped_cnt = len(all_jobs) - len(relevant_jobs)
                 if dropped_cnt > 0:
                     self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} non-tech/unrelated listings; verified {len(relevant_jobs)} tech & training VA opportunities.")

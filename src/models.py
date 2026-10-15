@@ -79,18 +79,26 @@ def normalize_date(raw: Any) -> str:
     return ""
 
 def clean_url(url: str) -> str:
-    parsed = urllib.parse.urlparse(url.strip())
-    query_params = urllib.parse.parse_qsl(parsed.query)
-    filtered = [
-        (k, v) for k, v in query_params
-        if not k.lower().startswith("utm_") and k.lower() not in ("ref", "source", "trk", "tracking", "fbclid")
-    ]
-    new_query = urllib.parse.urlencode(filtered)
-    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, ""))
+    if not url:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(str(url).strip())
+        query_params = urllib.parse.parse_qsl(parsed.query)
+        filtered = [
+            (k, v) for k, v in query_params
+            if not k.lower().startswith("utm_") and k.lower() not in ("ref", "source", "trk", "tracking", "fbclid")
+        ]
+        new_query = urllib.parse.urlencode(filtered)
+        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, ""))
+    except Exception:
+        return str(url).strip()
 
 def hash_job(platform: str, company: str, title: str, url: str) -> str:
-    cleaned = clean_url(url)
-    key = f"{platform.strip().lower()}|{company.strip().lower()}|{title.strip().lower()}|{cleaned.lower()}"
+    p = (platform or "").strip().lower()
+    c = (company or "").strip().lower()
+    t = (title or "").strip().lower()
+    cleaned = clean_url(url or "")
+    key = f"{p}|{c}|{t}|{cleaned.lower()}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 @dataclass
@@ -112,6 +120,10 @@ class Job:
     sources: Optional[List[Dict[str, str]]] = None
 
     def __post_init__(self):
+        self.title = str(self.title or "").strip()
+        self.company = str(self.company or "").strip()
+        self.location = str(self.location or "Philippines / Remote").strip()
+        self.job_url = str(self.job_url or "").strip()
         if not self.dedup_hash:
             self.dedup_hash = hash_job(self.platform, self.company, self.title, self.job_url)
         if self.date_posted:

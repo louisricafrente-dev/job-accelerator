@@ -5,12 +5,14 @@ import json
 from src.database import init_db, get_jobs, get_stats
 from src.seed import seed_sample_data
 from src.server import create_app
+from src.auth import create_session_token
 
 class TestEndToEnd(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.temp_dir.name, "e2e_test.db")
         init_db(self.db_path)
+        self.admin_token = create_session_token("admin", "admin", expiry_hours=24)
         self.app = create_app(self.db_path)
 
     def tearDown(self):
@@ -24,7 +26,8 @@ class TestEndToEnd(unittest.TestCase):
             "REQUEST_METHOD": "GET",
             "PATH_INFO": path,
             "QUERY_STRING": query_string,
-            "wsgi.input": None
+            "wsgi.input": None,
+            "HTTP_AUTHORIZATION": f"Bearer {self.admin_token}"
         }
         res = self.app._handle(env)
         body = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)
@@ -71,7 +74,8 @@ class TestEndToEnd(unittest.TestCase):
                 "notes": "Talked to Recruiter Maria, next round Thursday"
             }).encode("utf-8")),
             "CONTENT_LENGTH": "150",
-            "CONTENT_TYPE": "application/json"
+            "CONTENT_TYPE": "application/json",
+            "HTTP_AUTHORIZATION": f"Bearer {self.admin_token}"
         }
         res_post = self.app._handle(post_env)
         body_post = json.loads("".join(item if isinstance(item, str) else item.decode("utf-8") for item in res_post))
@@ -87,7 +91,8 @@ class TestEndToEnd(unittest.TestCase):
             "REQUEST_METHOD": "GET",
             "PATH_INFO": "/api/jobs/export/csv",
             "QUERY_STRING": "status=applied",
-            "wsgi.input": None
+            "wsgi.input": None,
+            "HTTP_AUTHORIZATION": f"Bearer {self.admin_token}"
         }
         res_csv = self.app._handle(csv_env)
         csv_text = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res_csv)

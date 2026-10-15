@@ -68,16 +68,19 @@ class TestUIEndpoints(unittest.TestCase):
         import json
         from src.models import Job
         from src.database import insert_jobs
+        from src.auth import create_session_token
 
         job1 = Job(title="Fullstack Engineer", company="OmniCorp", location="Remote", platform="LinkedIn", tier=1, job_url="https://linkedin.com/1")
         job2 = Job(title="Fullstack Engineer", company="OmniCorp", location="Remote", platform="JobStreet", tier=1, job_url="https://jobstreet.com/2")
         insert_jobs(self.db_path, [job1, job2])
 
+        token = create_session_token("admin", "admin", expiry_hours=24)
         env = {
             "REQUEST_METHOD": "GET",
             "PATH_INFO": "/api/jobs",
             "QUERY_STRING": "status=new",
-            "wsgi.input": None
+            "wsgi.input": None,
+            "HTTP_AUTHORIZATION": f"Bearer {token}"
         }
         res = self.app._handle(env)
         body = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)

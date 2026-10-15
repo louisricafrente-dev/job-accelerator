@@ -6,12 +6,14 @@ import io
 from src.database import init_db, insert_jobs, get_jobs
 from src.models import Job
 from src.server import create_app
+from src.auth import create_session_token
 
 class TestServer(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.temp_dir.name, "server_test.db")
         init_db(self.db_path)
+        self.admin_token = create_session_token("admin", "admin", expiry_hours=24)
         insert_jobs(self.db_path, [
             Job(
                 title="Junior AI Engineer",
@@ -51,7 +53,8 @@ class TestServer(unittest.TestCase):
             "QUERY_STRING": query_string,
             "wsgi.input": io.BytesIO(json.dumps(body).encode("utf-8")) if body else io.BytesIO(b""),
             "CONTENT_LENGTH": str(len(json.dumps(body))) if body else "0",
-            "CONTENT_TYPE": "application/json" if body else ""
+            "CONTENT_TYPE": "application/json" if body else "",
+            "HTTP_AUTHORIZATION": f"Bearer {self.admin_token}"
         }
         res = self.app._handle(env)
         body_str = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)
@@ -131,7 +134,8 @@ class TestServer(unittest.TestCase):
             "QUERY_STRING": "status=applied",
             "wsgi.input": io.BytesIO(b""),
             "CONTENT_LENGTH": "0",
-            "CONTENT_TYPE": ""
+            "CONTENT_TYPE": "",
+            "HTTP_AUTHORIZATION": f"Bearer {self.admin_token}"
         }
         res = self.app._handle(env)
         body_str = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)

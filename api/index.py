@@ -17,13 +17,19 @@ if os.environ.get("VERCEL"):
     os.makedirs(db_dir, exist_ok=True)
     db_path = os.path.join(db_dir, "jobs.db")
     local_db = os.path.join(root_dir, "data", "jobs.db")
-    if os.path.exists(local_db) and not os.path.exists(db_path):
-        try:
-            shutil.copy2(local_db, db_path)
-        except Exception:
-            init_db(db_path)
-    else:
-        init_db(db_path)
+    if os.path.exists(local_db):
+        needs_copy = not os.path.exists(db_path)
+        if not needs_copy:
+            try:
+                needs_copy = os.path.getsize(local_db) != os.path.getsize(db_path) and os.path.getmtime(local_db) > os.path.getmtime(db_path)
+            except Exception:
+                pass
+        if needs_copy:
+            try:
+                shutil.copy2(local_db, db_path)
+            except Exception:
+                pass
+    init_db(db_path)
 else:
     db_path = os.path.join(root_dir, "data", "jobs.db")
     init_db(db_path)
