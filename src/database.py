@@ -86,6 +86,9 @@ class TursoCursor:
         self._client = client
         self._last_rs = None
         self._row_idx = 0
+        self.rowcount = -1
+        self.lastrowid = None
+        self.description = None
 
     def execute(self, sql, params=None):
         if params is None:
@@ -94,31 +97,37 @@ class TursoCursor:
             clean_params = [p if p is not None else None for p in list(params)]
             self._last_rs = self._client.execute(sql, clean_params)
         self._row_idx = 0
+        self.rowcount = getattr(self._last_rs, "rows_affected", 0) if self._last_rs is not None else 0
+        self.lastrowid = getattr(self._last_rs, "last_insert_rowid", None) if self._last_rs is not None else None
+        self.description = (
+            [(c, None, None, None, None, None, None) for c in self._last_rs.columns]
+            if self._last_rs is not None and hasattr(self._last_rs, "columns") and self._last_rs.columns
+            else None
+        )
         return self
 
     def executemany(self, sql, seq_of_params):
         stmts = [(sql, list(p)) for p in seq_of_params]
         if stmts:
             self._client.batch(stmts)
+            self.rowcount = len(stmts)
+        else:
+            self.rowcount = 0
         return self
 
     def fetchone(self):
-        if not self._last_rs or self._row_idx >= len(self._last_rs.rows):
+        if self._last_rs is None or self._row_idx >= len(self._last_rs.rows):
             return None
         r = self._last_rs.rows[self._row_idx]
         self._row_idx += 1
         return TursoRow(self._last_rs.columns, r)
 
     def fetchall(self):
-        if not self._last_rs:
+        if self._last_rs is None:
             return []
         rows = [TursoRow(self._last_rs.columns, r) for r in self._last_rs.rows[self._row_idx:]]
         self._row_idx = len(self._last_rs.rows)
         return rows
-
-    @property
-    def rowcount(self):
-        return getattr(self._last_rs, "rows_affected", 0) if self._last_rs else 0
 
 class TursoConnection:
     def __init__(self, client):
