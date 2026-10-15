@@ -125,15 +125,60 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
     WITHOUT overwriting the guest's personalized status ('saved', 'applied', etc.),
     pipeline stages, follow-up dates, or notes.
     """
-    if not master_db_path or not os.path.exists(master_db_path):
-        return
     if not guest_db_path or not os.path.exists(guest_db_path):
         return
     if os.path.abspath(master_db_path) == os.path.abspath(guest_db_path):
         return
 
+    from src.database import is_turso_active, get_db_connection
+
+    if is_turso_active(master_db_path):
+        last_synced = _guest_sync_cache.get(guest_db_path, 0.0)
+        # Sync at most once every 60 seconds per guest sandbox to keep queries blazing fast
+        if time.time() - last_synced < 60.0:
+            return
+        try:
+            mconn = get_db_connection(master_db_path)
+            gconn = sqlite3.connect(guest_db_path, timeout=15.0)
+            cur = mconn.cursor()
+            cur.execute("""
+                SELECT dedup_hash, title, company, location, platform, tier, job_url, salary,
+                       role_category, experience_level, date_posted, sources, created_at, updated_at
+                FROM jobs
+            """)
+            rows = cur.fetchall()
+            insert_batch = []
+            for r in rows:
+                d = dict(r)
+                srcs = d.get("sources")
+                if not isinstance(srcs, str):
+                    srcs = json.dumps(srcs or [])
+                insert_batch.append((
+                    d.get("dedup_hash"), d.get("title"), d.get("company"), d.get("location"),
+                    d.get("platform"), d.get("tier"), d.get("job_url"), d.get("salary"),
+                    d.get("role_category"), d.get("experience_level"), d.get("date_posted"),
+                    'new', 'applied', None, None, srcs, None, d.get("created_at"), d.get("updated_at")
+                ))
+            if insert_batch:
+                gconn.executemany("""
+                    INSERT OR IGNORE INTO jobs (
+                        dedup_hash, title, company, location, platform, tier, job_url, salary,
+                        role_category, experience_level, date_posted, status, pipeline_stage,
+                        follow_up_date, notes, sources, applied_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """, insert_batch)
+                gconn.commit()
+            mconn.close()
+            gconn.close()
+            _guest_sync_cache[guest_db_path] = time.time()
+            return
+        except Exception:
+            pass
+
     conn = None
     try:
+        if not os.path.exists(master_db_path):
+            return
         master_mtime = os.path.getmtime(master_db_path)
         last_synced = _guest_sync_cache.get(guest_db_path, 0.0)
         if master_mtime <= last_synced:
@@ -188,7 +233,11 @@ def resolve_guest_db_path(guest_id: str, master_db_path: str) -> str:
     
     # Initialize fresh guest database populated with all master opportunities
     if not os.path.exists(guest_db_path):
-        if os.path.exists(master_db_path):
+        from src.database import init_db, is_turso_active
+        init_db(guest_db_path)
+        if is_turso_active(master_db_path):
+            sync_master_to_guest(guest_db_path, master_db_path)
+        elif os.path.exists(master_db_path):
             conn = None
             try:
                 shutil.copy2(master_db_path, guest_db_path)
@@ -205,17 +254,13 @@ def resolve_guest_db_path(guest_id: str, master_db_path: str) -> str:
                 conn.commit()
                 _guest_sync_cache[guest_db_path] = os.path.getmtime(master_db_path)
             except Exception:
-                from src.database import init_db
-                init_db(guest_db_path)
+                pass
             finally:
                 if conn:
                     try:
                         conn.close()
                     except Exception:
                         pass
-        else:
-            from src.database import init_db
-            init_db(guest_db_path)
     else:
         sync_master_to_guest(guest_db_path, master_db_path)
             
