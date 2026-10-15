@@ -92,6 +92,11 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     def api_auth_setup():
         if bottle.request.method == "OPTIONS":
             return ""
+        session = get_current_session()
+        if not session or session.get("role") != "admin":
+            bottle.response.status = 403
+            bottle.response.content_type = "application/json"
+            return json.dumps({"error": "Forbidden: Admin authentication required to view TOTP setup."})
         admin_secret = get_or_create_admin_totp_secret(db_path)
         otpauth_uri = get_otpauth_uri(admin_secret, "Louis Michael Ricafrente", "Job Accelerator")
         bottle.response.content_type = "application/json"
@@ -121,14 +126,25 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     def api_login_admin():
         if bottle.request.method == "OPTIONS":
             return ""
-        data = bottle.request.json or {}
+        try:
+            data = bottle.request.json or {}
+        except Exception:
+            data = {}
         username = str(data.get("username", "")).strip().lower()
         password = str(data.get("password", "")).strip()
         code = str(data.get("code", "")).strip()
 
-        # Cryptographic verification: zero plain text password in source code
+        # 1. Cryptographic password verification (admin / password)
         is_valid = _verify_admin_credentials(username or "admin", password or code)
         
+        # 2. Dual fallback: Google Authenticator TOTP verification
+        if not is_valid:
+            candidate_code = code or password
+            if candidate_code and len(candidate_code.strip()) == 6 and candidate_code.strip().isdigit():
+                admin_secret = get_or_create_admin_totp_secret(db_path)
+                if verify_totp(admin_secret, candidate_code):
+                    is_valid = True
+
         if not is_valid:
             bottle.response.status = 401
             bottle.response.content_type = "application/json"
@@ -302,10 +318,15 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             return auth_err
         target_db = resolve_target_db()
 
-        data = bottle.request.json or {}
+        try:
+            data = bottle.request.json or {}
+        except Exception:
+            data = {}
+        session = get_current_session()
+        is_admin = session and session.get("role") == "admin"
         for k, v in data.items():
-            # Don't allow guest to overwrite master admin_totp_secret
-            if k == "admin_totp_secret":
+            # Don't allow guest to overwrite master admin_totp_secret or credentials
+            if str(k) in ("admin_totp_secret", "admin_password", "smtp_password", "ADMIN_TOTP_SECRET") and not is_admin:
                 continue
             val_str = json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v)
             set_user_setting(target_db, str(k), val_str)

@@ -150,8 +150,10 @@ VA_TRAINING_PATTERNS = [
 ]
 
 def is_virtual_assistant(title: str, description: str = "") -> bool:
-    title_lower = title.lower()
-    text = f"{title} {description}".lower()
+    t_str = str(title or "")
+    d_str = str(description or "")
+    title_lower = t_str.lower()
+    text = f"{t_str} {d_str}".lower()
     if re.search(r"\bvirtual assistant\b", title_lower):
         return True
     # If title matches tech engineering override, do not misclassify as VA (e.g., Arlington, VA)
@@ -160,37 +162,45 @@ def is_virtual_assistant(title: str, description: str = "") -> bool:
     return any(re.search(pat, text) for pat in VA_PATTERNS)
 
 def is_entry_training_va(title: str, description: str = "") -> bool:
-    text = f"{title} {description}".lower()
-    if not is_virtual_assistant(title, description):
+    t_str = str(title or "")
+    d_str = str(description or "")
+    text = f"{t_str} {d_str}".lower()
+    if not is_virtual_assistant(t_str, d_str):
         return False
     return any(re.search(pat, text) for pat in VA_TRAINING_PATTERNS)
 
 def is_non_tech(title: str, description: str = "") -> bool:
-    title_lower = title.lower()
-    text = f"{title} {description}".lower()
+    t_str = str(title or "")
+    d_str = str(description or "")
+    title_lower = t_str.lower()
+    text = f"{t_str} {d_str}".lower()
     has_tech_override = any(re.search(pat, title_lower) for pat in TECH_WHITELIST_OVERRIDE)
     if has_tech_override:
         return False
     return any(re.search(pat, text) for pat in NON_TECH_BLACKLIST)
 
 def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True) -> bool:
-    if is_non_tech(title, description):
+    t_str = str(title or "")
+    d_str = str(description or "")
+    if is_non_tech(t_str, d_str):
         return False
     
-    if is_virtual_assistant(title, description):
+    if is_virtual_assistant(t_str, d_str):
         if allow_va_training:
-            return is_entry_training_va(title, description)
+            return is_entry_training_va(t_str, d_str)
         return False
     
-    text = f"{title} {description}".lower()
+    text = f"{t_str} {d_str}".lower()
     is_web = any(re.search(pat, text) for pat in WEB_PATTERNS)
     is_data = any(re.search(pat, text) for pat in DATA_AI_PATTERNS)
     is_tech = any(re.search(pat, text) for pat in TECH_WHITELIST_OVERRIDE)
     return is_web or is_data or is_tech
 
 def classify_experience_level(title: str, description: str = "") -> str:
-    text = f"{title} {description}".lower()
-    if is_entry_training_va(title, description):
+    t_str = str(title or "")
+    d_str = str(description or "")
+    text = f"{t_str} {d_str}".lower()
+    if is_entry_training_va(t_str, d_str):
         return "Junior / Entry"
     is_junior = any(re.search(pat, text) for pat in JUNIOR_PATTERNS)
     is_senior = any(re.search(pat, text) for pat in SENIOR_PATTERNS)
@@ -209,8 +219,10 @@ def classify_experience_level(title: str, description: str = "") -> str:
     return "Mid-Level" if any(re.search(pat, text) for pat in WEB_PATTERNS + DATA_AI_PATTERNS) else "Unspecified"
 
 def classify_role(title: str, description: str = "") -> str:
-    text = f"{title} {description}".lower()
-    if is_virtual_assistant(title, description):
+    t_str = str(title or "")
+    d_str = str(description or "")
+    text = f"{t_str} {d_str}".lower()
+    if is_virtual_assistant(t_str, d_str):
         return "Virtual Assistant"
     matches_web = any(re.search(pat, text) for pat in WEB_PATTERNS)
     matches_data = any(re.search(pat, text) for pat in DATA_AI_PATTERNS)

@@ -344,11 +344,14 @@ async function syncLocalOverridesToServer() {
       if (ov.stage !== undefined && ov.stage !== null) payload.stage = ov.stage;
       if (ov.follow_up_date !== undefined && ov.follow_up_date !== null) payload.follow_up_date = ov.follow_up_date;
 
-      await window.fetch(`/api/jobs/${jid}/status`, {
+      const res = await window.fetch(`/api/jobs/${jid}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (res && res.ok) {
+        removeLocalStatusOverride(jid);
+      }
     } catch (e) {
       // Background sync retry
     }
@@ -1610,11 +1613,7 @@ function handleApplyClick(e, jobId) {
     return;
   }
 
-  const prevStatus = job.status || 'new';
   updateJobStatus(jobId, 'applied');
-  showToast(`Marked ${job.company} as Applied. Moved to Pipeline.`, 'Undo', () => {
-    updateJobStatus(jobId, prevStatus);
-  });
 }
 
 // Stage change handler
@@ -1811,7 +1810,13 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
     }, 3);
 
     if (res && res.ok) {
+      removeLocalStatusOverride(jobId);
       loadStats(); // Silently update telemetry badges without reloading feed
+    } else if (res && res.status === 401) {
+      showToast('⚠️ Session timed out while idle. Please log in again.');
+      currentUserRole = null;
+      updateAuthUI();
+      showAuthGate();
     }
   } catch (err) {
     console.warn('Network sync warning (local storage is preserved):', err);

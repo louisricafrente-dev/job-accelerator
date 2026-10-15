@@ -78,8 +78,10 @@ def verify_totp(secret: str, code: str, window: int = 2) -> bool:
             return True
     return False
 
-def create_session_token(role: str, identifier: str = "", max_age: int = 30 * 86400) -> str:
+def create_session_token(role: str, identifier: str = "", max_age: int = 30 * 86400, expiry_hours: Optional[int] = None) -> str:
     """Create a signed HMAC stateless session token."""
+    if expiry_hours is not None:
+        max_age = expiry_hours * 3600
     payload_data = {
         "role": role,
         "id": identifier,
@@ -109,6 +111,8 @@ def verify_session_token(token: str) -> Optional[Dict[str, Any]]:
             b64_payload += "=" * (4 - rem)
 
         payload = json.loads(base64.urlsafe_b64decode(b64_payload.encode()).decode())
+        if not isinstance(payload, dict):
+            return None
         if payload.get("exp", 0) < time.time():
             return None
         return payload
@@ -128,13 +132,14 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
     if os.path.abspath(master_db_path) == os.path.abspath(guest_db_path):
         return
 
+    conn = None
     try:
         master_mtime = os.path.getmtime(master_db_path)
         last_synced = _guest_sync_cache.get(guest_db_path, 0.0)
         if master_mtime <= last_synced:
             return
 
-        conn = sqlite3.connect(guest_db_path, timeout=5.0)
+        conn = sqlite3.connect(guest_db_path, timeout=15.0)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("ATTACH DATABASE ? AS master_db", (master_db_path,))
         conn.execute("""
@@ -150,11 +155,19 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
             FROM master_db.jobs;
         """)
         conn.commit()
-        conn.execute("DETACH DATABASE master_db")
-        conn.close()
         _guest_sync_cache[guest_db_path] = master_mtime
     except Exception:
         pass
+    finally:
+        if conn:
+            try:
+                conn.execute("DETACH DATABASE master_db")
+            except Exception:
+                pass
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 def resolve_guest_db_path(guest_id: str, master_db_path: str) -> str:
     """
@@ -176,9 +189,10 @@ def resolve_guest_db_path(guest_id: str, master_db_path: str) -> str:
     # Initialize fresh guest database populated with all master opportunities
     if not os.path.exists(guest_db_path):
         if os.path.exists(master_db_path):
+            conn = None
             try:
                 shutil.copy2(master_db_path, guest_db_path)
-                conn = sqlite3.connect(guest_db_path, timeout=5.0)
+                conn = sqlite3.connect(guest_db_path, timeout=15.0)
                 conn.execute("""
                     UPDATE jobs 
                     SET status = 'new', 
@@ -189,11 +203,16 @@ def resolve_guest_db_path(guest_id: str, master_db_path: str) -> str:
                 """)
                 conn.execute("DELETE FROM user_settings WHERE key IN ('admin_totp_secret', 'smtp_password', 'email', 'admin_password');")
                 conn.commit()
-                conn.close()
                 _guest_sync_cache[guest_db_path] = os.path.getmtime(master_db_path)
             except Exception:
                 from src.database import init_db
                 init_db(guest_db_path)
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
         else:
             from src.database import init_db
             init_db(guest_db_path)
