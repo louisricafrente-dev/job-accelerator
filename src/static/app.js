@@ -298,9 +298,19 @@ async function resilientFetchWithRetry(url, options = {}, retries = 3, backoff =
 // --------------------------------------------------------------------------
 const LOCAL_STATUS_KEY = 'job_accel_status_overrides';
 
+function overrideStorageKey(token = currentSessionToken) {
+  try {
+    const raw = token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+    const session = JSON.parse(atob(raw.padEnd(Math.ceil(raw.length / 4) * 4, '=')));
+    return `${LOCAL_STATUS_KEY}:${session.role}:${session.id}`;
+  } catch (_) {
+    return `${LOCAL_STATUS_KEY}:locked`;
+  }
+}
+
 function getLocalStatusOverrides() {
   try {
-    const raw = localStorage.getItem(LOCAL_STATUS_KEY);
+    const raw = localStorage.getItem(overrideStorageKey());
     return raw ? JSON.parse(raw) : {};
   } catch (e) {
     return {};
@@ -316,26 +326,30 @@ function saveLocalStatusOverride(jobId, updates) {
       ...updates,
       updated_at: new Date().toISOString()
     };
-    localStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(overrides));
+    localStorage.setItem(overrideStorageKey(), JSON.stringify(overrides));
   } catch (e) {
     console.error('Failed to save local status override:', e);
   }
 }
 
-function removeLocalStatusOverride(jobId) {
+function removeLocalStatusOverride(jobId, storageKey = overrideStorageKey()) {
   try {
-    const overrides = getLocalStatusOverrides();
+    const overrides = JSON.parse(localStorage.getItem(storageKey) || '{}');
     delete overrides[String(jobId)];
-    localStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(overrides));
+    localStorage.setItem(storageKey, JSON.stringify(overrides));
   } catch (e) {}
 }
 
 async function syncLocalOverridesToServer() {
+  if (!currentUserRole || !currentSessionToken) return;
+  const token = currentSessionToken;
+  const storageKey = overrideStorageKey(token);
   const overrides = getLocalStatusOverrides();
   const jobIds = Object.keys(overrides);
   if (jobIds.length === 0) return;
 
   for (const jid of jobIds) {
+    if (token !== currentSessionToken) return;
     const ov = overrides[jid];
     try {
       const payload = {};
@@ -346,11 +360,11 @@ async function syncLocalOverridesToServer() {
 
       const res = await window.fetch(`/api/jobs/${jid}/status`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload)
       });
-      if (res && res.ok) {
-        removeLocalStatusOverride(jid);
+      if (res && res.ok && (await res.json()).success) {
+        removeLocalStatusOverride(jid, storageKey);
       }
     } catch (e) {
       // Background sync retry
@@ -656,6 +670,9 @@ async function lockSession() {
   localStorage.removeItem('job_accel_session_token');
   currentSessionToken = '';
   currentUserRole = null;
+  isDashboardBootstrapped = false;
+  jobsList = [];
+  loadJobsSequence++;
   updateAuthUI();
   showAuthGate();
   showToast('Dashboard locked.');
@@ -671,13 +688,13 @@ function handleAuthAction() {
 }
 
 async function bootstrapDashboard() {
+  await loadAllUserSettings();
   if (isDashboardBootstrapped) {
     await loadStats();
     await loadJobs();
     return;
   }
   isDashboardBootstrapped = true;
-  await loadAllUserSettings();
   renderSkillChips();
   updateActiveSkillsBadge();
   await loadStats();
@@ -917,7 +934,10 @@ function updateActiveSkillsBadge() {
 }
 
 // Load jobs with current filters
+let loadJobsSequence = 0;
 async function loadJobs() {
+  const sequence = ++loadJobsSequence;
+  const token = currentSessionToken;
   const feed = document.getElementById('job-feed');
   feed.innerHTML = `
     <div class="state-loading">
@@ -949,9 +969,20 @@ async function loadJobs() {
       params.set('platform', currentPlatform);
     }
 
-    const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, {}, 3);
-    const data = await res.json();
-    let jobs = data.jobs || [];
+    params.set('limit', '500');
+    let jobs = [];
+    let hasMore = true;
+    while (hasMore) {
+      if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
+      params.set('offset', String(jobs.length));
+      const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, {}, 3);
+      if (!res.ok) throw new Error(`Unable to load jobs (${res.status})`);
+      const data = await res.json();
+      const page = data.jobs || [];
+      jobs.push(...page);
+      hasMore = Boolean(data.has_more) && page.length > 0;
+    }
+    if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
 
     // Local-First Overrides Overlay
     const overrides = getLocalStatusOverrides();
@@ -1004,6 +1035,7 @@ async function loadJobs() {
     renderJobs();
     updateSummaryText(jobs.length);
   } catch (err) {
+    if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
     feed.innerHTML = `
       <div class="state-empty">
         <p>Error retrieving opportunities: ${escapeHtml(err.message)}</p>
@@ -1026,14 +1058,13 @@ function getSkillsMatch(job) {
     for (const part of subParts) {
       if (!part) continue;
       const cleanPart = part.toLowerCase();
-      if ((cleanPart === 'junior' || cleanPart === 'entry' || cleanPart === 'junior / entry') && 
-          (targetText.includes('junior') || targetText.includes('jr') || targetText.includes('entry') || 
-           targetText.includes('associate') || targetText.includes('intern') || targetText.includes('trainee') || 
-           targetText.includes('fresh grad') || targetText.includes('early career') || targetText.includes('ojt') || 
-           targetText.includes('0-2 year') || targetText.includes('engineer i') || targetText.includes('developer i') || 
-           job.experience_level === 'Junior / Entry')) {
-        isMatch = true;
-        break;
+      if (cleanPart === 'junior' || cleanPart === 'entry' || cleanPart === 'junior / entry') {
+        isMatch = job.experience_level === 'Junior / Entry';
+        if (!job.experience_level || job.experience_level === 'Unspecified') {
+          isMatch = /\b(junior|jr\.?|entry[- ]level|associate|intern(?:ship)?|trainee|fresh grad|early career|ojt)\b/i.test(job.title || '');
+        }
+        if (isMatch) break;
+        continue;
       }
       if (cleanPart === 'full stack' && (targetText.includes('fullstack') || targetText.includes('full stack'))) {
         isMatch = true;
@@ -1108,7 +1139,7 @@ function renderSkillMatrix() {
       activeContainer.innerHTML = activeList.map(skill => `
         <span class="active-tag-pill">
           <span>${escapeHtml(skill)}</span>
-          <button type="button" class="btn-remove-tag" onclick="removeSkill('${escapeHtml(skill)}')" title="Remove ${escapeHtml(skill)}" aria-label="Remove ${escapeHtml(skill)}">&times;</button>
+          <button type="button" class="btn-remove-tag" data-skill="${escapeHtml(skill)}" onclick="removeSkill(this.dataset.skill)" title="Remove ${escapeHtml(skill)}" aria-label="Remove ${escapeHtml(skill)}">&times;</button>
         </span>
       `).join('');
     }
@@ -1201,7 +1232,7 @@ function renderActiveStackStrip() {
   chipsContainer.innerHTML = activeList.map(skill => `
     <span class="strip-tag-pill">
       <span>${escapeHtml(skill)}</span>
-      <button type="button" class="btn-strip-remove-tag" onclick="removeSkill('${escapeHtml(skill)}')" title="Remove ${escapeHtml(skill)}" aria-label="Remove ${escapeHtml(skill)}">&times;</button>
+      <button type="button" class="btn-strip-remove-tag" data-skill="${escapeHtml(skill)}" onclick="removeSkill(this.dataset.skill)" title="Remove ${escapeHtml(skill)}" aria-label="Remove ${escapeHtml(skill)}">&times;</button>
     </span>
   `).join('');
 }
@@ -1491,7 +1522,7 @@ function renderJobs() {
       <div class="job-card ${isSelected}" id="job-card-${idx}" onclick="selectCard(${idx})">
         <div class="job-main-block">
           <div class="job-headline">
-            <a href="${escapeHtml(job.job_url)}" target="_blank" rel="noopener noreferrer" 
+            <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer" 
                class="job-title-link" onclick="event.stopPropagation()">
               ${escapeHtml(job.title)}
             </a>
@@ -1510,7 +1541,7 @@ function renderJobs() {
                   <div class="multi-platform-group" title="Available on ${sources.length} job boards">
                     <span class="multi-platform-label">Available on:</span>
                     ${sources.map(s => `
-                      <a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer" 
+                      <a href="${escapeHtml(safeJobUrl(s.url))}" target="_blank" rel="noopener noreferrer" 
                          class="badge-platform badge-source-link multi-source-badge" 
                          onclick="event.stopPropagation()" 
                          title="Open on ${escapeHtml(s.platform)}">
@@ -1522,7 +1553,7 @@ function renderJobs() {
               }
               const single = sources[0];
               return `
-                <a href="${escapeHtml(single.url || job.job_url)}" target="_blank" rel="noopener noreferrer" 
+                <a href="${escapeHtml(safeJobUrl(single.url || job.job_url))}" target="_blank" rel="noopener noreferrer" 
                    class="badge-platform badge-source-link" 
                    onclick="event.stopPropagation()" 
                    title="Open on ${escapeHtml(single.platform || job.platform)}">
@@ -1533,7 +1564,7 @@ function renderJobs() {
             <span class="badge-level ${levelClass}">${escapeHtml(job.experience_level)}</span>
             <span class="job-location-tag">${escapeHtml((!job.location || job.location.toLowerCase() === 'nan' || job.location === 'None') ? 'Remote / Philippines' : job.location)}</span>
             ${(job.salary && job.salary.toLowerCase() !== 'nan' && job.salary !== 'None') ? `<span class="job-salary-tag">${escapeHtml(job.salary)}</span>` : ''}
-            ${skillsMatch.count > 0 ? `<span class="job-skills-matched">Match: ${skillsMatch.matched.join(', ')}</span>` : ''}
+            ${skillsMatch.count > 0 ? `<span class="job-skills-matched">Match: ${escapeHtml(skillsMatch.matched.join(', '))}</span>` : ''}
             ${formatPostingDate(job.date_posted)}
           </div>
 
@@ -1563,7 +1594,7 @@ function renderJobs() {
         </div>
 
         <div class="card-actions-cluster" onclick="event.stopPropagation()">
-          <a href="${escapeHtml(job.job_url)}" target="_blank" rel="noopener noreferrer" 
+          <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer" 
              class="btn-card-apply" onclick="handleApplyClick(event, ${job.id})">
             <span>${isAppliedView ? 'Open' : 'Apply'}</span>
             ${ICONS.external}
@@ -1644,6 +1675,8 @@ function saveJobFollowUp(jobId, newDate) {
 
 // Update status via API (Optimistic in-place update with Local-First persistence & auto-retry)
 async function updateJobStatus(jobId, status = null, notes = null, stage = null, followUp = null) {
+  const token = currentSessionToken;
+  const storageKey = overrideStorageKey(token);
   const jobIdx = jobsList.findIndex(j => j.id === jobId);
   let targetJob = jobIdx >= 0 ? jobsList[jobIdx] : null;
 
@@ -1689,6 +1722,7 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
   } else if (status === 'saved') {
     if (targetJob) {
       if (currentStatus === 'saved') {
+        status = 'new';
         targetJob.status = 'new';
         overrideUpdate.status = 'new';
         if (targetJob) overrideUpdate.job = { ...targetJob, status: 'new' };
@@ -1805,12 +1839,12 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
 
     const res = await resilientFetchWithRetry(`/api/jobs/${jobId}/status`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify(payload)
     }, 3);
 
-    if (res && res.ok) {
-      removeLocalStatusOverride(jobId);
+    if (res && res.ok && (await res.json()).success) {
+      removeLocalStatusOverride(jobId, storageKey);
       loadStats(); // Silently update telemetry badges without reloading feed
     } else if (res && res.status === 401) {
       showToast('⚠️ Session timed out while idle. Please log in again.');
@@ -1853,8 +1887,23 @@ async function triggerSync() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keywords, background: true })
     });
-    const data = await res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch (_) {
+      throw new Error(`Sync failed (${res.status}): the server did not return a valid response.`);
+    }
 
+    if (!res.ok || data.status === 'error') {
+      throw new Error(data.error || `Sync failed (${res.status})`);
+    }
+    if (data.status === 'ok') {
+      stopSyncIndicator();
+      showToast(`Sync complete! +${data.added || 0} new jobs.`);
+      await loadStats();
+      await loadJobs();
+      return;
+    }
     if (data.status === 'already_syncing') {
       showToast('Sync is already running across 15 boards in background.');
     } else {
@@ -1874,6 +1923,7 @@ function startSyncPoller() {
     try {
       const res = await fetch('/api/sync/status');
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not read sync status');
 
       // Live update telemetry modal if open
       const modal = document.getElementById('sync-log-modal');
@@ -1885,6 +1935,10 @@ function startSyncPoller() {
         clearInterval(syncPollTimer);
         syncPollTimer = null;
         stopSyncIndicator();
+        if (data.last_result?.status === 'error') {
+          showToast(`Sync failed: ${data.last_result.error || 'Database ingestion failed'}`);
+          return;
+        }
         const added = (data.last_result && data.last_result.added !== undefined) ? data.last_result.added : 0;
         const skipped = (data.last_result && data.last_result.skipped !== undefined) ? data.last_result.skipped : 0;
         showToast(`Sync complete! +${added} new jobs, ${skipped} existing updated across 15 boards.`);
@@ -1949,7 +2003,7 @@ function setupKeyboardNavigation() {
     } else if (e.key === 'a' || e.key === 'Enter') {
       if (selectedJob) {
         e.preventDefault();
-        window.open(selectedJob.job_url, '_blank');
+        window.open(safeJobUrl(selectedJob.job_url), '_blank', 'noopener,noreferrer');
         if (currentStatus !== 'applied' && selectedJob.status !== 'applied') {
           const prevStatus = selectedJob.status || 'new';
           updateJobStatus(selectedJob.id, 'applied');
@@ -2170,6 +2224,15 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function safeJobUrl(value) {
+  try {
+    const url = new URL(value);
+    return ['https:', 'http:'].includes(url.protocol) ? url.href : '#';
+  } catch (_) {
+    return '#';
+  }
 }
 
 // --------------------------------------------------------------------------

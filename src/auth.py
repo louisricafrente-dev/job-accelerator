@@ -5,15 +5,18 @@ import base64
 import hmac
 import hashlib
 import struct
-import shutil
+import secrets
 import uuid
 import urllib.parse
 import sqlite3
 from typing import Optional, Tuple, Dict, Any
 from src.database import get_user_setting, set_user_setting
 
-# Universal session signing key (fallback to stable local key if not in env)
-SERVER_SECRET_KEY = os.environ.get("SESSION_SECRET", "job-accel-auth-secret-key-2026-secure-session")
+SERVER_SECRET_KEY = os.environ.get("SESSION_SECRET", "").strip()
+if not SERVER_SECRET_KEY:
+    if os.environ.get("VERCEL") or os.environ.get("RENDER"):
+        raise RuntimeError("SESSION_SECRET must be configured before starting the web deployment")
+    SERVER_SECRET_KEY = secrets.token_hex(48)
 
 # In-memory sync timestamp cache to keep guest queries blazing fast
 _guest_sync_cache: Dict[str, float] = {}
@@ -113,6 +116,10 @@ def verify_session_token(token: str) -> Optional[Dict[str, Any]]:
         payload = json.loads(base64.urlsafe_b64decode(b64_payload.encode()).decode())
         if not isinstance(payload, dict):
             return None
+        if payload.get("role") not in ("admin", "guest"):
+            return None
+        if not isinstance(payload.get("id"), str) or not payload["id"]:
+            return None
         if payload.get("exp", 0) < time.time():
             return None
         return payload
@@ -142,7 +149,7 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
             gconn = sqlite3.connect(guest_db_path, timeout=15.0)
             cur = mconn.cursor()
             cur.execute("""
-                SELECT dedup_hash, title, company, location, platform, tier, job_url, salary,
+                SELECT id, dedup_hash, title, company, location, platform, tier, job_url, salary,
                        role_category, experience_level, date_posted, sources, created_at, updated_at
                 FROM jobs
             """)
@@ -155,7 +162,7 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
                     srcs = json.dumps(srcs or [])
 
                 insert_batch.append((
-                    d.get("dedup_hash"), d.get("title"), d.get("company"), d.get("location"),
+                    d.get("id"), d.get("dedup_hash"), d.get("title"), d.get("company"), d.get("location"),
                     d.get("platform"), d.get("tier"), d.get("job_url"), d.get("salary"),
                     d.get("role_category"), d.get("experience_level"), d.get("date_posted"),
                     'new', 'applied', None, None, srcs, None, d.get("created_at"), d.get("updated_at")
@@ -164,10 +171,10 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
             if insert_batch:
                 gconn.executemany("""
                     INSERT OR IGNORE INTO jobs (
-                        dedup_hash, title, company, location, platform, tier, job_url, salary,
+                        id, dedup_hash, title, company, location, platform, tier, job_url, salary,
                         role_category, experience_level, date_posted, status, pipeline_stage,
                         follow_up_date, notes, sources, applied_at, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """, insert_batch)
             gconn.commit()
             mconn.close()
@@ -175,13 +182,17 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
             _guest_sync_cache[guest_db_path] = time.time()
             return
         except Exception:
-            pass
+            raise
+        finally:
+            for connection in (locals().get("mconn"), locals().get("gconn")):
+                if connection:
+                    connection.close()
 
     conn = None
     try:
         if not os.path.exists(master_db_path):
             return
-        master_mtime = os.path.getmtime(master_db_path)
+        master_mtime = max(os.path.getmtime(path) for path in (master_db_path, master_db_path + "-wal") if os.path.exists(path))
         last_synced = _guest_sync_cache.get(guest_db_path, 0.0)
         if master_mtime <= last_synced:
             return
@@ -191,12 +202,12 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
         conn.execute("ATTACH DATABASE ? AS master_db", (master_db_path,))
         conn.execute("""
             INSERT OR IGNORE INTO jobs (
-                dedup_hash, title, company, location, platform, tier, job_url, salary,
+                id, dedup_hash, title, company, location, platform, tier, job_url, salary,
                 role_category, experience_level, date_posted, status, pipeline_stage,
                 follow_up_date, notes, sources, applied_at, created_at, updated_at
             )
             SELECT
-                dedup_hash, title, company, location, platform, tier, job_url, salary,
+                id, dedup_hash, title, company, location, platform, tier, job_url, salary,
                 role_category, experience_level, date_posted, 'new', 'applied',
                 NULL, NULL, sources, NULL, created_at, updated_at
             FROM master_db.jobs;
@@ -204,7 +215,7 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
         conn.commit()
         _guest_sync_cache[guest_db_path] = master_mtime
     except Exception:
-        pass
+        raise
     finally:
         if conn:
             try:
@@ -232,40 +243,56 @@ def resolve_guest_db_path(guest_id: str, master_db_path: str) -> str:
         
     guest_db_path = os.path.join(guests_dir, f"guest_{clean_id}.db")
     
-    # Initialize fresh guest database populated with all master opportunities
+    # Only public job fields are copied; master settings never enter a guest file.
     if not os.path.exists(guest_db_path):
-        from src.database import init_db, is_turso_active
+        from src.database import init_db
         init_db(guest_db_path)
-        if is_turso_active(master_db_path):
-            sync_master_to_guest(guest_db_path, master_db_path)
-        elif os.path.exists(master_db_path):
-            conn = None
-            try:
-                shutil.copy2(master_db_path, guest_db_path)
-                conn = sqlite3.connect(guest_db_path, timeout=15.0)
-                conn.execute("""
-                    UPDATE jobs 
-                    SET status = 'new', 
-                        pipeline_stage = 'applied', 
-                        applied_at = NULL, 
-                        follow_up_date = NULL, 
-                        notes = NULL;
-                """)
-                conn.execute("DELETE FROM user_settings WHERE key IN ('admin_totp_secret', 'smtp_password', 'email', 'admin_password');")
-                conn.commit()
-                _guest_sync_cache[guest_db_path] = os.path.getmtime(master_db_path)
-            except Exception:
-                pass
-            finally:
-                if conn:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-    else:
-        sync_master_to_guest(guest_db_path, master_db_path)
+    sync_master_to_guest(guest_db_path, master_db_path)
+    restore_guest_state(guest_id, guest_db_path, master_db_path)
             
     return guest_db_path
+
+
+def restore_guest_state(guest_id: str, guest_db_path: str, master_db_path: str) -> None:
+    """Restore shared per-field overrides after an instance change or cold start."""
+    from src.database import get_db_connection, set_user_setting, update_job_status
+    prefix = f"guest:{guest_id}:"
+    conn = get_db_connection(master_db_path)
+    try:
+        rows = conn.execute("SELECT key, value FROM user_settings WHERE key LIKE ?", (prefix + "%",)).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        key, raw = row[0], row[1]
+        suffix = key[len(prefix):]
+        if suffix.startswith("setting:"):
+            set_user_setting(guest_db_path, suffix[8:], raw)
+        elif suffix.startswith("job:"):
+            _, job_id, field = suffix.split(":", 2)
+            if field in ("status", "notes", "pipeline_stage", "follow_up_date"):
+                update_job_status(guest_db_path, int(job_id), **{field: json.loads(raw)})
+            elif field == "applied_at":
+                conn = sqlite3.connect(guest_db_path)
+                try:
+                    conn.execute("UPDATE jobs SET applied_at=? WHERE id=?", (json.loads(raw), int(job_id)))
+                    conn.commit()
+                finally:
+                    conn.close()
+
+
+def save_guest_changes(guest_id: str, master_db_path: str, job_id: int, changes: dict) -> None:
+    from src.database import set_user_setting, get_db_connection
+    for field, value in changes.items():
+        if value is not None:
+            set_user_setting(master_db_path, f"guest:{guest_id}:job:{job_id}:{field}", json.dumps(value))
+    if changes.get("status") == "applied":
+        from datetime import datetime, timezone
+        conn = get_db_connection(master_db_path)
+        try:
+            conn.execute("INSERT OR IGNORE INTO user_settings(key,value) VALUES (?,?)", (f"guest:{guest_id}:job:{job_id}:applied_at", json.dumps(datetime.now(timezone.utc).isoformat())))
+            conn.commit()
+        finally:
+            conn.close()
 
 def reset_guest_db(guest_id: str, master_db_path: str) -> str:
     """Re-clones a fresh sandbox database for the guest with all master opportunities."""
@@ -273,10 +300,20 @@ def reset_guest_db(guest_id: str, master_db_path: str) -> str:
     guests_dir = os.path.join(base_dir, "guests")
     clean_id = "".join(c for c in guest_id if c.isalnum() or c in ("-", "_"))[:32]
     guest_db_path = os.path.join(guests_dir, f"guest_{clean_id}.db")
+    from src.database import get_db_connection
+    conn = get_db_connection(master_db_path)
+    try:
+        conn.execute("DELETE FROM user_settings WHERE key LIKE ?", (f"guest:{guest_id}:%",))
+        conn.commit()
+    finally:
+        conn.close()
     if os.path.exists(guest_db_path):
+        conn = sqlite3.connect(guest_db_path)
         try:
-            os.remove(guest_db_path)
-        except Exception:
-            pass
+            conn.execute("UPDATE jobs SET status='new', pipeline_stage='applied', applied_at=NULL, follow_up_date=NULL, notes=NULL")
+            conn.execute("DELETE FROM user_settings")
+            conn.commit()
+        finally:
+            conn.close()
     _guest_sync_cache.pop(guest_db_path, None)
     return resolve_guest_db_path(guest_id, master_db_path)

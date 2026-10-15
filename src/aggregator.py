@@ -13,9 +13,11 @@ from src.connectors.remote_feed import (
 )
 from src.connectors.ph_jobs import KalibrrConnector, BossjobConnector, JobStreetConnector, OnlineJobsConnector
 from src.connectors.jobspy_adapter import JobSpyAdapter
-from src.database import insert_jobs
+from src.database import insert_jobs, get_user_setting, set_user_setting, acquire_sync_lease, release_sync_lease
 from src.classifier import is_relevant_opportunity
 import time
+import json
+import uuid
 from src.models import Job
 
 DEFAULT_QUERIES = [
@@ -76,7 +78,7 @@ import threading
 class Aggregator:
     def __init__(self, db_path: str = "data/jobs.db", connectors: Optional[List[BaseConnector]] = None):
         self.db_path = db_path
-        self.connectors = connectors or get_default_connectors()
+        self.connectors = connectors if connectors is not None else get_default_connectors()
         self._sync_lock = threading.Lock()
         self._cache_lock = threading.Lock()
         self.is_syncing = False
@@ -94,9 +96,18 @@ class Aggregator:
 
     def log_event(self, msg: str) -> None:
         entry = f"[{time.strftime('%H:%M:%S')}] {msg}"
-        self.sync_logs.append(entry)
+        with self._cache_lock:
+            self.sync_logs.append(entry)
 
     def get_telemetry(self) -> Dict[str, Any]:
+        shared = get_user_setting(self.db_path, "sync_status", "")
+        if shared and not self.is_syncing:
+            status = json.loads(shared)
+            lease = get_user_setting(self.db_path, "sync_lease", "0|")
+            status["is_syncing"] = int(lease.split("|", 1)[0]) > time.time()
+            if not status["is_syncing"] and status.get("last_result", {}).get("status") == "running":
+                status["last_result"] = {"status": "error", "error": "Previous sync expired before completing"}
+            return status
         with self._cache_lock:
             cached_logs = list(self.sync_logs)
             cached_telem = dict(self.platform_telemetry)
@@ -136,17 +147,29 @@ class Aggregator:
             }
 
         self.is_syncing = True
+        lease = f"{int(time.time()) + 600}|{uuid.uuid4().hex}"
+        try:
+            if not acquire_sync_lease(self.db_path, lease, int(time.time())):
+                self.is_syncing = False
+                self._sync_lock.release()
+                return {"status": "already_syncing", "is_syncing": True}
+        except Exception:
+            self.is_syncing = False
+            self._sync_lock.release()
+            raise
         all_jobs: List[Job] = []
         platform_reports: Dict[str, int] = {}
         search_queries = queries if queries is not None else DEFAULT_QUERIES
 
         try:
+            set_user_setting(self.db_path, "sync_status", json.dumps({"is_syncing": True, "total_boards": len(self.connectors), "last_result": {"status": "running"}, "logs": [], "telemetry": {}}))
             self.log_event(f"[Orchestrator] Multi-board sync cycle started across {len(self.connectors)} platforms.")
             def execute_connector(conn: BaseConnector) -> List[Job]:
                 now = time.time()
                 # 1. Check connector cache (prevents 429 rate limits & duplicate network overhead)
-                if not force and conn.platform in self._cache:
-                    cached_entry = self._cache[conn.platform]
+                cache_key = (conn.platform, tuple(sorted(str(q).strip().lower() for q in search_queries)))
+                if not force and cache_key in self._cache:
+                    cached_entry = self._cache[cache_key]
                     if now - cached_entry["timestamp"] < self.cache_ttl:
                         self.log_event(f"[{conn.platform}] Cache active: {len(cached_entry['jobs'])} listings ready.")
                         self.platform_telemetry[conn.platform] = {
@@ -241,7 +264,7 @@ class Aggregator:
                     }
 
                 # Store in cache
-                self._cache[conn.platform] = {"timestamp": now, "jobs": results}
+                self._cache[cache_key] = {"timestamp": now, "jobs": results}
                 return results
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
@@ -255,6 +278,7 @@ class Aggregator:
                     except Exception:
                         platform_reports[conn.platform] = 0
 
+            ingestion_error = None
             try:
                 relevant_jobs = [j for j in all_jobs if is_relevant_opportunity(getattr(j, "title", "") or "", getattr(j, "description", "") or "", allow_va_training=True)]
                 dropped_cnt = len(all_jobs) - len(relevant_jobs)
@@ -264,10 +288,12 @@ class Aggregator:
                 self.log_event(f"[Database] Synchronized {len(relevant_jobs)} listings: +{added} new opportunities, {skipped} existing/cross-board merged.")
             except Exception as e:
                 added, skipped = 0, 0
+                ingestion_error = str(e)
                 self.log_event(f"[Database] Ingestion notice: {e}")
 
             summary = {
-                "status": "ok",
+                "status": "error" if ingestion_error else "ok",
+                "error": ingestion_error,
                 "is_syncing": False,
                 "total_fetched": len(all_jobs),
                 "added": added,
@@ -278,9 +304,12 @@ class Aggregator:
                 "timestamp": time.time()
             }
             self.last_sync_result = summary
-            self.last_sync_time = time.time()
+            if not ingestion_error:
+                self.last_sync_time = time.time()
+            set_user_setting(self.db_path, "sync_status", json.dumps({"is_syncing": False, "last_sync_time": self.last_sync_time, "total_boards": len(self.connectors), "last_result": summary, "logs": summary["logs"], "telemetry": self.platform_telemetry}))
             return summary
         finally:
             self.is_syncing = False
             self._sync_lock.release()
+            release_sync_lease(self.db_path, lease)
 
