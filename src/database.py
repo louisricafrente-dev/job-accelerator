@@ -40,12 +40,157 @@ CREATE INDEX IF NOT EXISTS idx_jobs_category ON jobs(role_category);
 CREATE INDEX IF NOT EXISTS idx_jobs_tier ON jobs(tier);
 """
 
-def get_db_connection(db_path: str = "data/jobs.db", timeout: float = 25.0) -> sqlite3.Connection:
+try:
+    import libsql_client
+    HAS_LIBSQL = True
+except ImportError:
+    libsql_client = None
+    HAS_LIBSQL = False
+
+class TursoRow:
+    def __init__(self, cols, vals):
+        self._dict = dict(zip(cols, vals))
+        self._vals = vals
+
+    def __getitem__(self, k):
+        if isinstance(k, int):
+            return self._vals[k]
+        return self._dict[k]
+
+    def get(self, k, default=None):
+        return self._dict.get(k, default)
+
+    def keys(self):
+        return self._dict.keys()
+
+    def values(self):
+        return self._dict.values()
+
+    def items(self):
+        return self._dict.items()
+
+    def __iter__(self):
+        return iter(self._dict.items())
+
+    def __contains__(self, k):
+        return k in self._dict
+
+    def __len__(self):
+        return len(self._dict)
+
+    def __repr__(self):
+        return f"<TursoRow {self._dict}>"
+
+class TursoCursor:
+    def __init__(self, client):
+        self._client = client
+        self._last_rs = None
+        self._row_idx = 0
+
+    def execute(self, sql, params=None):
+        if params is None:
+            self._last_rs = self._client.execute(sql)
+        else:
+            clean_params = [p if p is not None else None for p in list(params)]
+            self._last_rs = self._client.execute(sql, clean_params)
+        self._row_idx = 0
+        return self
+
+    def executemany(self, sql, seq_of_params):
+        stmts = [(sql, list(p)) for p in seq_of_params]
+        if stmts:
+            self._client.batch(stmts)
+        return self
+
+    def fetchone(self):
+        if not self._last_rs or self._row_idx >= len(self._last_rs.rows):
+            return None
+        r = self._last_rs.rows[self._row_idx]
+        self._row_idx += 1
+        return TursoRow(self._last_rs.columns, r)
+
+    def fetchall(self):
+        if not self._last_rs:
+            return []
+        rows = [TursoRow(self._last_rs.columns, r) for r in self._last_rs.rows[self._row_idx:]]
+        self._row_idx = len(self._last_rs.rows)
+        return rows
+
+    @property
+    def rowcount(self):
+        return getattr(self._last_rs, "rows_affected", 0) if self._last_rs else 0
+
+class TursoConnection:
+    def __init__(self, client):
+        self._client = client
+        self.row_factory = None
+
+    def cursor(self):
+        return TursoCursor(self._client)
+
+    def execute(self, sql, params=None):
+        cur = self.cursor()
+        return cur.execute(sql, params)
+
+    def executescript(self, script):
+        for stmt in script.strip().split(";"):
+            s = stmt.strip()
+            if s:
+                try:
+                    self._client.execute(s)
+                except Exception:
+                    pass
+
+    def commit(self):
+        pass
+
+    def close(self):
+        try:
+            self._client.close()
+        except Exception:
+            pass
+
+def get_turso_url() -> str:
+    url = os.environ.get("TURSO_DATABASE_URL", "").strip()
+    if not url and os.environ.get("VERCEL"):
+        url = "https://job-accelerator-rhettrina.aws-ap-northeast-1.turso.io"
+    if url.startswith("libsql://"):
+        url = url.replace("libsql://", "https://")
+    return url
+
+def get_turso_token() -> str:
+    token = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
+    if not token and os.environ.get("VERCEL"):
+        token = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTIwNDIzNjcsImlkIjoiMDFhMTNlMGMtNGQwMS03ZTllLTg4ZTAtMmMxYTNjMDhkZGQ1Iiwia2lkIjoidll0ZTBSNXdnZ2MyZ0VrRTFuREpfMUNHZTBwbGdEbVVna0w1dGJoQ2EzZyIsInJpZCI6IjZjOTcxNDFlLWY1ZGQtNGJmNS04YjQzLTAyNjY4MmNlNTdlYyJ9.veXC15vhglAH04ASngJAwPiWs7pTJYxQ1FvYn6EtzZAvsVUg0cppyFdbah-XcitFmFgwoXJ1YC1z8YUT2KTPDA"
+    return token
+
+def is_turso_active(db_path: str = "") -> bool:
+    url = get_turso_url()
+    token = get_turso_token()
+    if not url or not token:
+        return False
+    norm = (db_path or "").replace("\\", "/").lower()
+    # Isolate guest sandboxes to local SQLite
+    if "guest" in norm:
+        return False
+    # Unit tests targeting temp files (e.g. server_test.db) run locally
+    if "_test.db" in norm or "test_" in norm:
+        return False
+    return True
+
+def get_db_connection(db_path: str = "data/jobs.db", timeout: float = 25.0):
+    if is_turso_active(db_path) and HAS_LIBSQL:
+        url = get_turso_url()
+        token = get_turso_token()
+        client = libsql_client.create_client_sync(url, auth_token=token)
+        return TursoConnection(client)
     conn = sqlite3.connect(db_path, timeout=timeout)
     conn.execute("PRAGMA busy_timeout = 25000;")
     return conn
 
 def init_db(db_path: str = "data/jobs.db") -> None:
+    if is_turso_active(db_path):
+        return  # Turso cloud schema is managed and persisted
     parent = os.path.dirname(db_path)
     if parent and not os.path.exists(parent):
         os.makedirs(parent, exist_ok=True)
