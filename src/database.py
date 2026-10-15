@@ -380,7 +380,7 @@ def get_jobs(
                 params.append(status)
         if role_category and role_category != "All":
             rc = role_category.strip()
-            if rc in ("Virtual Assistant", "VA", "VA (With Training)"):
+            if rc.upper() in ("VIRTUAL ASSISTANT", "VA", "VA (WITH TRAINING)"):
                 va_sub = [
                     "role_category = 'Virtual Assistant'",
                     "lower(title) LIKE '%virtual assistant%'",
