@@ -137,14 +137,23 @@ VA_PATTERNS = [
     r"\bexecutive assistant\b",
     r"\badmin assistant\b",
     r"\badministrative assistant\b",
-    r"\bremote assistant\b"
+    r"\bremote assistant\b",
+    r"\bcyberbacker\b",
+    r"\bathena\b",
+    r"\bvirtudesk\b",
+    r"\bpineapple staffing\b",
+    r"\bdata entry\b",
+    r"\bemail management\b",
+    r"\bcalendar management\b",
+    r"\bcustomer support\b",
+    r"\bresearch assistant\b"
 ]
 
 VA_TRAINING_PATTERNS = [
     r"\bwith training\b", r"\bpaid training\b", r"\bwill train\b", r"\btraining provided\b",
     r"\btraining\b", r"\bno experience\b", r"\bno experience required\b", r"\bzero experience\b",
     r"\bentry[- ]level\b", r"\bjunior\b", r"\btrainee\b", r"\bopen for fresh\b",
-    r"\bopen to fresh\b", r"\bbeginner\b", r"\bbeginners welcome\b", r"\bentry\b",
+    r"\bopen to fresh\b", r"\bbeginner\b", r"\bbeginners welcome\b", r"(?<!data\s)\bentry\s*(?:level|position|role)?\b",
     r"\bcyberbacker\b", r"\bathena\b", r"\bvirtudesk\b", r"\bpineapple staffing\b",
     r"\bno work experience\b", r"\bcomplete training\b", r"\bfull training\b", r"\bfree training\b"
 ]
@@ -177,6 +186,8 @@ def is_non_tech(title: str, description: str = "") -> bool:
     has_tech_override = any(re.search(pat, title_lower) for pat in TECH_WHITELIST_OVERRIDE)
     if has_tech_override:
         return False
+    if is_virtual_assistant(t_str, d_str):
+        return False
     return any(re.search(pat, text) for pat in NON_TECH_BLACKLIST)
 
 def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True) -> bool:
@@ -186,9 +197,7 @@ def is_relevant_opportunity(title: str, description: str = "", allow_va_training
         return False
     
     if is_virtual_assistant(t_str, d_str):
-        if allow_va_training:
-            return is_entry_training_va(t_str, d_str)
-        return False
+        return bool(allow_va_training)
     
     text = f"{t_str} {d_str}".lower()
     is_web = any(re.search(pat, text) for pat in WEB_PATTERNS)

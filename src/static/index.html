@@ -90,14 +90,6 @@
             </svg>
             <span class="btn-text">Digest</span>
           </button>
-
-          <button id="btn-va-hub" class="btn-subtle" onclick="toggleVaHub()" title="Open Virtual Assistant Remote Training Hub">
-            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-              <circle cx="12" cy="7" r="4"/>
-            </svg>
-            <span class="btn-text">VA</span>
-          </button>
         </div>
 
 
@@ -351,114 +343,7 @@
       </div>
     </section>
 
-    <!-- Virtual Assistant & Remote Freelance Training Hub (Remote Only) -->
-    <section id="va-hub-section" class="va-hub-section" style="display: none;">
-      <div class="va-hub-banner">
-        <div class="va-hub-title-group">
-          <div class="va-title-badge-row">
-            <h2 class="va-hub-title">Virtual Assistant &amp; Remote Freelance Hub</h2>
-            <span class="va-badge-remote">Remote Only</span>
-          </div>
-          <p class="va-hub-subtitle">
-            Curated Free Government Training (DICT DigitalJobsPH), Core Remote Stack Roadmap, and Direct VA Opportunities.
-          </p>
-        </div>
-        <div class="va-hub-actions">
-          <button type="button" class="btn-va-filter-action" onclick="filterRemoteVAJobs()" title="Filter job feed to remote VA & admin opportunities">
-            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
-            </svg>
-            <span>Filter Remote VA Jobs</span>
-          </button>
-          <button type="button" class="btn-close-va" onclick="toggleVaHub()" aria-label="Close VA Hub">&times;</button>
-        </div>
-      </div>
 
-      <div class="va-cards-grid">
-        <!-- Card 1: Official Free DICT Training -->
-        <div class="va-card">
-          <div class="va-card-header">
-            <span class="va-card-tag dict-tag">Philippine Gov't / DICT</span>
-            <h3 class="va-card-title">DICT DigitalJobsPH Free Virtual Assistance</h3>
-          </div>
-          <p class="va-card-desc">
-            Official free government training program providing hands-on modules in Virtual Assistance, Executive Support, Calendar &amp; Email Management, and Freelancing Basics.
-          </p>
-          <div class="va-card-bullets">
-            <span class="va-pill">Email &amp; Calendar Management</span>
-            <span class="va-pill">Client Invoicing</span>
-            <span class="va-pill">Data Handling</span>
-            <span class="va-pill">Government Certificate</span>
-          </div>
-          <a href="https://dict.gov.ph/" target="_blank" rel="noopener noreferrer" class="va-link-btn">
-            Visit Official DICT Portal &nearr;
-          </a>
-        </div>
-
-        <!-- Card 2: Core Remote VA Skills Roadmap -->
-        <div class="va-card">
-          <div class="va-card-header">
-            <span class="va-card-tag roadmap-tag">Skills Roadmap</span>
-            <h3 class="va-card-title">Core Remote VA Tech Stack</h3>
-          </div>
-          <p class="va-card-desc">
-            The standard toolset required by US, UK, and Australian clients for general and executive virtual assistants.
-          </p>
-          <div class="va-card-bullets">
-            <span class="va-pill">Google Workspace (Docs, Sheets, Drive)</span>
-            <span class="va-pill">Notion &amp; Trello</span>
-            <span class="va-pill">Asana &amp; ClickUp</span>
-            <span class="va-pill">Slack &amp; Zoom</span>
-            <span class="va-pill">Canva Basics</span>
-          </div>
-          <div class="va-cert-box">
-            <span class="va-cert-label">Free Certifications:</span>
-            <span class="va-cert-sub">HubSpot Email Marketing, Google Workspace Certification</span>
-          </div>
-        </div>
-
-        <!-- Card 3: Tech VA Specialized Bridge -->
-        <div class="va-card">
-          <div class="va-card-header">
-            <span class="va-card-tag tech-tag">High-Yield Path</span>
-            <h3 class="va-card-title">Technical Virtual Assistant (Tech VA)</h3>
-          </div>
-          <p class="va-card-desc">
-            A premium remote specialization where tech background gives an immediate advantage over general VAs.
-          </p>
-          <div class="va-card-bullets">
-            <span class="va-pill">WordPress Maintenance &amp; Updates</span>
-            <span class="va-pill">Zapier / Make.com Automation</span>
-            <span class="va-pill">CRM Integrations (HubSpot, GoHighLevel)</span>
-            <span class="va-pill">DNS, Email Routing &amp; Webhooks</span>
-          </div>
-          <div class="va-rate-hint">
-            <span>Average Remote Rate:</span> <strong>$7 - $15/hr (₱35k - ₱80k/mo)</strong>
-          </div>
-        </div>
-
-        <!-- Card 4: Top Verified VA Agencies in PH -->
-        <div class="va-card">
-          <div class="va-card-header">
-            <span class="va-card-tag agency-tag">Top Agencies</span>
-            <h3 class="va-card-title">Legitimate Remote VA Employers</h3>
-          </div>
-          <p class="va-card-desc">
-            Direct agencies that provide paid training, equipment allowances, and client matching in the Philippines.
-          </p>
-          <div class="va-card-bullets">
-            <span class="va-pill">Cyberbacker PH</span>
-            <span class="va-pill">Athena Executive</span>
-            <span class="va-pill">Pineapple Staffing</span>
-            <span class="va-pill">Virtudesk</span>
-            <span class="va-pill">OnlineJobs.ph Direct</span>
-          </div>
-          <div class="va-tip-footer">
-            <span>Authentic developer credentials remain your core asset; this hub provides immediate remote freelance options.</span>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <!-- Context Bar & Feed Statistics -->
     <div class="feed-summary-bar">
