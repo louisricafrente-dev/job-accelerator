@@ -448,7 +448,7 @@ def get_jobs(
                 clauses.append("(role_category = ? OR role_category = 'Both' OR lower(title) LIKE ?)")
                 params.extend([rc, f"%{rc.lower()}%"])
 
-        if not include_va and role_category not in ("Virtual Assistant", "VA", "VA (With Training)"):
+        if not include_va and (not role_category or role_category.strip().upper() not in ("VIRTUAL ASSISTANT", "VA", "VA (WITH TRAINING)")):
             clauses.append("(role_category != 'Virtual Assistant' AND lower(title) NOT LIKE '%virtual assistant%' AND lower(title) NOT LIKE '%administrative assistant%')")
         if experience_level and experience_level != "All":
             raw_levels = [l.strip() for l in experience_level.split(",") if l.strip() and l.strip() != "All"]
