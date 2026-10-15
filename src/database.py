@@ -4,7 +4,10 @@ import json
 import sqlite3
 import os
 from typing import Any, Dict, List, Optional, Tuple
-from src.models import Job, normalize_date
+from src.models import Job, normalize_date, clean_url
+
+VALID_STATUSES = {"new", "saved", "applied", "ignored"}
+VALID_STAGES = {"applied", "hr_screening", "tech_exam", "final_interview", "offer", "rejected", "screening", "interview", "technical", "withdrawn"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -170,7 +173,7 @@ def get_turso_url() -> str:
 def get_turso_token() -> str:
     token = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
     if not token and os.environ.get("VERCEL"):
-        token = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTIwNDIzNjcsImlkIjoiMDFhMTNlMGMtNGQwMS03ZTllLTg4ZTAtMmMxYTNjMDhkZGQ1Iiwia2lkIjoidll0ZTBSNXdnZ2MyZ0VrRTFuREpfMUNHZTBwbGdEbVVna0w1dGJoQ2EzZyIsInJpZCI6IjZjOTcxNDFlLWY1ZGQtNGJmNS04YjQzLTAyNjY4MmNlNTdlYyJ9.veXC15vhglAH04ASngJAwPiWs7pTJYxQ1FvYn6EtzZAvsVUg0cppyFdbah-XcitFmFgwoXJ1YC1z8YUT2KTPDA"
+        raise RuntimeError("TURSO_AUTH_TOKEN must be configured for Vercel")
     return token
 
 def is_turso_active(db_path: str = "") -> bool:
@@ -188,6 +191,8 @@ def is_turso_active(db_path: str = "") -> bool:
     return True
 
 def get_db_connection(db_path: str = "data/jobs.db", timeout: float = 25.0):
+    if is_turso_active(db_path) and not HAS_LIBSQL:
+        raise RuntimeError("libsql-client is required for the configured cloud database")
     if is_turso_active(db_path) and HAS_LIBSQL:
         url = get_turso_url()
         token = get_turso_token()
@@ -248,22 +253,48 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
     skipped = 0
     try:
         cursor = conn.cursor()
+        cloud = isinstance(conn, TursoConnection)
+        pending = []
+        catalog = {}
+        known_hashes = set()
+        if cloud:
+            for row in cursor.execute("SELECT * FROM jobs ORDER BY id DESC").fetchall():
+                item = dict(row)
+                catalog.setdefault((item["company"].strip().lower(), item["title"].strip().lower()), []).append(item)
+                known_hashes.add(item["dedup_hash"])
+
+        def write(sql, params):
+            if cloud:
+                pending.append((sql, list(params)))
+            else:
+                cursor.execute(sql, params)
+
         for job in jobs:
             norm_date = normalize_date(job.date_posted) if job.date_posted else ""
             canonical_co = job.company.strip().lower()
             canonical_title = job.title.strip().lower()
 
-            cursor.execute(
-                """
-                SELECT id, platform, job_url, salary, date_posted, sources, status
-                FROM jobs
-                WHERE lower(trim(company)) = ? AND lower(trim(title)) = ?
-                ORDER BY id DESC
-                LIMIT 1;
-                """,
-                (canonical_co, canonical_title),
-            )
-            existing = cursor.fetchone()
+            if cloud:
+                candidates = catalog.get((canonical_co, canonical_title), [])
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, dedup_hash, platform, job_url, salary, date_posted, sources, status, location
+                    FROM jobs
+                    WHERE lower(trim(company)) = ? AND lower(trim(title)) = ?
+                    ORDER BY id DESC;
+                    """,
+                    (canonical_co, canonical_title),
+                )
+                candidates = cursor.fetchall()
+            existing = next((row for row in candidates if clean_url(row["job_url"]) == clean_url(job.job_url)), None)
+            if existing is None:
+                # Merge across boards only when location agrees; preserve separate requisitions.
+                existing = next((row for row in candidates
+                                 if row["platform"].lower() != job.platform.lower()
+                                 and (row["location"] or "").strip().lower() == job.location.strip().lower()
+                                 and not any(s.get("platform", "").lower() == job.platform.lower()
+                                             for s in json.loads(row["sources"] or "[]"))), None)
             if existing:
                 # Aggregate source platform and link
                 try:
@@ -274,7 +305,7 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
                     sources_list = [{"platform": existing["platform"], "url": existing["job_url"]}]
 
                 already_present = any(
-                    s.get("platform", "").lower() == job.platform.lower() or s.get("url") == job.job_url
+                    clean_url(s.get("url", "")) == clean_url(job.job_url)
                     for s in sources_list
                 )
                 if not already_present:
@@ -307,17 +338,21 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
                     target_status = existing_status
                     skipped += 1
 
-                cursor.execute(
+                write(
                     """
                     UPDATE jobs
-                    SET sources = ?, salary = ?, date_posted = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
+                    SET sources = ?, salary = ?, date_posted = ?,
+                        status = CASE WHEN status = 'ignored' AND ? THEN 'new' ELSE status END,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE dedup_hash = ?
                     """,
-                    (json.dumps(sources_list), new_salary, new_date, target_status, existing["id"]),
+                    (json.dumps(sources_list), new_salary, new_date, int(is_new_post), existing["dedup_hash"]),
                 )
+                if cloud:
+                    existing.update(sources=json.dumps(sources_list), salary=new_salary, date_posted=new_date, status=target_status)
             else:
                 initial_sources = json.dumps([{"platform": job.platform, "url": job.job_url}])
-                cursor.execute(
+                write(
                     """
                     INSERT INTO jobs (dedup_hash, title, company, location, platform, tier, job_url, salary, role_category, experience_level, date_posted, status, sources)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
@@ -338,10 +373,17 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
                         initial_sources,
                     ),
                 )
-                if cursor.rowcount > 0:
+                inserted = job.dedup_hash not in known_hashes if cloud else cursor.rowcount > 0
+                if inserted:
                     added += 1
+                    known_hashes.add(job.dedup_hash)
+                    if cloud:
+                        catalog.setdefault((canonical_co, canonical_title), []).append({**vars(job), "date_posted": norm_date, "sources": initial_sources, "status": "new"})
                 else:
                     skipped += 1
+        if cloud:
+            for start in range(0, len(pending), 50):
+                conn._client.batch(pending[start:start + 50])
         conn.commit()
     finally:
         conn.close()
@@ -362,6 +404,7 @@ def get_jobs(
     platform: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    with_total: bool = False,
 ) -> List[Dict[str, Any]]:
     conn = get_db_connection(db_path)
     conn.row_factory = sqlite3.Row
@@ -528,7 +571,8 @@ def get_jobs(
 
         where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         order_by = "COALESCE(applied_at, updated_at) DESC, id DESC" if (status == "applied" or (status and "applied" in status)) else "COALESCE(date_posted, '') DESC, updated_at DESC, id DESC"
-        query = f"SELECT * FROM jobs {where_sql} ORDER BY {order_by} LIMIT ? OFFSET ?"
+        projection = "*, COUNT(*) OVER () AS matching_total" if with_total else "*"
+        query = f"SELECT {projection} FROM jobs {where_sql} ORDER BY {order_by} LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
         cursor = conn.execute(query, params)
@@ -556,6 +600,20 @@ def update_job_status(
     pipeline_stage: Optional[str] = None,
     follow_up_date: Optional[str] = None,
 ) -> bool:
+    if status is not None and status not in VALID_STATUSES:
+        raise ValueError("Unsupported job status")
+    if pipeline_stage is not None and pipeline_stage not in VALID_STAGES:
+        raise ValueError("Unsupported pipeline stage")
+    if notes is not None and (not isinstance(notes, str) or len(notes) > 10000):
+        raise ValueError("Notes must be text of at most 10000 characters")
+    if follow_up_date:
+        from datetime import date
+        if not isinstance(follow_up_date, str):
+            raise ValueError("Follow-up date must use YYYY-MM-DD")
+        try:
+            date.fromisoformat(follow_up_date)
+        except ValueError:
+            raise ValueError("Follow-up date must use YYYY-MM-DD") from None
     conn = get_db_connection(db_path)
     try:
         set_clauses = ["updated_at = CURRENT_TIMESTAMP"]
@@ -695,6 +753,29 @@ def set_user_setting(db_path: str, key: str, value: str) -> bool:
         )
         conn.commit()
         return True
+    finally:
+        conn.close()
+
+
+def acquire_sync_lease(db_path: str, lease: str, now: int) -> bool:
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.execute("""
+            INSERT INTO user_settings (key, value) VALUES ('sync_lease', ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            WHERE CAST(substr(user_settings.value, 1, instr(user_settings.value, '|') - 1) AS INTEGER) <= ?
+        """, (lease, now))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def release_sync_lease(db_path: str, lease: str) -> None:
+    conn = get_db_connection(db_path)
+    try:
+        conn.execute("DELETE FROM user_settings WHERE key='sync_lease' AND value=?", (lease,))
+        conn.commit()
     finally:
         conn.close()
 
