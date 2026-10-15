@@ -1,18 +1,11 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": {
-        "includeFiles": [
-          "src/**",
-          "data/**",
-          "scripts/**"
-        ]
-      }
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 300,
+      "includeFiles": "{src,scripts}/**"
     }
-  ],
+  },
   "routes": [
     {
       "src": "/(.*)",

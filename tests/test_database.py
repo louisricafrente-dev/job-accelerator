@@ -126,7 +126,7 @@ class TestDatabase(unittest.TestCase):
         job2 = Job(
             title="Senior Go Developer",
             company="Accenture PH",
-            location="Taguig City",
+            location="BGC Taguig",
             platform="Glassdoor",
             tier=1,
             job_url="https://glassdoor.com/view/accenture-go",

@@ -4,7 +4,7 @@ import time
 import libsql_client
 
 TURSO_URL = os.environ.get("TURSO_DATABASE_URL", "https://job-accelerator-rhettrina.aws-ap-northeast-1.turso.io")
-TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3OTIwNDIzNjcsImlkIjoiMDFhMTNlMGMtNGQwMS03ZTllLTg4ZTAtMmMxYTNjMDhkZGQ1Iiwia2lkIjoidll0ZTBSNXdnZ2MyZ0VrRTFuREpfMUNHZTBwbGdEbVVna0w1dGJoQ2EzZyIsInJpZCI6IjZjOTcxNDFlLWY1ZGQtNGJmNS04YjQzLTAyNjY4MmNlNTdlYyJ9.veXC15vhglAH04ASngJAwPiWs7pTJYxQ1FvYn6EtzZAvsVUg0cppyFdbah-XcitFmFgwoXJ1YC1z8YUT2KTPDA")
+TURSO_TOKEN = os.environ["TURSO_AUTH_TOKEN"]
 
 if TURSO_URL.startswith("libsql://"):
     TURSO_URL = TURSO_URL.replace("libsql://", "https://")

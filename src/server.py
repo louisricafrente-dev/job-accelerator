@@ -12,7 +12,7 @@ from src.aggregator import Aggregator
 from src.auth import (
     get_or_create_admin_totp_secret, verify_totp, get_otpauth_uri,
     create_session_token, verify_session_token,
-    resolve_guest_db_path, reset_guest_db
+    resolve_guest_db_path, reset_guest_db, save_guest_changes
 )
 
 def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
@@ -22,9 +22,20 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     # Pre-initialize master admin TOTP secret so it exists in database
     get_or_create_admin_totp_secret(db_path)
 
+    public_settings = {"target_stack", "filter_skills_only", "has_salary_only", "remote_only", "hide_senior", "date_filter", "role", "experience_levels", "status", "platform", "va_training_enabled"}
+
+    @app.hook("before_request")
+    def validate_json_body():
+        if bottle.request.method in ("POST", "PUT") and bottle.request.content_type == "application/json":
+            try:
+                body = bottle.request.json
+            except (ValueError, bottle.HTTPError):
+                bottle.abort(400, "Invalid JSON body")
+            if body is not None and not isinstance(body, dict):
+                bottle.abort(400, "JSON body must be an object")
+
     @app.hook("after_request")
     def enable_cors_and_nocache():
-        bottle.response.headers["Access-Control-Allow-Origin"] = "*"
         bottle.response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, OPTIONS"
         bottle.response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Session-Token"
         bottle.response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -32,15 +43,16 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         bottle.response.headers["Expires"] = "0"
 
     def get_current_session():
-        token = bottle.request.get_cookie("job_accel_session")
-        if not token:
-            auth_hdr = bottle.request.headers.get("Authorization", "")
-            if auth_hdr.startswith("Bearer "):
-                token = auth_hdr.split(" ", 1)[1].strip()
+        token = None
+        auth_hdr = bottle.request.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            token = auth_hdr.split(" ", 1)[1].strip()
         if not token:
             token = bottle.request.headers.get("X-Session-Token")
         if not token:
             token = bottle.request.query.get("session_token")
+        if not token:
+            token = bottle.request.get_cookie("job_accel_session")
         if not token:
             return None
         return verify_session_token(token)
@@ -155,7 +167,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             
         # 1-year persistent session token
         token = create_session_token("admin", "louis_admin", max_age=365 * 86400)
-        bottle.response.set_cookie("job_accel_session", token, path="/", max_age=365 * 86400, httponly=False, samesite="Lax")
+        bottle.response.set_cookie("job_accel_session", token, path="/", max_age=365 * 86400, httponly=True, secure=bool(os.environ.get("VERCEL")), samesite="Strict")
         bottle.response.content_type = "application/json"
         return json.dumps({
             "success": True,
@@ -173,7 +185,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         # Ensure fresh isolated guest database clone is created
         resolve_guest_db_path(guest_id, db_path)
         token = create_session_token("guest", guest_id)
-        bottle.response.set_cookie("job_accel_session", token, path="/", max_age=30*86400, httponly=False, samesite="Lax")
+        bottle.response.set_cookie("job_accel_session", token, path="/", max_age=30*86400, httponly=True, secure=bool(os.environ.get("VERCEL")), samesite="Strict")
         bottle.response.content_type = "application/json"
         return json.dumps({
             "success": True,
@@ -242,6 +254,11 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         tier = int(tier_str) if tier_str.isdigit() else None
 
         query_status = status
+        try:
+            limit = max(1, min(500, int(bottle.request.query.get("limit", "200"))))
+            offset = max(0, int(bottle.request.query.get("offset", "0")))
+        except ValueError:
+            bottle.abort(400, "Invalid pagination")
 
         jobs = get_jobs(
             db_path=target_db,
@@ -256,10 +273,15 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             hide_senior=hide_senior,
             include_va=include_va,
             platform=platform,
-            limit=200
+            limit=limit,
+            offset=offset,
+            with_total=True,
         )
         bottle.response.content_type = "application/json"
-        return json.dumps({"jobs": jobs, "count": len(jobs)})
+        total = jobs[0]["matching_total"] if jobs else 0
+        for job in jobs:
+            job.pop("matching_total", None)
+        return json.dumps({"jobs": jobs, "count": len(jobs), "total": total, "has_more": offset + len(jobs) < total})
 
     @app.route("/api/jobs/<job_id:int>/status", method=["POST", "PUT"])
     def api_update_status(job_id: int):
@@ -273,14 +295,17 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         notes = data.get("notes")
         pipeline_stage = data.get("stage") or data.get("pipeline_stage")
         follow_up_date = data.get("follow_up_date")
-        success = update_job_status(
-            db_path=target_db,
-            job_id=job_id,
-            status=new_status,
-            notes=notes,
-            pipeline_stage=pipeline_stage,
-            follow_up_date=follow_up_date
-        )
+        changes = dict(status=new_status, notes=notes, pipeline_stage=pipeline_stage, follow_up_date=follow_up_date)
+        try:
+            success = update_job_status(target_db, job_id, **changes)
+        except (ValueError, TypeError) as exc:
+            bottle.response.status = 400
+            return {"success": False, "error": str(exc)}
+        if not success:
+            bottle.response.status = 404
+        session = get_current_session()
+        if success and session["role"] == "guest":
+            save_guest_changes(session["id"], db_path, job_id, changes)
         bottle.response.content_type = "application/json"
         return json.dumps({"success": success})
 
@@ -305,7 +330,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             return auth_err
         target_db = resolve_target_db()
 
-        settings = get_all_user_settings(target_db)
+        settings = {k: v for k, v in get_all_user_settings(target_db).items() if k in public_settings}
         if "target_stack" not in settings:
             settings["target_stack"] = DEFAULT_TARGET_STACK
         bottle.response.content_type = "application/json"
@@ -325,12 +350,18 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         session = get_current_session()
         is_admin = session and session.get("role") == "admin"
         for k, v in data.items():
+            if k not in public_settings:
+                continue
+            if not isinstance(v, (str, bool, int, float, list)) or len(str(v)) > 10000:
+                bottle.abort(400, "Setting value is invalid or too long")
             # Don't allow guest to overwrite master admin_totp_secret or credentials
             if str(k) in ("admin_totp_secret", "admin_password", "smtp_password", "ADMIN_TOTP_SECRET") and not is_admin:
                 continue
             val_str = json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v)
             set_user_setting(target_db, str(k), val_str)
-        settings = get_all_user_settings(target_db)
+            if not is_admin:
+                set_user_setting(db_path, f"guest:{session['id']}:setting:{k}", val_str)
+        settings = {k: v for k, v in get_all_user_settings(target_db).items() if k in public_settings}
         if "target_stack" not in settings:
             settings["target_stack"] = DEFAULT_TARGET_STACK
         bottle.response.content_type = "application/json"
@@ -362,8 +393,13 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             stack = ", ".join(str(s).strip() for s in stack if str(s).strip())
         elif isinstance(stack, str):
             stack = stack.strip()
+        if not isinstance(stack, str) or len(stack) > 10000:
+            bottle.abort(400, "Stack must be text of at most 10000 characters")
 
         set_user_setting(target_db, "target_stack", stack)
+        session = get_current_session()
+        if session["role"] == "guest":
+            set_user_setting(db_path, f"guest:{session['id']}:setting:target_stack", stack)
         bottle.response.content_type = "application/json"
         return json.dumps({"success": True, "stack": stack})
 
@@ -371,7 +407,8 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     @app.route("/api/notify/daily", method=["GET", "POST"])
     def api_notify_daily():
         session = get_current_session()
-        is_cron = bool(bottle.request.headers.get("x-vercel-cron"))
+        cron_secret = os.environ.get("CRON_SECRET", "").strip()
+        is_cron = bool(cron_secret) and hmac.compare_digest(bottle.request.headers.get("Authorization", ""), f"Bearer {cron_secret}")
         if not is_cron and (not session or session.get("role") != "admin"):
             bottle.response.status = 403
             bottle.response.content_type = "application/json"
@@ -394,7 +431,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             return auth_err
         bottle.response.content_type = "application/json"
         telemetry = aggregator.get_telemetry()
-        telemetry["last_result"] = aggregator.last_sync_result
+        telemetry.setdefault("last_result", aggregator.last_sync_result)
         return json.dumps(telemetry)
 
     @app.route("/api/sync", method=["POST", "OPTIONS"])
@@ -423,8 +460,10 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
 
         if isinstance(keywords, str):
             keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+        if keywords is not None and (not isinstance(keywords, list) or len(keywords) > 100 or any(not isinstance(k, str) or not k.strip() or len(k) > 200 for k in keywords)):
+            bottle.abort(400, "Keywords must be a list of at most 100 short strings")
 
-        if is_background:
+        if is_background and not os.environ.get("VERCEL"):
             started = aggregator.start_background_sync(queries=keywords if keywords else None, force=force)
             bottle.response.content_type = "application/json"
             return json.dumps({
