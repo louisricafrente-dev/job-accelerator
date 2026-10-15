@@ -381,22 +381,18 @@ def get_jobs(
         if role_category and role_category != "All":
             rc = role_category.strip()
             if rc in ("Virtual Assistant", "VA", "VA (With Training)"):
-                training_sub = [
-                    "lower(title) LIKE '%training%'",
-                    "lower(title) LIKE '%entry%'",
-                    "lower(title) LIKE '%junior%'",
-                    "lower(title) LIKE '%no experience%'",
-                    "lower(title) LIKE '%trainee%'",
-                    "lower(title) LIKE '%open for fresh%'",
-                    "lower(title) LIKE '%open to fresh%'",
-                    "lower(title) LIKE '%beginner%'",
+                va_sub = [
+                    "role_category = 'Virtual Assistant'",
+                    "lower(title) LIKE '%virtual assistant%'",
+                    "lower(title) LIKE '%administrative assistant%'",
+                    "lower(title) LIKE '%executive assistant%'",
+                    "lower(title) LIKE '%remote assistant%'",
                     "lower(title) LIKE '%cyberbacker%'",
                     "lower(title) LIKE '%athena%'",
                     "lower(title) LIKE '%virtudesk%'",
-                    "lower(title) LIKE '%pineapple staffing%'",
-                    "experience_level = 'Junior / Entry'"
+                    "lower(title) LIKE '%pineapple staffing%'"
                 ]
-                clauses.append(f"((role_category = 'Virtual Assistant' OR lower(title) LIKE '%virtual assistant%' OR lower(title) LIKE '%administrative assistant%') AND ({' OR '.join(training_sub)}))")
+                clauses.append(f"({' OR '.join(va_sub)})")
             elif rc == "Frontend":
                 frontend_pats = ["%frontend%", "%front-end%", "%react%", "%vue%", "%angular%", "%ui dev%", "%web designer%", "%svelte%"]
                 sub_clauses = ["(role_category = 'Frontend' OR role_category = 'Both')"]

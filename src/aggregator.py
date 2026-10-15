@@ -37,7 +37,11 @@ DEFAULT_QUERIES = [
     "qa automation engineer", "sdet", "devops engineer",
     
     # Priority 6 & 7: AI/Data & Systems Specialization
-    "ai engineer", "data engineer", "systems developer"
+    "ai engineer", "data engineer", "systems developer",
+
+    # Priority 8: Virtual Assistant & Remote Matrix (Picture 2)
+    "virtual assistant", "executive assistant", "administrative assistant",
+    "remote assistant", "cyberbacker", "athena", "virtudesk", "pineapple staffing"
 ]
 
 def get_default_connectors() -> List[BaseConnector]:
@@ -182,9 +186,10 @@ class Aggregator:
                         }
                 else:
                     # MAX MODE: Multi-track dynamic query selection covering the user's entire stack
-                    tech_q = [q for q in search_queries if not any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad", "android", "mobile", "kotlin", "flutter", "react native", "ios"])]
+                    tech_q = [q for q in search_queries if not any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad", "android", "mobile", "kotlin", "flutter", "react native", "ios", "virtual assistant", "assistant", "cyberbacker", "athena", "virtudesk", "pineapple"])]
                     jr_q = [q for q in search_queries if any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad"])]
                     mob_q = [q for q in search_queries if any(m in q.lower() for m in ["android", "mobile", "kotlin", "flutter", "react native", "ios"])]
+                    va_q = [q for q in search_queries if any(v in q.lower() for v in ["virtual assistant", "executive assistant", "administrative assistant", "remote assistant", "cyberbacker", "athena", "virtudesk", "pineapple staffing"])]
 
                     active_queries = []
                     # 1. Junior / Entry tracks (take up to 2 variations)
@@ -199,13 +204,17 @@ class Aggregator:
                     else:
                         active_queries.append("android developer")
 
-                    # 3. Web / Fullstack / Backend tracks (take up to 3 variations, e.g. React, Node, Next.js)
+                    # 3. Web / Fullstack / Backend tracks (take up to 2 variations, e.g. React, Node, Next.js)
                     if tech_q:
-                        active_queries.extend(tech_q[:3])
+                        active_queries.extend(tech_q[:2])
                     else:
                         active_queries.append("software developer")
 
-                    # Deduplicate while preserving priority order (up to 5-6 queries in parallel)
+                    # 4. Virtual Assistant & Remote Matrix track (Picture 2)
+                    if va_q:
+                        active_queries.extend(va_q[:2])
+
+                    # Deduplicate while preserving priority order (up to 6-7 queries in parallel)
                     seen_q = set()
                     final_queries = []
                     for q in active_queries:
