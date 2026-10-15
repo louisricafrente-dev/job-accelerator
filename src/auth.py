@@ -143,33 +143,23 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
             cur = mconn.cursor()
             cur.execute("""
                 SELECT dedup_hash, title, company, location, platform, tier, job_url, salary,
-                       role_category, experience_level, date_posted, status, pipeline_stage,
-                       follow_up_date, notes, sources, applied_at, created_at, updated_at
+                       role_category, experience_level, date_posted, sources, created_at, updated_at
                 FROM jobs
             """)
             rows = cur.fetchall()
             insert_batch = []
-            update_batch = []
             for r in rows:
                 d = dict(r)
                 srcs = d.get("sources")
                 if not isinstance(srcs, str):
                     srcs = json.dumps(srcs or [])
-                st = d.get("status") or 'new'
-                stage = d.get("pipeline_stage") or 'applied'
-                fdate = d.get("follow_up_date")
-                notes = d.get("notes")
-                app_at = d.get("applied_at")
-                dhash = d.get("dedup_hash")
 
                 insert_batch.append((
-                    dhash, d.get("title"), d.get("company"), d.get("location"),
+                    d.get("dedup_hash"), d.get("title"), d.get("company"), d.get("location"),
                     d.get("platform"), d.get("tier"), d.get("job_url"), d.get("salary"),
                     d.get("role_category"), d.get("experience_level"), d.get("date_posted"),
-                    st, stage, fdate, notes, srcs, app_at, d.get("created_at"), d.get("updated_at")
+                    'new', 'applied', None, None, srcs, None, d.get("created_at"), d.get("updated_at")
                 ))
-                if st != 'new':
-                    update_batch.append((st, stage, fdate, notes, app_at, dhash))
 
             if insert_batch:
                 gconn.executemany("""
@@ -179,12 +169,6 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
                         follow_up_date, notes, sources, applied_at, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """, insert_batch)
-            if update_batch:
-                gconn.executemany("""
-                    UPDATE jobs
-                    SET status = ?, pipeline_stage = ?, follow_up_date = ?, notes = ?, applied_at = ?
-                    WHERE dedup_hash = ? AND status = 'new';
-                """, update_batch)
             gconn.commit()
             mconn.close()
             gconn.close()
@@ -213,18 +197,9 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
             )
             SELECT
                 dedup_hash, title, company, location, platform, tier, job_url, salary,
-                role_category, experience_level, date_posted, status, pipeline_stage,
-                follow_up_date, notes, sources, applied_at, created_at, updated_at
+                role_category, experience_level, date_posted, 'new', 'applied',
+                NULL, NULL, sources, NULL, created_at, updated_at
             FROM master_db.jobs;
-        """)
-        conn.execute("""
-            UPDATE jobs
-            SET status = (SELECT m.status FROM master_db.jobs m WHERE m.dedup_hash = jobs.dedup_hash),
-                pipeline_stage = (SELECT m.pipeline_stage FROM master_db.jobs m WHERE m.dedup_hash = jobs.dedup_hash),
-                follow_up_date = (SELECT m.follow_up_date FROM master_db.jobs m WHERE m.dedup_hash = jobs.dedup_hash),
-                notes = (SELECT m.notes FROM master_db.jobs m WHERE m.dedup_hash = jobs.dedup_hash),
-                applied_at = (SELECT m.applied_at FROM master_db.jobs m WHERE m.dedup_hash = jobs.dedup_hash)
-            WHERE status = 'new' AND dedup_hash IN (SELECT m.dedup_hash FROM master_db.jobs m WHERE m.status != 'new');
         """)
         conn.commit()
         _guest_sync_cache[guest_db_path] = master_mtime
@@ -245,7 +220,7 @@ def resolve_guest_db_path(guest_id: str, master_db_path: str) -> str:
     """
     Return the isolated database path for a guest user.
     Centralized Job Data: The guest receives all scraped opportunities harvested
-    by the master database including current status, but subsequent updates stay sandboxed.
+    by the master database with zero saved/pipeline/archived, leaving their sandbox clean.
     """
     base_dir = os.path.dirname(os.path.abspath(master_db_path))
     guests_dir = os.path.join(base_dir, "guests")
@@ -268,6 +243,14 @@ def resolve_guest_db_path(guest_id: str, master_db_path: str) -> str:
             try:
                 shutil.copy2(master_db_path, guest_db_path)
                 conn = sqlite3.connect(guest_db_path, timeout=15.0)
+                conn.execute("""
+                    UPDATE jobs 
+                    SET status = 'new', 
+                        pipeline_stage = 'applied', 
+                        applied_at = NULL, 
+                        follow_up_date = NULL, 
+                        notes = NULL;
+                """)
                 conn.execute("DELETE FROM user_settings WHERE key IN ('admin_totp_secret', 'smtp_password', 'email', 'admin_password');")
                 conn.commit()
                 _guest_sync_cache[guest_db_path] = os.path.getmtime(master_db_path)
