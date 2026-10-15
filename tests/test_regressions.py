@@ -7,6 +7,8 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from pathlib import Path
+import re
 from unittest.mock import patch
 
 from src.auth import resolve_guest_db_path, save_guest_changes, create_session_token, verify_session_token, _guest_sync_cache
@@ -184,6 +186,28 @@ class TestRegressions(unittest.TestCase):
             result = wsgi_request(self.app, "POST", "/api/sync", {"background": True}, cookie=self.cookie)
             self.assertEqual(result["json"]["status"], "ok")
             run.assert_called_once()
+
+    def test_sync_accepts_every_frontend_preset(self):
+        source = (Path(__file__).parents[1] / "src/static/app.js").read_text(encoding="utf-8")
+        catalog = source.split("const PRESET_CATEGORIES =", 1)[1].split("const PRESET_SKILLS =", 1)[0]
+        keywords = [skill for group in re.findall(r"skills:\s*\[(.*?)\]", catalog, re.S) for skill in re.findall(r'"([^"\n]+)"', group)]
+        self.assertGreater(len(keywords), 100)
+        with patch("src.server.Aggregator.run_sync", return_value={"status": "ok", "added": 0}) as run:
+            result = wsgi_request(self.app, "POST", "/api/sync", {"keywords": keywords}, cookie=self.cookie)
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["json"]["status"], "ok")
+        self.assertEqual(run.call_args.kwargs["queries"], list(dict.fromkeys(keywords)))
+
+    def test_invalid_sync_payloads_return_json_errors(self):
+        for keywords in (["skill"] * 1001, [None], [""], "x" * 201, ["x" * 200] * 60, 42):
+            with self.subTest(keywords_type=type(keywords).__name__):
+                result = wsgi_request(self.app, "POST", "/api/sync", {"keywords": keywords}, cookie=self.cookie)
+                self.assertEqual(result["status"], 400)
+                self.assertEqual(result["json"]["status"], "error")
+                self.assertTrue(result["json"]["error"])
+        result = wsgi_request(self.app, "POST", "/api/sync", "[]", cookie=self.cookie)
+        self.assertEqual(result["status"], 400)
+        self.assertEqual(result["json"]["error"], "JSON body must be an object")
 
 
 if __name__ == "__main__":

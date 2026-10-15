@@ -24,6 +24,11 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
 
     public_settings = {"target_stack", "filter_skills_only", "has_salary_only", "remote_only", "hide_senior", "date_filter", "role", "experience_levels", "status", "platform", "va_training_enabled"}
 
+    @app.error(400)
+    def bad_request(error):
+        bottle.response.content_type = "application/json"
+        return json.dumps({"status": "error", "error": str(error.body)})
+
     @app.hook("before_request")
     def validate_json_body():
         if bottle.request.method in ("POST", "PUT") and bottle.request.content_type == "application/json":
@@ -460,8 +465,13 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
 
         if isinstance(keywords, str):
             keywords = [k.strip() for k in keywords.split(",") if k.strip()]
-        if keywords is not None and (not isinstance(keywords, list) or len(keywords) > 100 or any(not isinstance(k, str) or not k.strip() or len(k) > 200 for k in keywords)):
-            bottle.abort(400, "Keywords must be a list of at most 100 short strings")
+        if keywords is not None:
+            if (not isinstance(keywords, list) or len(keywords) > 1000
+                    or any(not isinstance(k, str) or not k.strip() or len(k) > 200 for k in keywords)):
+                bottle.abort(400, "Keywords must be a list of at most 1000 nonempty strings, each up to 200 characters")
+            if len(", ".join(keywords)) > 10000:
+                bottle.abort(400, "The selected keyword matrix must be at most 10000 characters")
+            keywords = list(dict.fromkeys(k.strip() for k in keywords))
 
         if is_background and not os.environ.get("VERCEL"):
             started = aggregator.start_background_sync(queries=keywords if keywords else None, force=force)
