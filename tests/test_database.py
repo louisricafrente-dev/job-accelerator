@@ -391,6 +391,77 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(all_settings["target_stack"], "Next.js, TypeScript")
         self.assertEqual(all_settings["remote_only"], "1")
 
+    def test_same_platform_same_timeline_dedup(self):
+        """Redundant postings on the same platform with same company, title, date, but different URLs should be merged and preserve saved status."""
+        job1 = Job(
+            title="Junior Full Stack Developer",
+            company="Microgenesis Business Systems",
+            location="Manila, Philippines",
+            platform="JobStreet",
+            tier=1,
+            job_url="https://www.jobstreet.com.ph/job/95102667",
+            date_posted="2026-10-14",
+            status="saved"
+        )
+        added, skipped = insert_jobs(self.db_path, [job1])
+        self.assertEqual(added, 1)
+
+        # Mark as saved using the job's integer id
+        jobs_initial = get_jobs(self.db_path, search="Microgenesis")
+        self.assertEqual(len(jobs_initial), 1)
+        update_job_status(self.db_path, jobs_initial[0]["id"], status="saved")
+
+        # Second job with different JobStreet ID, but same company, title, platform, and date
+        job2 = Job(
+            title="Junior Full Stack Developer",
+            company="Microgenesis Business Systems",
+            location="Manila, Philippines",
+            platform="JobStreet",
+            tier=1,
+            job_url="https://www.jobstreet.com.ph/job/95253020",
+            date_posted="2026-10-14"
+        )
+        added2, skipped2 = insert_jobs(self.db_path, [job2])
+        self.assertEqual(added2, 0)
+        self.assertEqual(skipped2, 1)
+
+        # Ensure only 1 row exists and status remains 'saved'
+        jobs = get_jobs(self.db_path, search="Microgenesis")
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["status"], "saved")
+
+    def test_same_platform_diff_timeline_repost(self):
+        """Reposts on the same platform with different dates should be treated as new opportunities."""
+        job1 = Job(
+            title="Associate Software Engineer",
+            company="Finastra Philippines Inc",
+            location="Manila, Philippines",
+            platform="JobStreet",
+            tier=1,
+            job_url="https://www.jobstreet.com.ph/job/95117343",
+            date_posted="2026-09-01"
+        )
+        added, skipped = insert_jobs(self.db_path, [job1])
+        self.assertEqual(added, 1)
+
+        # Repost weeks later with a newer date and new URL
+        job2 = Job(
+            title="Associate Software Engineer",
+            company="Finastra Philippines Inc",
+            location="Manila, Philippines",
+            platform="JobStreet",
+            tier=1,
+            job_url="https://www.jobstreet.com.ph/job/95213180",
+            date_posted="2026-10-16"
+        )
+        added2, skipped2 = insert_jobs(self.db_path, [job2])
+        self.assertEqual(added2, 1)
+
+        # Both records exist because timelines are different
+        jobs = get_jobs(self.db_path, search="Finastra")
+        self.assertEqual(len(jobs), 2)
+
 if __name__ == "__main__":
     unittest.main()
+
 
