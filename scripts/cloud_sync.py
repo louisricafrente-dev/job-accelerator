@@ -39,6 +39,8 @@ def run_cloud_sync():
     try:
         from scripts.purge_non_tech import purge_irrelevant_jobs
         purge_irrelevant_jobs(db_path)
+        from scripts.purge_same_timeline_dups import purge_same_timeline_duplicates
+        purge_same_timeline_duplicates(db_path)
     except Exception as e:
         print(f"[*] Hygiene post-check notice: {e}")
 

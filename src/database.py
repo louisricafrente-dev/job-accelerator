@@ -289,6 +289,16 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
                 candidates = cursor.fetchall()
             existing = next((row for row in candidates if clean_url(row["job_url"]) == clean_url(job.job_url)), None)
             if existing is None:
+                # Same-platform same-timeline check:
+                # If company, title, platform, and location match AND timeline/date matches,
+                # treat as duplicate posting of the same requisition (e.g. redundant job IDs on JobStreet/LinkedIn).
+                # (Different timelines on the same platform remain allowed as valid new reposts/cycles).
+                norm_loc = (job.location or "").strip().lower()
+                existing = next((row for row in candidates
+                                 if row["platform"].lower() == job.platform.lower()
+                                 and (row["location"] or "").strip().lower() == norm_loc
+                                 and (row["date_posted"] or "") == (norm_date or "")), None)
+            if existing is None:
                 # Merge across boards only when location agrees; preserve separate requisitions.
                 existing = next((row for row in candidates
                                  if row["platform"].lower() != job.platform.lower()

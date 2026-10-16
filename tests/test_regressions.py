@@ -68,7 +68,7 @@ class TestRegressions(unittest.TestCase):
             self.assertTrue(json.loads("".join(result))["mocked"])
 
     def test_distinct_same_board_requisitions_survive(self):
-        insert_jobs(self.db, [self.job(), self.job("https://example.com/2"), self.job("https://example.com/3", "Cebu")])
+        insert_jobs(self.db, [self.job(date_posted="2026-10-10"), self.job("https://example.com/2", date_posted="2026-10-16"), self.job("https://example.com/3", "Cebu", date_posted="2026-10-10")])
         self.assertEqual(get_stats(self.db)["total"], 3)
 
     def test_pagination_reaches_every_job(self):
@@ -84,12 +84,12 @@ class TestRegressions(unittest.TestCase):
         conn = sqlite3.connect(self.db)
         try:
             conn.execute("PRAGMA wal_autocheckpoint=0")
-            insert_jobs(self.db, [self.job()])
+            insert_jobs(self.db, [self.job(date_posted="2026-10-10")])
             conn.execute("UPDATE jobs SET id=42")
             conn.commit()
             guest = resolve_guest_db_path("guest_wal", self.db)
             self.assertEqual(get_jobs(guest)[0]["id"], 42)
-            insert_jobs(self.db, [self.job("https://example.com/2")])
+            insert_jobs(self.db, [self.job("https://example.com/2", date_posted="2026-10-16")])
             _guest_sync_cache.clear()
             resolve_guest_db_path("guest_wal", self.db)
             self.assertEqual(get_stats(guest)["total"], 2)
