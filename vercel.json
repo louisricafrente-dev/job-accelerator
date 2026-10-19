@@ -3,9 +3,15 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 300,
-      "includeFiles": "{src,scripts}/**"
+      "includeFiles": "{src,scripts,data}/**"
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/sync",
+      "schedule": "0 */6 * * *"
+    }
+  ],
   "routes": [
     {
       "src": "/(.*)",

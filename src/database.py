@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
     value TEXT NOT NULL,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS admin_login_attempts (
+    client_key TEXT PRIMARY KEY,
+    window_started INTEGER NOT NULL,
+    attempts INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_level ON jobs(experience_level);
 CREATE INDEX IF NOT EXISTS idx_jobs_category ON jobs(role_category);
@@ -501,7 +506,8 @@ def get_jobs(
                 clauses.append("(role_category = ? OR role_category = 'Both' OR lower(title) LIKE ?)")
                 params.extend([rc, f"%{rc.lower()}%"])
 
-        if not include_va and (not role_category or role_category.strip().upper() not in ("VIRTUAL ASSISTANT", "VA", "VA (WITH TRAINING)")):
+        is_explicit_unspecified = experience_level and any(u in experience_level for u in ("Unspecified", "Other", "Others", "Unspecified / Other"))
+        if not include_va and not is_explicit_unspecified and (not role_category or role_category.strip().upper() not in ("VIRTUAL ASSISTANT", "VA", "VA (WITH TRAINING)")):
             clauses.append("(role_category != 'Virtual Assistant' AND lower(title) NOT LIKE '%virtual assistant%' AND lower(title) NOT LIKE '%administrative assistant%')")
         if experience_level and experience_level != "All":
             raw_levels = [l.strip() for l in experience_level.split(",") if l.strip() and l.strip() != "All"]
@@ -534,6 +540,8 @@ def get_jobs(
                         level_clauses.append("(experience_level = 'Senior / Lead' OR lower(title) LIKE '%senior%' OR lower(title) LIKE '%sr%' OR lower(title) LIKE '%lead%' OR lower(title) LIKE '%principal%')")
                     elif el in ("Mid-Level", "Mid"):
                         level_clauses.append("(experience_level = 'Mid-Level' OR lower(title) LIKE '%engineer ii%' OR lower(title) LIKE '%developer ii%')")
+                    elif el in ("Unspecified", "Other", "Others", "Unspecified / Other"):
+                        level_clauses.append("(experience_level = 'Unspecified' OR experience_level IS NULL OR experience_level = '' OR experience_level = 'Other')")
                     else:
                         level_clauses.append("experience_level = ?")
                         params.append(el)
@@ -725,12 +733,17 @@ def get_stats(db_path: str) -> Dict[str, Any]:
 
         cursor.execute("SELECT COUNT(*) as total FROM jobs")
         total = cursor.fetchone()["total"]
+
+        cursor.execute("SELECT COUNT(*) as cnt FROM jobs WHERE role_category = 'Virtual Assistant' OR lower(title) LIKE '%virtual assistant%'")
+        va_count = cursor.fetchone()["cnt"]
+
         return {
             "total": total,
             "new": status_counts.get("new", 0),
             "saved": status_counts.get("saved", 0),
             "applied": status_counts.get("applied", 0),
             "ignored": status_counts.get("ignored", 0),
+            "va": va_count,
             "by_level": level_counts,
             "by_stage": stage_counts,
         }

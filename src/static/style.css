@@ -2939,3 +2939,125 @@ a {
   background: #a855f7;
   box-shadow: 0 0 6px #a855f7;
 }
+
+/* Keep the simplified controls while using the original dark-slate palette. */
+.filter-select {
+  width: min(100%, 280px);
+  min-height: 42px;
+  padding: 8px 36px 8px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+}
+.filter-select:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.auto-sync-control {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+  font-size: .85rem;
+  font-weight: 600;
+}
+.auto-sync-control input { width: 17px; height: 17px; accent-color: var(--accent-cyan); }
+@media (max-width: 768px) {
+  .filter-select { width: 100%; }
+  .auto-sync-control { margin-left: auto; }
+}
+
+/* Dedicated Remote VA Feed Banner & Controls */
+.va-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--accent-indigo);
+  border-radius: var(--radius-md);
+  margin-bottom: 14px;
+  gap: 12px;
+}
+
+.va-view-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.va-view-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background-color: var(--accent-indigo-bg);
+  color: var(--accent-indigo);
+  border: 1px solid var(--accent-indigo-border);
+}
+
+.va-view-text {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.va-view-text strong {
+  color: var(--text-primary);
+}
+
+.btn-return-tech {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 7px 14px;
+  white-space: nowrap;
+  color: var(--text-primary);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-return-tech:hover {
+  background-color: var(--bg-surface-card-hover);
+  border-color: var(--border-hover);
+  color: var(--accent-cyan);
+}
+
+.status-tab[data-val="va"].active .tab-icon {
+  color: var(--accent-indigo);
+}
+
+.status-tab[data-val="va"].active .tab-count {
+  background-color: var(--accent-indigo-bg);
+  color: var(--accent-indigo);
+}
+
+@media (max-width: 768px) {
+  .va-view-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .btn-return-tech {
+    width: 100%;
+    justify-content: center;
+  }
+}
+

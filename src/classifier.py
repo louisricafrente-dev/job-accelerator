@@ -58,7 +58,12 @@ SENIOR_PATTERNS = [
 ]
 
 MID_PATTERNS = [
-    r"\bmid[- ]level\b", r"\bintermediate\b", r"\b2-4 years\b", r"\b3-5 years\b"
+    r"\bmid[- ]level\b", r"\bintermediate\b", r"\b2-4 years\b", r"\b3-5 years\b",
+    r"\bdeveloper[- ]?ii\b", r"\bengineer[- ]?ii\b", r"\bprogrammer[- ]?ii\b", r"\bqa[- ]?engineer[- ]?ii\b", r"\bsde[- ]?ii\b",
+    r"\bdeveloper[- ]?iii\b", r"\bengineer[- ]?iii\b", r"\bprogrammer[- ]?iii\b", r"\bsde[- ]?iii\b",
+    r"\bdeveloper[- ]?2\b", r"\bengineer[- ]?2\b", r"\bprogrammer[- ]?2\b", r"\bsde[- ]?2\b",
+    r"\bdeveloper[- ]?3\b", r"\bengineer[- ]?3\b", r"\bprogrammer[- ]?3\b", r"\bsde[- ]?3\b",
+    r"\blevel[- ]?2\b", r"\bl2\b", r"\blevel[- ]?3\b", r"\bl3\b"
 ]
 
 WEB_PATTERNS = [
@@ -71,8 +76,11 @@ WEB_PATTERNS = [
     r"\bprogrammer\b", r"\bcomputer programmer\b",
     r"\bpython (?:dev|developer|engineer)\b", r"\breact\b", r"\bnode(?:\.js)?\b",
     r"\bjavascript\b", r"\btypescript\b", r"\bgolang\b", r"\bgo (?:developer|dev|engineer)\b",
-    r"\bjava (?:developer|dev|engineer)?\b", r"\bc#\b", r"\b\.net\b", r"\basp\.net\b",
+    r"\bjava (?:developer|dev|engineer)?\b", r"\bc#(?:[\s/,\.-]|$)", r"\b\.net\b", r"\basp\.net\b",
     r"\bphp\b", r"\blaravel\b", r"\bsymfony\b", r"\bruby\b", r"\brails\b", r"\bruby on rails\b",
+    r"\bshopify\b", r"\bwordpress\b", r"\bdatabase administrator\b", r"\bdba\b",
+    r"\bsysadmin\b", r"\bsystem(?:s)? administrator\b", r"\bnetwork engineer\b",
+    r"\bsecurity analyst\b", r"\bapplication security engineer\b", r"\bsecurity engineer\b",
     r"\bspring boot\b", r"\bspring framework\b", r"\bfastapi\b", r"\bdjango\b", r"\bflask\b",
     r"\bmobile\b", r"\bandroid\b", r"\bios\b", r"\bflutter\b", r"\breact native\b",
     r"\bkotlin\b", r"\bswift\b", r"\bswiftui\b", r"\bjetpack compose\b", r"\bcompose multiplatform\b",
@@ -190,42 +198,53 @@ def is_non_tech(title: str, description: str = "") -> bool:
         return False
     return any(re.search(pat, text) for pat in NON_TECH_BLACKLIST)
 
-def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True) -> bool:
-    t_str = str(title or "")
-    d_str = str(description or "")
-    if is_non_tech(t_str, d_str):
-        return False
-    
-    if is_virtual_assistant(t_str, d_str):
-        return bool(allow_va_training)
-    
-    text = f"{t_str} {d_str}".lower()
-    is_web = any(re.search(pat, text) for pat in WEB_PATTERNS)
-    is_data = any(re.search(pat, text) for pat in DATA_AI_PATTERNS)
-    is_tech = any(re.search(pat, text) for pat in TECH_WHITELIST_OVERRIDE)
-    return is_web or is_data or is_tech
-
 def classify_experience_level(title: str, description: str = "") -> str:
     t_str = str(title or "")
     d_str = str(description or "")
-    text = f"{t_str} {d_str}".lower()
+    title_lower = t_str.lower()
+    desc_lower = d_str.lower()
     if is_entry_training_va(t_str, d_str):
         return "Junior / Entry"
-    is_junior = any(re.search(pat, text) for pat in JUNIOR_PATTERNS)
-    is_senior = any(re.search(pat, text) for pat in SENIOR_PATTERNS)
-    is_mid = any(re.search(pat, text) for pat in MID_PATTERNS)
+    is_junior = any(re.search(pat, title_lower) for pat in JUNIOR_PATTERNS)
+    is_senior = any(re.search(pat, title_lower) for pat in SENIOR_PATTERNS)
+    is_mid = any(re.search(pat, title_lower) for pat in MID_PATTERNS)
 
     if is_junior and not is_senior:
         return "Junior / Entry"
     if is_senior and not is_junior:
         return "Senior / Lead"
     if is_junior and is_senior:
-        if re.search(r"\bjunior\s*(?:to|or|/|-)\s*senior\b", text):
+        if re.search(r"\bjunior\s*(?:to|or|/|-)\s*senior\b", title_lower):
             return "Junior / Entry"
         return "Senior / Lead"
     if is_mid:
         return "Mid-Level"
-    return "Mid-Level" if any(re.search(pat, text) for pat in WEB_PATTERNS + DATA_AI_PATTERNS) else "Unspecified"
+    if any(re.search(pat, desc_lower) for pat in JUNIOR_PATTERNS):
+        return "Junior / Entry"
+    matches_tech = any(re.search(pat, title_lower) for pat in WEB_PATTERNS + DATA_AI_PATTERNS + TECH_WHITELIST_OVERRIDE)
+    return "Mid-Level" if matches_tech else "Unspecified"
+
+def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True) -> bool:
+    t_str = str(title or "")
+    d_str = str(description or "")
+    if is_non_tech(t_str, d_str):
+        return False
+
+    # Strictly reject Senior / Lead roles to match candidate's matrix
+    if classify_experience_level(t_str, d_str) == "Senior / Lead":
+        return False
+
+    # Virtual Assistant roles must strictly be entry-level or provide training
+    if is_virtual_assistant(t_str, d_str):
+        if allow_va_training:
+            return is_entry_training_va(t_str, d_str)
+        return False
+
+    text = f"{t_str} {d_str}".lower()
+    is_web = any(re.search(pat, text) for pat in WEB_PATTERNS)
+    is_data = any(re.search(pat, text) for pat in DATA_AI_PATTERNS)
+    is_tech = any(re.search(pat, text) for pat in TECH_WHITELIST_OVERRIDE)
+    return is_web or is_data or is_tech
 
 def classify_role(title: str, description: str = "") -> str:
     t_str = str(title or "")

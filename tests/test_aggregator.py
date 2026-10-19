@@ -30,7 +30,8 @@ class TestAggregator(unittest.TestCase):
                 platform="MockBoard",
                 tier=1,
                 job_url="https://mockboard.com/jobs/1",
-                experience_level="Junior / Entry"
+                experience_level="Junior / Entry",
+                date_posted="today"
             )
         ]
         aggregator = Aggregator(self.db_path, connectors=[mock_connector])
@@ -38,6 +39,32 @@ class TestAggregator(unittest.TestCase):
         self.assertEqual(stats["added"], 1)
         self.assertEqual(len(get_jobs(self.db_path)), 1)
         self.assertEqual(stats["platforms"]["MockBoard"], 1)
+
+    def test_14_day_and_matrix_filtering(self):
+        mock_connector = MagicMock()
+        mock_connector.platform = "MockBoard"
+        mock_connector.tier = 1
+        mock_connector.fetch.return_value = [
+            # 1. Matching role, within 14 days -> should be ACCEPTED
+            Job(title="React Developer", company="Fresh Co", location="Remote", platform="MockBoard", tier=1, job_url="https://m1", date_posted="today"),
+            # 2. Senior role -> should be REJECTED (Senior / Lead)
+            Job(title="Senior Architect", company="Lead Corp", location="Remote", platform="MockBoard", tier=1, job_url="https://m2", date_posted="today"),
+            # 3. Stale date (20 days ago) -> should be REJECTED (>14 days)
+            Job(title="Frontend Engineer", company="Old Co", location="Remote", platform="MockBoard", tier=1, job_url="https://m3", date_posted="2026-09-01"),
+            # 4. Non-tech role -> should be REJECTED (Non-tech)
+            Job(title="Chief Accountant", company="Tax Corp", location="Remote", platform="MockBoard", tier=1, job_url="https://m4", date_posted="today"),
+            # 5. Non-entry VA -> should be REJECTED
+            Job(title="Executive Assistant (5 years exp)", company="VA Corp", location="Remote", platform="MockBoard", tier=1, job_url="https://m5", date_posted="today"),
+            # 6. Entry VA with training -> should be ACCEPTED
+            Job(title="Virtual Assistant (Paid Training)", company="Train Corp", location="Remote", platform="MockBoard", tier=1, job_url="https://m6", date_posted="yesterday"),
+        ]
+        aggregator = Aggregator(self.db_path, connectors=[mock_connector])
+        stats = aggregator.run_sync(queries=["software engineer"])
+        self.assertEqual(stats["added"], 2)
+        jobs = get_jobs(self.db_path, include_va=True)
+        self.assertEqual(len(jobs), 2)
+        titles = {j["title"] for j in jobs}
+        self.assertEqual(titles, {"React Developer", "Virtual Assistant (Paid Training)"})
 
     def test_sync_lock_prevents_spam(self):
         mock_connector = MagicMock()

@@ -97,6 +97,10 @@ def main():
             server.serve_forever()
 
     app = create_app(DB_PATH)
+    if not IS_CLOUD:
+        from scripts.auto_runner import start_background_runner
+        start_background_runner(DB_PATH)
+        print("[+] Local auto-sync is enabled. You can switch it off in the dashboard.")
     print(f"\n[✓] Server running on http://{HOST}:{PORT} (Press Ctrl+C to stop)")
     app.run(server=ThreadedServer(host=HOST, port=PORT), quiet=False)
 

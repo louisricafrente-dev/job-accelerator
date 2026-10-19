@@ -4,6 +4,7 @@
 // --------------------------------------------------------------------------
 
 // State management
+let currentViewMode = 'tech'; // 'tech' or 'va'
 let currentStatus = 'new';
 let selectedLevels = new Set(['All']);
 let currentLevel = 'All';
@@ -15,6 +16,7 @@ let remoteOnly = false;
 let hideSenior = false;
 let filterBySkillsOnly = false;
 let vaTrainingEnabled = localStorage.getItem('job_accel_va_training_enabled') === 'true';
+let autoSyncEnabled = localStorage.getItem('job_accel_auto_sync_enabled') !== 'false';
 let searchQuery = '';
 let jobsList = [];
 let selectedIndex = 0;
@@ -435,10 +437,10 @@ function updateAuthUI() {
       btnAction.className = 'btn-logout';
     }
     if (syncBtn) {
-      syncBtn.title = 'Scrape 15 job boards including OnlineJobs.ph for latest postings';
+      syncBtn.title = 'Search connected job sites for recent postings';
       syncBtn.classList.remove('btn-locked');
     }
-    if (syncTxt) syncTxt.textContent = 'Sync 15 Boards';
+    if (syncTxt) syncTxt.textContent = 'Sync Job Sites';
     if (digestBtn) digestBtn.style.opacity = '1';
   } else if (currentUserRole === 'guest') {
     if (pill) {
@@ -743,7 +745,8 @@ async function loadAllUserSettings() {
       date_filter: localStorage.getItem('job_accel_date_filter'),
       role: localStorage.getItem('job_accel_role'),
       experience_levels: localStorage.getItem('job_accel_experience_levels'),
-      status: localStorage.getItem('job_accel_status')
+      status: localStorage.getItem('job_accel_status'),
+      auto_sync_enabled: localStorage.getItem('job_accel_auto_sync_enabled')
     };
   } catch (e) {}
 
@@ -785,17 +788,28 @@ async function loadAllUserSettings() {
   if (settings.hide_senior !== undefined && settings.hide_senior !== null) {
     hideSenior = settings.hide_senior === '1' || settings.hide_senior === true || settings.hide_senior === 'true';
   }
+  if (settings.va_training_enabled !== undefined && settings.va_training_enabled !== null) {
+    vaTrainingEnabled = settings.va_training_enabled === '1' || settings.va_training_enabled === true || settings.va_training_enabled === 'true';
+  }
+  if (settings.auto_sync_enabled !== undefined && settings.auto_sync_enabled !== null) {
+    autoSyncEnabled = settings.auto_sync_enabled === '1' || settings.auto_sync_enabled === true || settings.auto_sync_enabled === 'true';
+  }
 
   if (settings.date_filter) {
     currentDateFilter = settings.date_filter;
   }
-  if (settings.role) {
+  if (settings.role && settings.role !== 'Virtual Assistant') {
     currentRole = settings.role;
+  } else {
+    currentRole = 'All';
   }
   if (settings.platform) {
     currentPlatform = settings.platform;
   }
-  if (settings.status) {
+  if (settings.status === 'va') {
+    currentViewMode = 'va';
+    currentStatus = 'new';
+  } else if (settings.status) {
     currentStatus = settings.status;
   }
 
@@ -830,14 +844,28 @@ function syncFilterControlsUI() {
   if (vaTrainingBtn) {
     vaTrainingBtn.classList.toggle('va-active', vaTrainingEnabled);
   }
+  const autoSyncCb = document.getElementById('auto-sync-checkbox');
+  if (autoSyncCb) autoSyncCb.checked = autoSyncEnabled;
 
   updateFilterButtonState();
 
   // Status navigation tabs
+  const isVA = currentViewMode === 'va';
   document.querySelectorAll('.status-nav .status-tab').forEach(tab => {
     const val = tab.getAttribute('data-val');
-    tab.classList.toggle('active', val === currentStatus);
+    if (isVA) {
+      tab.classList.toggle('active', val === 'va');
+    } else {
+      tab.classList.toggle('active', val === currentStatus);
+    }
   });
+
+  // When in VA mode, dim Role Focus chips because all listings in this view are VA
+  const roleGroupCell = document.getElementById('role-group')?.closest('.filter-cell');
+  if (roleGroupCell) {
+    roleGroupCell.style.opacity = isVA ? '0.45' : '1';
+    roleGroupCell.style.pointerEvents = isVA ? 'none' : 'auto';
+  }
 
   // Date filter chips
   document.querySelectorAll('#date-group .filter-chip').forEach(chip => {
@@ -851,11 +879,15 @@ function syncFilterControlsUI() {
     chip.classList.toggle('active', val === currentRole);
   });
 
-  // Platform / Job Board chips
-  document.querySelectorAll('#platform-group .filter-chip').forEach(chip => {
-    const val = chip.getAttribute('data-val');
-    chip.classList.toggle('active', val === currentPlatform);
-  });
+  const platformSelect = document.getElementById('platform-select');
+  if (platformSelect) {
+    if ([...platformSelect.options].some(option => option.value === currentPlatform)) {
+      platformSelect.value = currentPlatform;
+    } else {
+      currentPlatform = 'All';
+      platformSelect.value = 'All';
+    }
+  }
 
   // Seniority chips
   document.querySelectorAll('#level-group .filter-chip').forEach(chip => {
@@ -885,6 +917,7 @@ async function loadStats() {
     setNum('stat-saved', data.saved);
     setNum('stat-applied', data.applied);
     setNum('stat-ignored', data.ignored);
+    setNum('stat-va', data.va);
     
     renderPipelineSummary(data.by_stage || {});
   } catch (err) {
@@ -947,22 +980,24 @@ async function loadJobs() {
   `;
 
   const pipelineHeader = document.getElementById('pipeline-hub-header');
+  const activeView = typeof currentViewMode !== 'undefined' ? currentViewMode : 'tech';
   if (pipelineHeader) {
-    pipelineHeader.style.display = currentStatus === 'applied' ? 'block' : 'none';
+    pipelineHeader.style.display = (activeView === 'tech' && currentStatus === 'applied') ? 'block' : 'none';
   }
 
   try {
+    const isVA = activeView === 'va';
     const params = new URLSearchParams({
-      status: currentStatus,
-      role: currentRole,
-      experience_level: currentLevel,
+      status: isVA ? 'all' : currentStatus,
+      role: isVA ? 'Virtual Assistant' : currentRole,
+      experience_level: isVA ? 'All' : currentLevel,
       search: searchQuery,
       date_filter: currentDateFilter
     });
     if (hasSalaryOnly) params.set('has_salary', '1');
-    if (remoteOnly) params.set('remote_only', '1');
-    if (hideSenior) params.set('hide_senior', '1');
-    if (vaTrainingEnabled || currentRole === 'Virtual Assistant') {
+    if (isVA || remoteOnly) params.set('remote_only', '1');
+    if (!isVA && hideSenior) params.set('hide_senior', '1');
+    if (isVA || vaTrainingEnabled || currentRole === 'Virtual Assistant') {
       params.set('include_va', '1');
     }
     if (currentPlatform && currentPlatform !== 'All') {
@@ -998,8 +1033,14 @@ async function loadJobs() {
     });
 
     // Filter out jobs whose overridden status doesn't match currentStatus
-    if (currentStatus !== 'all') {
+    if (!isVA && currentStatus !== 'all') {
       jobs = jobs.filter(j => (j.status || 'new') === currentStatus);
+    } else if (isVA) {
+      if (currentStatus === 'ignored') {
+        jobs = jobs.filter(j => j.status === 'ignored');
+      } else {
+        jobs = jobs.filter(j => j.status !== 'ignored');
+      }
     }
 
     // Inject any locally saved/applied jobs that the server might not have yet (e.g. serverless cold start / lag)
@@ -1369,7 +1410,7 @@ function toggleVaTraining() {
   localStorage.setItem('job_accel_va_training_enabled', vaTrainingEnabled.toString());
   persistSetting('va_training_enabled', vaTrainingEnabled ? '1' : '0');
   syncFilterControlsUI();
-  showToast(vaTrainingEnabled ? 'VA with training opportunities enabled in feed.' : 'Virtual Assistant opportunities hidden from main feed.');
+  showToast(vaTrainingEnabled ? 'VA jobs will appear in the main inbox.' : 'VA jobs stay in the Remote VA tab.');
   loadJobs();
 }
 
@@ -1378,8 +1419,15 @@ function toggleVaTrainingCheckbox(checkbox) {
   localStorage.setItem('job_accel_va_training_enabled', vaTrainingEnabled.toString());
   persistSetting('va_training_enabled', vaTrainingEnabled ? '1' : '0');
   syncFilterControlsUI();
-  showToast(vaTrainingEnabled ? 'VA with training opportunities enabled in feed.' : 'Virtual Assistant opportunities hidden from main feed.');
+  showToast(vaTrainingEnabled ? 'VA jobs will appear in the main inbox.' : 'VA jobs stay in the Remote VA tab.');
   loadJobs();
+}
+
+function toggleAutoSync(checkbox) {
+  autoSyncEnabled = checkbox.checked;
+  localStorage.setItem('job_accel_auto_sync_enabled', String(autoSyncEnabled));
+  persistSetting('auto_sync_enabled', autoSyncEnabled ? '1' : '0');
+  showToast(autoSyncEnabled ? 'Automatic job sync enabled. It runs while the app is open.' : 'Automatic job sync paused.');
 }
 
 // Calculate days since a given date string
@@ -1480,16 +1528,31 @@ function showToast(message, actionText = null, onAction = null) {
 // Render cards
 function renderJobs() {
   const feed = document.getElementById('job-feed');
+  let headerHtml = '';
+  if (currentViewMode === 'va') {
+    headerHtml = `
+      <div class="va-view-header">
+        <div class="va-view-info">
+          <span class="va-view-badge">Remote VA Feed</span>
+          <span class="va-view-text">Showing <strong>${jobsList.length}</strong> Virtual Assistant &amp; remote support opportunities.</span>
+        </div>
+        <button type="button" class="btn-return-tech" onclick="switchToTechMode()" title="Return to Software &amp; Tech Engineering jobs">
+          ← Back to Tech Jobs
+        </button>
+      </div>
+    `;
+  }
+
   if (jobsList.length === 0) {
-    feed.innerHTML = `
+    feed.innerHTML = headerHtml + `
       <div class="state-empty">
-        <p>No job postings match the active filter criteria.</p>
-        <span class="sub-text">Broaden your search or click "Sync 12 Boards" to refresh opportunities.</span>
+        <p>${currentViewMode === 'va' ? 'No Virtual Assistant jobs match your current search/date criteria.' : 'No job postings match the active filter criteria.'}</p>
+        <span class="sub-text">${currentViewMode === 'va' ? 'Try changing the date filter or clearing search keywords.' : 'Broaden your search or click "Sync Job Sites" to refresh opportunities.'}</span>
       </div>`;
     return;
   }
 
-  feed.innerHTML = jobsList.map((job, idx) => {
+  feed.innerHTML = headerHtml + jobsList.map((job, idx) => {
     const isSelected = idx === selectedIndex ? 'selected' : '';
 
     // Level badge class
@@ -1873,7 +1936,7 @@ async function triggerSync() {
   const keywords = rawKws ? rawKws.split(',').map(s => s.trim()).filter(Boolean) : null;
 
   if (btn && btn.classList.contains('is-running')) {
-    showToast('Sync is already actively scanning 15 boards in the background.');
+    showToast('Job site sync is already running in the background.');
     return;
   }
 
@@ -1905,9 +1968,9 @@ async function triggerSync() {
       return;
     }
     if (data.status === 'already_syncing') {
-      showToast('Sync is already running across 15 boards in background.');
+      showToast('Job site sync is already running in the background.');
     } else {
-      showToast('Sync launched in background! 15 boards scanning.');
+      showToast('Job site sync started in the background.');
     }
 
     startSyncPoller();
@@ -1941,7 +2004,11 @@ function startSyncPoller() {
         }
         const added = (data.last_result && data.last_result.added !== undefined) ? data.last_result.added : 0;
         const skipped = (data.last_result && data.last_result.skipped !== undefined) ? data.last_result.skipped : 0;
-        showToast(`Sync complete! +${added} new jobs, ${skipped} existing updated across 15 boards.`);
+        if (data.last_result?.status === 'partial') {
+          showToast(`Sync finished: ${added} new jobs found. Some sites were unavailable; check Logs.`);
+        } else {
+          showToast(`Sync complete: ${added} new jobs found, ${skipped} existing listings updated.`);
+        }
         loadStats();
         loadJobs();
         if (modal && modal.style.display !== 'none' && typeof renderTelemetry === 'function') {
@@ -1962,7 +2029,7 @@ function stopSyncIndicator() {
   const txt = document.getElementById('sync-text');
   if (btn) btn.classList.remove('is-running');
   if (spinner) spinner.classList.remove('is-spinning');
-  if (txt) txt.textContent = 'Sync 15 Boards';
+  if (txt) txt.textContent = 'Sync Job Sites';
 }
 
 // Keyboard navigation
@@ -2033,10 +2100,15 @@ function setupKeyboardNavigation() {
 
 // Filter button handlers
 function setStatus(status, elem) {
+  if (status === 'va') {
+    switchToVAMode(elem);
+    return;
+  }
+  currentViewMode = 'tech';
   currentStatus = status;
   persistSetting('status', status);
-  document.querySelectorAll('.status-tab').forEach(t => t.classList.remove('active'));
-  elem.classList.add('active');
+  document.querySelectorAll('.status-nav .status-tab').forEach(t => t.classList.remove('active'));
+  if (elem) elem.classList.add('active');
 
   // When switching to pipeline, default date filter to 'all' so no applied jobs are hidden
   if (status === 'applied' && currentDateFilter !== 'all') {
@@ -2047,6 +2119,7 @@ function setStatus(status, elem) {
     });
   }
 
+  syncFilterControlsUI();
   loadJobs();
 }
 
@@ -2087,16 +2160,16 @@ function setLevel(level, elem) {
 }
 
 function setRole(role, elem) {
-  currentRole = role;
   if (role === 'Virtual Assistant') {
-    vaTrainingEnabled = true;
-    localStorage.setItem('job_accel_va_training_enabled', 'true');
-    persistSetting('va_training_enabled', '1');
-    syncFilterControlsUI();
+    switchToVAMode();
+    return;
   }
+  currentViewMode = 'tech';
+  currentRole = role;
   persistSetting('role', role);
   document.querySelectorAll('#role-group .filter-chip').forEach(c => c.classList.remove('active'));
-  elem.classList.add('active');
+  if (elem) elem.classList.add('active');
+  syncFilterControlsUI();
   loadJobs();
 }
 
@@ -2105,7 +2178,7 @@ function setPlatform(platform, elem) {
   persistSetting('platform', platform);
   document.querySelectorAll('#platform-group .filter-chip').forEach(c => c.classList.remove('active'));
   if (elem) elem.classList.add('active');
-  showToast(`Filtered feed to ${platform === 'All' ? 'All Job Boards' : platform}.`);
+  showToast(`Filtered feed to ${platform === 'All' ? 'All connected job sites' : platform}.`);
   loadJobs();
 }
 
@@ -2207,12 +2280,17 @@ function updateSummaryText(count) {
     countEl.textContent = `${count} opportunities found`;
   }
   if (ctxEl) {
-    const filters = [];
-    if (currentRole !== 'All') filters.push(currentRole);
-    if (currentLevel !== 'All') filters.push(currentLevel);
-    if (currentDateFilter !== 'all') filters.push(`Date: ${currentDateFilter}`);
-    if (filterBySkillsOnly) filters.push('Matching Target Stack');
-    ctxEl.textContent = filters.length > 0 ? `Filtered by: ${filters.join(' • ')}` : '';
+    if (currentViewMode === 'va') {
+      ctxEl.textContent = 'Track: Remote Virtual Assistant';
+    } else {
+      const filters = [];
+      if (currentRole !== 'All') filters.push(currentRole);
+      if (currentLevel !== 'All') filters.push(currentLevel);
+      if (currentDateFilter !== 'all') filters.push(`Date: ${currentDateFilter}`);
+      if (filterBySkillsOnly) filters.push('Matching Target Stack');
+      if (vaTrainingEnabled) filters.push('VA Included');
+      ctxEl.textContent = filters.length > 0 ? `Filtered by: ${filters.join(' • ')}` : '';
+    }
   }
 }
 
@@ -2250,10 +2328,13 @@ const MONITORED_BOARDS = [
   { key: 'Himalayas', label: 'Himalayas Remote', domain: 'himalayas.app/api', type: 'JSON API' },
   { key: 'Remote OK', label: 'Remote OK', domain: 'remoteok.com/api', type: 'JSON API' },
   { key: 'We Work Remotely', label: 'We Work Remotely', domain: 'weworkremotely.com', type: 'RSS/Atom' },
-  { key: 'Wellfound', label: 'Wellfound', domain: 'wellfound.com', type: 'Startup Hub' },
   { key: 'Arc', label: 'Arc Dev', domain: 'arc.dev', type: 'Global Remote' },
-  { key: 'Foundit', label: 'Foundit APAC', domain: 'foundit.com.ph', type: 'Regional' },
-  { key: 'Upwork', label: 'Upwork Remote', domain: 'upwork.com', type: 'Contract / Dev' }
+  { key: 'Jobicy', label: 'Jobicy', domain: 'jobicy.com/api', type: 'Remote jobs API' },
+  { key: 'ZipRecruiter', label: 'ZipRecruiter', domain: 'ziprecruiter.com', type: 'JobSpy' },
+  { key: 'Bayt', label: 'Bayt', domain: 'bayt.com', type: 'JobSpy' },
+  { key: 'Naukri', label: 'Naukri', domain: 'naukri.com', type: 'JobSpy' },
+  { key: 'BDJobs', label: 'BDJobs', domain: 'bdjobs.com', type: 'JobSpy' },
+  { key: 'HelloWork', label: 'HelloWork', domain: 'hellowork.com', type: 'JobSpy' }
 ];
 
 function toggleSyncLogModal() {
@@ -2302,7 +2383,7 @@ function renderTelemetry(data) {
 
   const activeBoardsEl = document.getElementById('telemetry-active-boards');
   if (activeBoardsEl) {
-    activeBoardsEl.textContent = `${data.total_boards || 15} / 15 Boards`;
+    activeBoardsEl.textContent = `${data.total_boards || MONITORED_BOARDS.length} connected job sites`;
   }
 
   const lastRunEl = document.getElementById('telemetry-last-run-time');
@@ -2359,7 +2440,7 @@ function renderTelemetry(data) {
   if (stream) {
     const logs = data.logs || [];
     if (logs.length === 0) {
-      stream.textContent = `[${new Date().toLocaleTimeString()}] Ready. Click "Sync 15 Boards" to launch live multi-platform harvest.`;
+      stream.textContent = `[${new Date().toLocaleTimeString()}] Ready. Start a sync to search connected job sites.`;
     } else {
       stream.textContent = logs.join('\n');
     }
@@ -2396,25 +2477,26 @@ function toggleVaHub() {
   }
 }
 
-function filterRemoteVAJobs() {
-  vaTrainingEnabled = true;
-  localStorage.setItem('job_accel_va_training_enabled', 'true');
-  persistSetting('va_training_enabled', '1');
-  currentRole = 'Virtual Assistant';
-  remoteOnly = true;
-  
-  const searchInput = document.getElementById('search-input');
-  if (searchInput) searchInput.value = '';
-  searchQuery = '';
-  
-  // Reset seniority to All
-  selectedLevels.clear();
-  selectedLevels.add('All');
-  currentLevel = 'All';
+function switchToVAMode(elem) {
+  currentViewMode = 'va';
+  document.querySelectorAll('.status-nav .status-tab').forEach(t => t.classList.remove('active'));
+  const vaTab = elem || document.getElementById('va-feed-tab');
+  if (vaTab) vaTab.classList.add('active');
 
   syncFilterControlsUI();
-  showToast('Filtered feed to Remote Virtual Assistant opportunities (With Training).');
+  showToast('Viewing Remote Virtual Assistant & Freelance opportunities.');
   loadJobs();
+}
+
+function switchToTechMode(targetStatus = 'new') {
+  currentViewMode = 'tech';
+  currentStatus = targetStatus;
+  const tab = document.querySelector(`.status-nav [data-val="${targetStatus}"]`);
+  setStatus(targetStatus, tab);
+}
+
+function filterRemoteVAJobs() {
+  switchToVAMode();
 }
 
 // --------------------------------------------------------------------------
