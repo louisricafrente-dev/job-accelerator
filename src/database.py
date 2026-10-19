@@ -331,7 +331,9 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
         if cloud:
             for row in cursor.execute("SELECT * FROM jobs ORDER BY id DESC").fetchall():
                 item = dict(row)
-                catalog.setdefault((item["company"].strip().lower(), item["title"].strip().lower()), []).append(item)
+                norm_co = normalize_company(item["company"]) or item["company"].strip().lower()
+                norm_ti = normalize_title(item["title"]) or item["title"].strip().lower()
+                catalog.setdefault((norm_co, norm_ti), []).append(item)
                 known_hashes.add(item["dedup_hash"])
 
         def write(sql, params):
@@ -342,22 +344,38 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
 
         for job in jobs:
             norm_date = normalize_date(job.date_posted) if job.date_posted else ""
-            canonical_co = job.company.strip().lower()
-            canonical_title = job.title.strip().lower()
+            canonical_co = normalize_company(job.company) or job.company.strip().lower()
+            canonical_title = normalize_title(job.title) or job.title.strip().lower()
 
             if cloud:
                 candidates = catalog.get((canonical_co, canonical_title), [])
             else:
                 cursor.execute(
                     """
-                    SELECT id, dedup_hash, platform, job_url, salary, date_posted, sources, status, location
+                    SELECT id, dedup_hash, platform, job_url, salary, date_posted, sources, status, location, company, title
                     FROM jobs
                     WHERE lower(trim(company)) = ? AND lower(trim(title)) = ?
                     ORDER BY id DESC;
                     """,
-                    (canonical_co, canonical_title),
+                    (job.company.strip().lower(), job.title.strip().lower()),
                 )
-                candidates = cursor.fetchall()
+                candidates = [dict(r) for r in cursor.fetchall()]
+                if not candidates:
+                    cursor.execute(
+                        """
+                        SELECT id, dedup_hash, platform, job_url, salary, date_posted, sources, status, location, company, title
+                        FROM jobs
+                        WHERE lower(trim(company)) LIKE ?
+                        ORDER BY id DESC;
+                        """,
+                        (f"%{canonical_co[:8]}%",),
+                    )
+                    all_c = [dict(r) for r in cursor.fetchall()]
+                    candidates = [
+                        r for r in all_c
+                        if (normalize_company(r["company"]) or r["company"].strip().lower()) == canonical_co
+                        and (normalize_title(r["title"]) or r["title"].strip().lower()) == canonical_title
+                    ]
             existing = next((row for row in candidates if clean_url(row["job_url"]) == clean_url(job.job_url)), None)
             if existing is None:
                 # Same-platform same-timeline check:
@@ -720,6 +738,31 @@ def update_job_status(
         query = f"UPDATE jobs SET {', '.join(set_clauses)} WHERE id = ?"
         params.append(job_id)
         cursor = conn.execute(query, params)
+
+        # When marking saved, applied, or ignored, automatically sync sibling duplicates
+        # to ensure no duplicate listing lingers in the Inbox
+        if status in ("saved", "applied", "ignored") and cursor.rowcount > 0:
+            try:
+                cur2 = conn.execute("SELECT company, title, location FROM jobs WHERE id = ?", (job_id,))
+                target_row = cur2.fetchone()
+                if target_row:
+                    co, ti, loc = target_row[0], target_row[1], target_row[2]
+                    norm_co = normalize_company(co) or co.strip().lower()
+                    norm_ti = normalize_title(ti) or ti.strip().lower()
+
+                    cur_sibs = conn.execute("SELECT id, company, title, location FROM jobs WHERE id != ? AND status != ?", (job_id, status))
+                    sib_rows = cur_sibs.fetchall()
+                    sib_ids = []
+                    for s in sib_rows:
+                        s_co = normalize_company(s[1]) or s[1].strip().lower()
+                        s_ti = normalize_title(s[2]) or s[2].strip().lower()
+                        if s_co == norm_co and s_ti == norm_ti and is_compatible_location(loc, s[3]):
+                            sib_ids.append(s[0])
+                    for sid in sib_ids:
+                        conn.execute("UPDATE jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, sid))
+            except Exception:
+                pass
+
         conn.commit()
         return cursor.rowcount > 0
     finally:

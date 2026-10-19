@@ -68,12 +68,12 @@ def migrate():
         role_category = excluded.role_category,
         experience_level = excluded.experience_level,
         date_posted = excluded.date_posted,
-        status = excluded.status,
-        pipeline_stage = excluded.pipeline_stage,
-        follow_up_date = excluded.follow_up_date,
-        notes = excluded.notes,
+        status = CASE WHEN jobs.status IN ('saved', 'applied') THEN jobs.status ELSE excluded.status END,
+        pipeline_stage = CASE WHEN jobs.status IN ('saved', 'applied') THEN jobs.pipeline_stage ELSE excluded.pipeline_stage END,
+        follow_up_date = COALESCE(jobs.follow_up_date, excluded.follow_up_date),
+        notes = COALESCE(jobs.notes, excluded.notes),
         sources = excluded.sources,
-        applied_at = excluded.applied_at,
+        applied_at = COALESCE(jobs.applied_at, excluded.applied_at),
         updated_at = excluded.updated_at;
     """
 
