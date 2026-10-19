@@ -3,13 +3,18 @@ import sqlite3
 import time
 import libsql_client
 
-TURSO_URL = os.environ.get("TURSO_DATABASE_URL", "https://job-accelerator-rhettrina.aws-ap-northeast-1.turso.io")
-TURSO_TOKEN = os.environ["TURSO_AUTH_TOKEN"]
-
-if TURSO_URL.startswith("libsql://"):
-    TURSO_URL = TURSO_URL.replace("libsql://", "https://")
-
 def migrate():
+    turso_url = os.environ.get("TURSO_DATABASE_URL", "https://job-accelerator-rhettrina.aws-ap-northeast-1.turso.io").strip()
+    if not turso_url:
+        turso_url = "https://job-accelerator-rhettrina.aws-ap-northeast-1.turso.io"
+    if turso_url.startswith("libsql://"):
+        turso_url = turso_url.replace("libsql://", "https://")
+    elif not turso_url.startswith("https://") and not turso_url.startswith("http://"):
+        turso_url = f"https://{turso_url}"
+    turso_token = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
+    if not turso_token:
+        print("Error: TURSO_AUTH_TOKEN not set in environment.")
+        return
     local_db_path = "data/jobs.db"
     if not os.path.exists(local_db_path):
         print(f"Error: {local_db_path} not found.")
@@ -28,8 +33,8 @@ def migrate():
     settings = local_cur.fetchall()
     print(f"Found {len(settings)} user settings.")
 
-    print(f"Connecting to Turso: {TURSO_URL}")
-    client = libsql_client.create_client_sync(TURSO_URL, auth_token=TURSO_TOKEN)
+    print(f"Connecting to Turso: {turso_url}")
+    client = libsql_client.create_client_sync(turso_url, auth_token=turso_token)
 
     # 1. Migrate user settings
     print("Migrating user settings...")
