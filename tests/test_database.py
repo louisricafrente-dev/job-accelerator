@@ -461,6 +461,82 @@ class TestDatabase(unittest.TestCase):
         jobs = get_jobs(self.db_path, search="Finastra")
         self.assertEqual(len(jobs), 2)
 
+    def test_cross_platform_deduplication_indeed_glassdoor(self):
+        """Cross-platform duplicate jobs (e.g. Indeed and Glassdoor) with varying location syntax must merge into single card with multi-sources."""
+        job_indeed = Job(
+            title="Full Stack Software Developer",
+            company="ADI Recruitment",
+            location="Mandaluyong, P00, Philippines",
+            platform="Indeed",
+            tier=1,
+            job_url="https://ph.indeed.com/viewjob?jk=fe3edcc600772987",
+            salary="PHP 70k - 90k",
+            date_posted="2026-10-15"
+        )
+        added1, skipped1 = insert_jobs(self.db_path, [job_indeed])
+        self.assertEqual(added1, 1)
+        self.assertEqual(skipped1, 0)
+
+        # Same requisition arriving from Glassdoor with slightly different location string
+        job_glassdoor = Job(
+            title="Full Stack Software Developer",
+            company="ADI Recruitment",
+            location="Mandaluyong City, Philippines",
+            platform="Glassdoor",
+            tier=1,
+            job_url="https://www.glassdoor.com/job-listing/j?jl=1010296536545",
+            salary="PHP 70k - 90k",
+            date_posted="2026-10-16"
+        )
+        added2, skipped2 = insert_jobs(self.db_path, [job_glassdoor])
+        self.assertEqual(added2, 0)
+        self.assertEqual(skipped2, 1)
+
+        # Exactly 1 combined record in database
+        jobs = get_jobs(self.db_path, search="ADI Recruitment")
+        self.assertEqual(len(jobs), 1)
+        job = jobs[0]
+        self.assertEqual(len(job["sources"]), 2)
+        platforms = {s["platform"] for s in job["sources"]}
+        self.assertEqual(platforms, {"Indeed", "Glassdoor"})
+        # Date should be updated to latest
+        self.assertEqual(job["date_posted"], "2026-10-16")
+
+    def test_filter_15days(self):
+        """15days filter must include jobs up to 15 days ago and exclude older ones."""
+        import datetime
+        today = datetime.date.today()
+        d14 = (today - datetime.timedelta(days=14)).isoformat()
+        d15 = (today - datetime.timedelta(days=15)).isoformat()
+        d16 = (today - datetime.timedelta(days=16)).isoformat()
+
+        j14 = Job(title="Dev 14d", company="Co1", location="PH", platform="Indeed", tier=1, job_url="https://j14", date_posted=d14)
+        j15 = Job(title="Dev 15d", company="Co2", location="PH", platform="Glassdoor", tier=1, job_url="https://j15", date_posted=d15)
+        j16 = Job(title="Dev 16d", company="Co3", location="PH", platform="LinkedIn", tier=1, job_url="https://j16", date_posted=d16)
+        insert_jobs(self.db_path, [j14, j15, j16])
+
+        jobs_15d = get_jobs(self.db_path, date_filter="15days")
+        titles_15d = {j["title"] for j in jobs_15d}
+        self.assertIn("Dev 14d", titles_15d)
+        self.assertIn("Dev 15d", titles_15d)
+        self.assertNotIn("Dev 16d", titles_15d)
+
+    def test_recently_detected_and_saved(self):
+        """Terms like 'Posted recently' or 'Recently' should be normalized and retained within 15 days."""
+        job_recent = Job(
+            title="Junior Cloud Engineer",
+            company="CloudTech",
+            location="Remote",
+            platform="Indeed",
+            tier=1,
+            job_url="https://cloudtech-recent",
+            date_posted="Posted recently"
+        )
+        insert_jobs(self.db_path, [job_recent])
+        jobs = get_jobs(self.db_path, search="CloudTech", date_filter="15days")
+        self.assertEqual(len(jobs), 1)
+        self.assertTrue(bool(jobs[0]["date_posted"]))
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -3,11 +3,75 @@ import csv
 import json
 import sqlite3
 import os
+import re
 from typing import Any, Dict, List, Optional, Tuple
 from src.models import Job, normalize_date, clean_url
 
 VALID_STATUSES = {"new", "saved", "applied", "ignored"}
 VALID_STAGES = {"applied", "hr_screening", "tech_exam", "final_interview", "offer", "rejected", "screening", "interview", "technical", "withdrawn"}
+
+def normalize_company(name: str) -> str:
+    if not name:
+        return ""
+    s = name.lower().strip()
+    s = re.sub(r"\b(inc|incorporated|corp|corporation|llc|ltd|limited|pvt|co|gmbh|solutions|technologies|technology|philippines|ph)\b\.?", "", s)
+    s = re.sub(r"[^\w\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+def normalize_title(title: str) -> str:
+    if not title:
+        return ""
+    s = title.lower().strip()
+    s = re.sub(r"[\(\[\{]\s*(remote|hybrid|wfh|full[\s\-]*time|part[\s\-]*time|philippines|day\s*shift|night\s*shift)\s*[\)\]\}]", "", s)
+    s = re.sub(r"[^\w\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+def normalize_location(loc: str) -> str:
+    if not loc:
+        return ""
+    s = loc.lower().strip()
+    s = re.sub(r"\bp\d+\b", "", s)
+    s = re.sub(r"\b\d{4,5}\b", "", s)
+    s = re.sub(r"[,\-\/\|]", " ", s)
+    s = re.sub(r"\b(city|province|region|ncr|national capital region)\b", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def is_compatible_location(loc1: str, loc2: str) -> bool:
+    if not loc1 or not loc2:
+        return True
+    l1 = (loc1 or "").strip().lower()
+    l2 = (loc2 or "").strip().lower()
+    if l1 == l2:
+        return True
+
+    remote_keywords = ("remote", "wfh", "work from home", "anywhere", "worldwide")
+    if any(k in l1 for k in remote_keywords) and any(k in l2 for k in remote_keywords):
+        return True
+
+    n1 = normalize_location(l1)
+    n2 = normalize_location(l2)
+    if n1 == n2 or n1 in n2 or n2 in n1:
+        return True
+
+    ph_cities = {
+        "taguig", "makati", "manila", "pasig", "quezon", "mandaluyong",
+        "alabang", "muntinlupa", "paranaque", "pasay", "cebu", "davao",
+        "clark", "angeles", "pampanga", "cavite", "laguna", "baguio",
+        "iloilo", "bacolod", "cagayan"
+    }
+    tokens1 = set(n1.split())
+    tokens2 = set(n2.split())
+    matched1 = tokens1.intersection(ph_cities)
+    matched2 = tokens2.intersection(ph_cities)
+    if matched1 and matched2:
+        return bool(matched1.intersection(matched2))
+
+    ph_general = {"philippines", "ph", "metro manila", "remote", "wfh"}
+    if any(k in l1 for k in ph_general) and any(k in l2 for k in ph_general):
+        return True
+
+    return False
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -297,21 +361,18 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
             existing = next((row for row in candidates if clean_url(row["job_url"]) == clean_url(job.job_url)), None)
             if existing is None:
                 # Same-platform same-timeline check:
-                # If company, title, platform, and location match AND timeline/date matches,
+                # If company, title, platform match and location is compatible AND timeline/date matches,
                 # treat as duplicate posting of the same requisition (e.g. redundant job IDs on JobStreet/LinkedIn).
-                # (Different timelines on the same platform remain allowed as valid new reposts/cycles).
-                norm_loc = (job.location or "").strip().lower()
                 existing = next((row for row in candidates
                                  if row["platform"].lower() == job.platform.lower()
-                                 and (row["location"] or "").strip().lower() == norm_loc
+                                 and is_compatible_location(row["location"], job.location)
                                  and (row["date_posted"] or "") == (norm_date or "")), None)
             if existing is None:
-                # Merge across boards only when location agrees; preserve separate requisitions.
+                # Merge across boards (e.g. Indeed and Glassdoor, or Indeed and LinkedIn)
+                # when location is compatible:
                 existing = next((row for row in candidates
                                  if row["platform"].lower() != job.platform.lower()
-                                 and (row["location"] or "").strip().lower() == job.location.strip().lower()
-                                 and not any(s.get("platform", "").lower() == job.platform.lower()
-                                             for s in json.loads(row["sources"] or "[]"))), None)
+                                 and is_compatible_location(row["location"], job.location)), None)
             if existing:
                 # Aggregate source platform and link
                 try:
@@ -588,6 +649,8 @@ def get_jobs(
                 clauses.append(f"{effective_date} >= date('now', 'localtime', '-7 days')")
             elif df_lower in ("14days", "14d"):
                 clauses.append(f"{effective_date} >= date('now', 'localtime', '-14 days')")
+            elif df_lower in ("15days", "15d"):
+                clauses.append(f"{effective_date} >= date('now', 'localtime', '-15 days')")
 
         where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         order_by = "COALESCE(applied_at, updated_at) DESC, id DESC" if (status == "applied" or (status and "applied" in status)) else "COALESCE(date_posted, '') DESC, updated_at DESC, id DESC"

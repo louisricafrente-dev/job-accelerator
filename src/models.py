@@ -25,17 +25,22 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
     if re.match(r"^\d{4}-\d{2}-\d{2}", s):
         return s[:10]
 
-    # Check relative dates ('3d ago', 'yesterday', 'today', '2w ago')
+    # Check relative dates ('3d ago', 'yesterday', 'today', '2w ago', 'recently', 'just posted', etc.)
     s_lower = s.lower()
     if isinstance(ref_date, datetime):
         now_utc = ref_date.astimezone(timezone.utc) if ref_date.tzinfo else ref_date.replace(tzinfo=timezone.utc)
     elif ref_date is not None:
-        now_utc = datetime.combine(ref_date, datetime.min.time(), tzinfo=timezone.utc)
+        try:
+            now_utc = datetime.combine(ref_date, datetime.min.time(), tzinfo=timezone.utc)
+        except Exception:
+            now_utc = datetime.now(timezone.utc)
     else:
         now_utc = datetime.now(timezone.utc)
-    if s_lower in ("today", "just now", "moments ago") or "hour" in s_lower or "minute" in s_lower or re.match(r"^\d+\s*h(?:r|ours?)?(\s*ago)?$", s_lower):
+
+    # Detect terms containing 'recently', 'recent', 'just posted', 'today', etc.
+    if any(k in s_lower for k in ("today", "just now", "moments ago", "recently", "recent", "just posted", "new", "posted today", "active today")) or "hour" in s_lower or "minute" in s_lower or re.match(r"^\d+\s*h(?:r|ours?)?(\s*ago)?$", s_lower):
         return now_utc.strftime("%Y-%m-%d")
-    if s_lower == "yesterday":
+    if "yesterday" in s_lower:
         return (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
     m_days = re.search(r"(\d+)\s*(?:d|day|days)\b", s_lower)
     if m_days:
@@ -83,7 +88,7 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
 
     return ""
 
-def is_within_14_days(raw_or_norm: Any, max_days: int = 14, ref_date: Optional[Any] = None) -> bool:
+def is_within_15_days(raw_or_norm: Any, max_days: int = 15, ref_date: Optional[Any] = None) -> bool:
     """Returns True if raw_or_norm represents a date between (ref_date - max_days) and (ref_date + 1 day).
     Empty, missing, or unparseable dates return False.
     """
@@ -107,6 +112,10 @@ def is_within_14_days(raw_or_norm: Any, max_days: int = 14, ref_date: Optional[A
     cutoff = now_utc - timedelta(days=max_days)
     future_limit = now_utc + timedelta(days=1)
     return cutoff <= target <= future_limit
+
+def is_within_14_days(raw_or_norm: Any, max_days: int = 14, ref_date: Optional[Any] = None) -> bool:
+    """Legacy helper; delegates to is_within_15_days with specified max_days (defaults to 14)."""
+    return is_within_15_days(raw_or_norm, max_days=max_days, ref_date=ref_date)
 
 def clean_url(url: str) -> str:
     if not url:
