@@ -1,6 +1,6 @@
 from typing import List
 from src.connectors.base import BaseConnector, logger
-from src.models import Job, is_within_14_days
+from src.models import Job, is_within_15_days
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity
 
 class JobSpyAdapter(BaseConnector):
@@ -22,7 +22,7 @@ class JobSpyAdapter(BaseConnector):
                 location=location,
                 results_wanted=35,
                 country_indeed="philippines" if self.site_name in ("indeed", "glassdoor") else None,
-                hours_old=336  # Strict 14 days (14 * 24 hours)
+                hours_old=360  # Strict 15 days (15 * 24 hours)
             )
             import pandas as pd
             for _, row in df.iterrows():
@@ -43,7 +43,7 @@ class JobSpyAdapter(BaseConnector):
                 salary = "" if pd.isna(raw_sal) or str(raw_sal).lower() in ("nan", "none", "") else str(raw_sal).strip()
                 raw_date = row.get("date_posted")
                 date_str = "" if pd.isna(raw_date) or str(raw_date).lower() in ("nan", "none", "") else str(raw_date).strip()
-                if not is_within_14_days(date_str):
+                if not is_within_15_days(date_str):
                     continue
                 jobs.append(Job(
                     title=title,

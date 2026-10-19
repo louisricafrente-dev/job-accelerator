@@ -3,7 +3,7 @@ import urllib.request
 import urllib.parse
 from typing import List
 from src.connectors.base import BaseConnector, logger
-from src.models import Job, is_within_14_days
+from src.models import Job, is_within_15_days, is_within_14_days
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity
 
 import time
@@ -38,7 +38,7 @@ class KalibrrConnector(BaseConnector):
                         if not is_relevant_opportunity(title, ""):
                             continue
                         pub_date = item.get("published", "")[:10]
-                        if not is_within_14_days(pub_date):
+                        if not is_within_15_days(pub_date):
                             continue
                         company = item.get("company_name", "")
                         link = f"https://www.kalibrr.com/c/{item.get('company_code', '')}/jobs/{code}"
@@ -82,7 +82,7 @@ class BossjobConnector(BaseConnector):
                     if not is_relevant_opportunity(title, ""):
                         continue
                     pub_date = item.get("updated_at", "")[:10]
-                    if not is_within_14_days(pub_date):
+                    if not is_within_15_days(pub_date):
                         continue
                     company = item.get("company_name", "")
                     link = f"https://bossjob.ph/job/{item.get('id', '')}"
@@ -111,7 +111,7 @@ class BossjobConnector(BaseConnector):
                         if not is_relevant_opportunity(title, ""):
                             continue
                         pub_date = str(item.get("pubDate", ""))[:10]
-                        if not is_within_14_days(pub_date):
+                        if not is_within_15_days(pub_date):
                             continue
                         company = item.get("companyName", "Tech Enterprise")
                         link = item.get("applicationLink") or "https://bossjob.ph"
@@ -173,7 +173,7 @@ class JobStreetConnector(BaseConnector):
                                 seen_urls.add(href)
                                 date_elem = art.find(attrs={"data-automation": "jobListingDate"}) or art.find("time")
                                 date_val = date_elem.text.strip() if date_elem else ""
-                                if not is_within_14_days(date_val):
+                                if not is_within_15_days(date_val):
                                     continue
                                 page_valid_dates += 1
                                 comp_a = art.find("a", {"data-automation": "jobCompany"})
@@ -249,7 +249,7 @@ class OnlineJobsConnector(BaseConnector):
                                     if "Posted on " in raw_t:
                                         date_val = raw_t.replace("Posted on ", "")[:10]
 
-                            if not is_within_14_days(date_val):
+                            if not is_within_15_days(date_val):
                                 continue
                             page_valid_dates += 1
 

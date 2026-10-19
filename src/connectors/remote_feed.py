@@ -3,7 +3,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from typing import List
 from src.connectors.base import BaseConnector, logger
-from src.models import Job, is_within_14_days
+from src.models import Job, is_within_15_days, is_within_14_days
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -27,7 +27,7 @@ class RemoteOKConnector(BaseConnector):
                     if not title or not is_relevant_opportunity(title, ""):
                         continue
                     pub_date = item.get("date", "")[:10]
-                    if not is_within_14_days(pub_date):
+                    if not is_within_15_days(pub_date):
                         continue
                     company = item.get("company", "")
                     link = item.get("url", "")
@@ -82,7 +82,7 @@ class WeWorkRemotelyConnector(BaseConnector):
                         title_elem = item.find("title")
                         pub_date = item.find("pubDate")
                         pub_text = pub_date.text.strip() if pub_date is not None and pub_date.text else ""
-                        if not is_within_14_days(pub_text):
+                        if not is_within_15_days(pub_text):
                             continue
 
                         raw_title = title_elem.text if title_elem is not None and title_elem.text else ""
@@ -133,7 +133,7 @@ class ArcConnector(BaseConnector):
                         if not title or not is_relevant_opportunity(title, ""):
                             continue
                         pub_date = str(item.get("postedDate", ""))[:10]
-                        if not is_within_14_days(pub_date):
+                        if not is_within_15_days(pub_date):
                             continue
                         comp_name = item.get("companyName") or "Tech Company"
                         if query:
@@ -184,7 +184,7 @@ class RemotiveConnector(BaseConnector):
                             continue
                         seen_urls.add(link)
                         pub = str(item.get("publication_date", ""))[:10]
-                        if not is_within_14_days(pub):
+                        if not is_within_15_days(pub):
                             continue
                         company = item.get("company_name", "Remote Tech")
                         sal = str(item.get("salary") or "")
@@ -223,7 +223,7 @@ class HimalayasConnector(BaseConnector):
                     if not title or not is_relevant_opportunity(title, desc):
                         continue
                     pub = str(item.get("pubDate", ""))[:10]
-                    if not is_within_14_days(pub):
+                    if not is_within_15_days(pub):
                         continue
                     company = item.get("companyName", "Tech Enterprise")
                     link = item.get("applicationLink") or "https://himalayas.app"
@@ -280,7 +280,7 @@ class JobicyConnector(BaseConnector):
             if not title or not is_relevant_opportunity(title, ""):
                 continue
             pub_date = str(item.get("pubDate", ""))
-            if not is_within_14_days(pub_date):
+            if not is_within_15_days(pub_date):
                 continue
             company = item.get("companyName", "Tech Employer")
             link = item.get("url", "https://jobicy.com")
@@ -319,7 +319,7 @@ class FreelancerConnector(BaseConnector):
                         continue
                     sub_date = p.get("submitdate")
                     pub_date = datetime.datetime.fromtimestamp(sub_date).strftime("%Y-%m-%d") if sub_date else ""
-                    if not is_within_14_days(pub_date):
+                    if not is_within_15_days(pub_date):
                         continue
                     b = p.get("budget", {})
                     min_b = b.get("minimum")
@@ -371,7 +371,7 @@ class UpworkConnector(BaseConnector):
                     desc = desc_elem.text.strip() if desc_elem is not None and desc_elem.text else ""
                     if not title or not is_relevant_opportunity(title, desc):
                         continue
-                    if not is_within_14_days(pub):
+                    if not is_within_15_days(pub):
                         continue
                     jobs.append(Job(
                         title=title,
