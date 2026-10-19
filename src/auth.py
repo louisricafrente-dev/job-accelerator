@@ -193,7 +193,8 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
             cur = mconn.cursor()
             cur.execute("""
                 SELECT id, dedup_hash, title, company, location, platform, tier, job_url, salary,
-                       role_category, experience_level, date_posted, sources, created_at, updated_at
+                       role_category, experience_level, date_posted, sources, created_at, updated_at,
+                       status, pipeline_stage, follow_up_date, notes, applied_at
                 FROM jobs
             """)
             rows = cur.fetchall()
@@ -208,7 +209,9 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
                     d.get("id"), d.get("dedup_hash"), d.get("title"), d.get("company"), d.get("location"),
                     d.get("platform"), d.get("tier"), d.get("job_url"), d.get("salary"),
                     d.get("role_category"), d.get("experience_level"), d.get("date_posted"),
-                    'new', 'applied', None, None, srcs, None, d.get("created_at"), d.get("updated_at")
+                    d.get("status") or 'new', d.get("pipeline_stage") or 'applied',
+                    d.get("follow_up_date"), d.get("notes"), srcs, d.get("applied_at"),
+                    d.get("created_at"), d.get("updated_at")
                 ))
 
             if insert_batch:
@@ -251,8 +254,8 @@ def sync_master_to_guest(guest_db_path: str, master_db_path: str) -> None:
             )
             SELECT
                 id, dedup_hash, title, company, location, platform, tier, job_url, salary,
-                role_category, experience_level, date_posted, 'new', 'applied',
-                NULL, NULL, sources, NULL, created_at, updated_at
+                role_category, experience_level, date_posted, status, pipeline_stage,
+                follow_up_date, notes, sources, applied_at, created_at, updated_at
             FROM master_db.jobs;
         """)
         conn.commit()
