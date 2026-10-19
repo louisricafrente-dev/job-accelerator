@@ -173,6 +173,8 @@ def get_turso_url() -> str:
         url = "https://job-accelerator-rhettrina.aws-ap-northeast-1.turso.io"
     if url.startswith("libsql://"):
         url = url.replace("libsql://", "https://")
+    elif url and not url.startswith("https://") and not url.startswith("http://"):
+        url = f"https://{url}"
     return url
 
 def get_turso_token() -> str:
