@@ -3,8 +3,8 @@ import urllib.request
 import urllib.parse
 from typing import List
 from src.connectors.base import BaseConnector, logger
-from src.models import Job
-from src.classifier import classify_experience_level, classify_role
+from src.models import Job, is_within_14_days
+from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity
 
 import time
 import random
@@ -35,6 +35,11 @@ class KalibrrConnector(BaseConnector):
                         if code:
                             seen_codes.add(code)
                         title = item.get("name", "")
+                        if not is_relevant_opportunity(title, ""):
+                            continue
+                        pub_date = item.get("published", "")[:10]
+                        if not is_within_14_days(pub_date):
+                            continue
                         company = item.get("company_name", "")
                         link = f"https://www.kalibrr.com/c/{item.get('company_code', '')}/jobs/{code}"
                         salary = ""
@@ -50,7 +55,7 @@ class KalibrrConnector(BaseConnector):
                             salary=salary,
                             role_category=classify_role(title),
                             experience_level=classify_experience_level(title),
-                            date_posted=item.get("published", "")[:10]
+                            date_posted=pub_date
                         )
                         jobs.append(job)
                 # Polite anti-ban pause between pages
@@ -74,6 +79,11 @@ class BossjobConnector(BaseConnector):
                 data = json.loads(resp.read().decode("utf-8"))
                 for item in data.get("data", {}).get("jobs", []):
                     title = item.get("job_title", "")
+                    if not is_relevant_opportunity(title, ""):
+                        continue
+                    pub_date = item.get("updated_at", "")[:10]
+                    if not is_within_14_days(pub_date):
+                        continue
                     company = item.get("company_name", "")
                     link = f"https://bossjob.ph/job/{item.get('id', '')}"
                     salary = item.get("salary_range", "")
@@ -87,7 +97,7 @@ class BossjobConnector(BaseConnector):
                         salary=salary,
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=item.get("updated_at", "")[:10]
+                        date_posted=pub_date
                     ))
         except Exception:
             try:
@@ -98,6 +108,11 @@ class BossjobConnector(BaseConnector):
                     data = json.loads(resp.read().decode("utf-8"))
                     for item in data.get("jobs", []):
                         title = item.get("title", "")
+                        if not is_relevant_opportunity(title, ""):
+                            continue
+                        pub_date = str(item.get("pubDate", ""))[:10]
+                        if not is_within_14_days(pub_date):
+                            continue
                         company = item.get("companyName", "Tech Enterprise")
                         link = item.get("applicationLink") or "https://bossjob.ph"
                         jobs.append(Job(
@@ -110,7 +125,7 @@ class BossjobConnector(BaseConnector):
                             salary="",
                             role_category=classify_role(title),
                             experience_level=classify_experience_level(title),
-                            date_posted=str(item.get("pubDate", ""))[:10]
+                            date_posted=pub_date
                         ))
             except Exception as e2:
                 logger.error(f"[{self.platform}] fetch failed: {e2}")
@@ -142,12 +157,13 @@ class JobStreetConnector(BaseConnector):
                             articles = soup.find_all("article")
                             if not articles:
                                 break
+                            page_valid_dates = 0
                             for art in articles:
                                 title_a = art.find("a", {"data-automation": "jobTitle"}) or art.find("a")
                                 if not title_a:
                                     continue
                                 title = title_a.text.strip()
-                                if not title:
+                                if not title or not is_relevant_opportunity(title, ""):
                                     continue
                                 href = title_a.get("href", "")
                                 if href and not href.startswith("http"):
@@ -155,14 +171,17 @@ class JobStreetConnector(BaseConnector):
                                 if href in seen_urls:
                                     continue
                                 seen_urls.add(href)
+                                date_elem = art.find(attrs={"data-automation": "jobListingDate"}) or art.find("time")
+                                date_val = date_elem.text.strip() if date_elem else ""
+                                if not is_within_14_days(date_val):
+                                    continue
+                                page_valid_dates += 1
                                 comp_a = art.find("a", {"data-automation": "jobCompany"})
                                 comp = comp_a.text.strip() if comp_a else "Company Confidential"
                                 loc_a = art.find("a", {"data-automation": "jobLocation"})
                                 loc = loc_a.text.strip() if loc_a else "Philippines"
                                 sal_span = art.find("span", {"data-automation": "jobSalary"})
                                 sal = sal_span.text.strip() if sal_span else ""
-                                date_elem = art.find(attrs={"data-automation": "jobListingDate"}) or art.find("time")
-                                date_val = date_elem.text.strip() if date_elem else ""
                                 jobs.append(Job(
                                     title=title,
                                     company=comp,
@@ -175,6 +194,9 @@ class JobStreetConnector(BaseConnector):
                                     experience_level=classify_experience_level(title),
                                     date_posted=date_val
                                 ))
+                            if not page_valid_dates and articles:
+                                # Stop paginating if no articles on page were within 14 days
+                                break
                         time.sleep(random.uniform(0.6, 1.0))
                     except Exception as inner_e:
                         logger.warning(f"[{self.platform}] sub-query '{q_term}' page {page} notice: {inner_e}")
@@ -196,8 +218,8 @@ class OnlineJobsConnector(BaseConnector):
             clean_q = urllib.parse.quote(query.strip())
             seen_urls = set()
 
-            for page in (1, 2, 3):
-                url = f"https://www.onlinejobs.ph/jobseekers/jobsearch?jobkeyword={clean_q}&fullTime=on&partTime=on&page={page}"
+            for page in range(1, 5):
+                url = f"https://www.onlinejobs.ph/jobseekers/jobsearch?jobkeyword={clean_q}&fullTime=on&partTime=on&freelance=on&page={page}"
                 req = urllib.request.Request(url, headers=HEADERS)
                 try:
                     with urllib.request.urlopen(req, timeout=12) as resp:
@@ -206,6 +228,7 @@ class OnlineJobsConnector(BaseConnector):
                         cards = soup.select(".jobpost-cat-box")
                         if not cards:
                             break
+                        page_valid_dates = 0
                         for c in cards:
                             h4 = c.select_one("h4")
                             if not h4:
@@ -216,6 +239,19 @@ class OnlineJobsConnector(BaseConnector):
                             title = h4.get_text(strip=True)
                             if not title:
                                 continue
+
+                            date_el = c.select_one("p.fs-13")
+                            date_val = ""
+                            if date_el:
+                                date_val = date_el.get("data-temp", "")[:10]
+                                if not date_val:
+                                    raw_t = date_el.get_text(strip=True)
+                                    if "Posted on " in raw_t:
+                                        date_val = raw_t.replace("Posted on ", "")[:10]
+
+                            if not is_within_14_days(date_val):
+                                continue
+                            page_valid_dates += 1
 
                             a = c.find("a", href=lambda h: h and "/jobseekers/job/" in h)
                             link = a["href"] if a else ""
@@ -229,17 +265,9 @@ class OnlineJobsConnector(BaseConnector):
                             sal_el = c.select_one("dd.col")
                             salary = sal_el.get_text(strip=True) if sal_el else ""
 
-                            date_el = c.select_one("p.fs-13")
-                            date_val = ""
-                            if date_el:
-                                date_val = date_el.get("data-temp", "")[:10]
-                                if not date_val:
-                                    raw_t = date_el.get_text(strip=True)
-                                    if "Posted on " in raw_t:
-                                        date_val = raw_t.replace("Posted on ", "")[:10]
-
                             company = "Direct Client (OnlineJobs.ph)"
                             desc_el = c.select_one(".desc")
+                            desc_text = ""
                             if desc_el:
                                 desc_text = desc_el.get_text()
                                 for prefix in ("Company:", "About Us:", "Client:"):
@@ -251,6 +279,9 @@ class OnlineJobsConnector(BaseConnector):
                                                 company = first_line
                                                 break
 
+                            if not is_relevant_opportunity(title, desc_text):
+                                continue
+
                             jobs.append(Job(
                                 title=title,
                                 company=company,
@@ -259,10 +290,13 @@ class OnlineJobsConnector(BaseConnector):
                                 tier=self.tier,
                                 job_url=link,
                                 salary=salary,
-                                role_category=classify_role(title),
-                                experience_level=classify_experience_level(title),
+                                role_category=classify_role(title, desc_text),
+                                experience_level=classify_experience_level(title, desc_text),
                                 date_posted=date_val
                             ))
+                        if not page_valid_dates and cards:
+                            # OnlineJobs listings are sorted newest first; if entire page is >14 days, stop paginating
+                            break
                     # Polite anti-ban delay between pages
                     time.sleep(random.uniform(0.4, 0.7))
                 except Exception as page_e:

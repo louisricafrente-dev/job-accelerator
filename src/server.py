@@ -12,7 +12,8 @@ from src.aggregator import Aggregator
 from src.auth import (
     get_or_create_admin_totp_secret, verify_totp, get_otpauth_uri,
     create_session_token, verify_session_token,
-    resolve_guest_db_path, reset_guest_db, save_guest_changes
+    resolve_guest_db_path, reset_guest_db, save_guest_changes,
+    admin_login_retry_after, record_admin_login_failure, clear_admin_login_failures
 )
 
 def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
@@ -22,7 +23,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     # Pre-initialize master admin TOTP secret so it exists in database
     get_or_create_admin_totp_secret(db_path)
 
-    public_settings = {"target_stack", "filter_skills_only", "has_salary_only", "remote_only", "hide_senior", "date_filter", "role", "experience_levels", "status", "platform", "va_training_enabled"}
+    public_settings = {"target_stack", "filter_skills_only", "has_salary_only", "remote_only", "hide_senior", "date_filter", "role", "experience_levels", "status", "platform", "va_training_enabled", "auto_sync_enabled"}
 
     @app.error(400)
     def bad_request(error):
@@ -150,6 +151,13 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         username = str(data.get("username", "")).strip().lower()
         password = str(data.get("password", "")).strip()
         code = str(data.get("code", "")).strip()
+        client_id = bottle.request.environ.get("REMOTE_ADDR", "unknown")
+        retry_after = admin_login_retry_after(db_path, client_id)
+        if retry_after:
+            bottle.response.status = 429
+            bottle.response.headers["Retry-After"] = str(retry_after)
+            bottle.response.content_type = "application/json"
+            return json.dumps({"success": False, "error": f"Too many failed attempts. Try again in {retry_after} seconds."})
 
         # 1. Cryptographic password verification (admin / password)
         is_valid = _verify_admin_credentials(username or "admin", password or code)
@@ -163,12 +171,15 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
                     is_valid = True
 
         if not is_valid:
+            record_admin_login_failure(db_path, client_id)
             bottle.response.status = 401
             bottle.response.content_type = "application/json"
             return json.dumps({
                 "success": False, 
                 "error": "Invalid username or password."
             })
+
+        clear_admin_login_failures(db_path, client_id)
             
         # 1-year persistent session token
         token = create_session_token("admin", "louis_admin", max_age=365 * 86400)
@@ -408,7 +419,52 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         bottle.response.content_type = "application/json"
         return json.dumps({"success": True, "stack": stack})
 
-    # System cron & automated daily digest runs against master database (Admin or internal Vercel Cron only)
+    # Cloud Cron & automated daily digest runs against master database (Admin or internal Vercel Cron only)
+    @app.route("/api/cron/sync", method=["GET", "POST"])
+    @app.route("/api/sync/cron", method=["GET", "POST"])
+    def api_cron_sync():
+        """Cloud Cron endpoint for Vercel Cron or external scheduled runners.
+        Runs scraper across platforms, ingests new listings, and dispatches email digest if new jobs found.
+        """
+        session = get_current_session()
+        cron_secret = os.environ.get("CRON_SECRET", "").strip()
+        auth_hdr = bottle.request.headers.get("Authorization", "")
+        is_cron = bool(cron_secret) and hmac.compare_digest(auth_hdr, f"Bearer {cron_secret}")
+        is_vercel_cron = bottle.request.headers.get("x-vercel-cron") == "1"
+        is_admin = session and session.get("role") == "admin"
+
+        if not (is_cron or is_vercel_cron or is_admin):
+            bottle.response.status = 403
+            bottle.response.content_type = "application/json"
+            return json.dumps({
+                "status": "forbidden",
+                "error": "Forbidden: Requires valid CRON_SECRET, Vercel Cron header, or Admin session."
+            })
+
+        try:
+            stats = aggregator.run_sync(force=True)
+            added = stats.get("added", 0)
+            email_result = None
+            if added > 0:
+                try:
+                    from scripts.daily_notifier import send_daily_email
+                    dashboard_url = os.environ.get("VERCEL_URL", "https://job-accelerator-rhettrina.vercel.app")
+                    if not dashboard_url.startswith("http"):
+                        dashboard_url = "https://" + dashboard_url
+                    email_result = send_daily_email(db_path=db_path, dashboard_url=dashboard_url, new_jobs_count=added)
+                except Exception as mail_err:
+                    email_result = {"status": "error", "error": str(mail_err)}
+            bottle.response.content_type = "application/json"
+            return json.dumps({
+                "status": "success",
+                "sync_stats": stats,
+                "email_notification": email_result
+            })
+        except Exception as e:
+            bottle.response.status = 500
+            bottle.response.content_type = "application/json"
+            return json.dumps({"status": "error", "error": str(e)})
+
     @app.route("/api/notify/daily", method=["GET", "POST"])
     def api_notify_daily():
         session = get_current_session()
@@ -439,24 +495,29 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         telemetry.setdefault("last_result", aggregator.last_sync_result)
         return json.dumps(telemetry)
 
-    @app.route("/api/sync", method=["POST", "OPTIONS"])
+    @app.route("/api/sync", method=["GET", "POST", "OPTIONS"])
     def api_sync():
         if bottle.request.method == "OPTIONS":
             return ""
-        auth_err = require_auth()
-        if auth_err:
-            return auth_err
+        cron_secret = os.environ.get("CRON_SECRET", "").strip()
+        auth_hdr = bottle.request.headers.get("Authorization", "")
+        is_cron = bool(cron_secret) and hmac.compare_digest(auth_hdr, f"Bearer {cron_secret}")
 
-        session = get_current_session()
-        # Strictly admin only! Adding/harvesting jobs is reserved exclusively for Admin.
-        if not session or session.get("role") != "admin":
-            bottle.response.status = 403
-            bottle.response.content_type = "application/json"
-            return json.dumps({
-                "status": "forbidden",
-                "error": "Forbidden: Only Admin can harvest and add new job opportunities to the system. Guests can explore, filter, save, and star existing opportunities.",
-                "is_admin_only": True
-            })
+        if not is_cron:
+            auth_err = require_auth()
+            if auth_err:
+                return auth_err
+
+            session = get_current_session()
+            # Strictly admin only! Adding/harvesting jobs is reserved exclusively for Admin.
+            if not session or session.get("role") != "admin":
+                bottle.response.status = 403
+                bottle.response.content_type = "application/json"
+                return json.dumps({
+                    "status": "forbidden",
+                    "error": "Forbidden: Only Admin can harvest and add new job opportunities to the system. Guests can explore, filter, save, and star existing opportunities.",
+                    "is_admin_only": True
+                })
 
         data = bottle.request.json or {}
         keywords = data.get("keywords")

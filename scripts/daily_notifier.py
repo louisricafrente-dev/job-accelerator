@@ -1,6 +1,6 @@
 """
 Automated Daily Email Digest Notifier
-Compiles statistics on scraped jobs across all 15 platforms and sends an email report
+Compiles a local job digest and sends new-job notifications by email
 to michael18ricafrente@gmail.com.
 """
 import os
@@ -86,12 +86,13 @@ def generate_digest_data(db_path: str = "data/jobs.db"):
 
 def build_html_content(data: dict, dashboard_url: str = "") -> str:
     stats = data["stats"]
-    recent_count = data["recent_count"]
+    recent_count = data.get("new_jobs_count", data["recent_count"])
+    count_label = "Added in This Sync" if "new_jobs_count" in data else "Recent Jobs"
     platform_counts = data["platform_counts"]
     top_matches = data["top_matches"]
     date_str = data["date_str"]
 
-    dash_link = dashboard_url or "https://job-accelerator.vercel.app"
+    dash_link = dashboard_url or "http://localhost:8000"
 
     platform_rows = ""
     for plat, count in sorted(platform_counts.items(), key=lambda x: x[1], reverse=True):
@@ -138,7 +139,7 @@ def build_html_content(data: dict, dashboard_url: str = "") -> str:
             <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #ffffff; padding: 24px 28px;">
                 <div style="font-size: 12px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Job Application Accelerator</div>
                 <h1 style="margin: 0 0 8px 0; font-size: 22px; font-weight: 700; line-height: 1.3;">Automated Daily Scraping Digest</h1>
-                <p style="margin: 0; font-size: 13px; color: #94a3b8;">Report Date: {date_str} &bull; 15 Active Job Boards Monitored</p>
+                <p style="margin: 0; font-size: 13px; color: #94a3b8;">Report Date: {date_str} &bull; Connected job sites searched</p>
             </div>
 
             <!-- Stats Highlight Grid -->
@@ -152,7 +153,7 @@ def build_html_content(data: dict, dashboard_url: str = "") -> str:
                         <td style="width: 12px;"></td>
                         <td align="center" style="background: #ffffff; padding: 14px; border-radius: 8px; border: 1px solid #e2e8f0;">
                             <div style="font-size: 24px; font-weight: 800; color: #16a34a;">+{recent_count}</div>
-                            <div style="font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; margin-top: 2px;">Newly Harvested</div>
+                            <div style="font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; margin-top: 2px;">{count_label}</div>
                         </td>
                         <td style="width: 12px;"></td>
                         <td align="center" style="background: #ffffff; padding: 14px; border-radius: 8px; border: 1px solid #e2e8f0;">
@@ -194,8 +195,10 @@ def build_html_content(data: dict, dashboard_url: str = "") -> str:
     """
     return html
 
-def send_daily_email(db_path: str = "data/jobs.db", dashboard_url: str = "") -> dict:
+def send_daily_email(db_path: str = "data/jobs.db", dashboard_url: str = "", new_jobs_count: int = None) -> dict:
     data = generate_digest_data(db_path)
+    if new_jobs_count is not None:
+        data["new_jobs_count"] = max(0, int(new_jobs_count))
     html_content = build_html_content(data, dashboard_url)
     
     # Save local snapshot of digest
@@ -204,13 +207,15 @@ def send_daily_email(db_path: str = "data/jobs.db", dashboard_url: str = "") -> 
     with open(digest_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    subject = f"[Job Accelerator] 🎯 {data['recent_count']} Bagong Tech Jobs Nascrape Ngayong Araw ({data['stats'].get('total', 0)} Total)"
+    new_count = data.get("new_jobs_count", data["recent_count"])
+    count_description = "bagong jobs naidagdag" if new_jobs_count is not None else "recent jobs"
+    subject = f"[Job Accelerator] {new_count} {count_description} ({data['stats'].get('total', 0)} total)"
 
     result = {
         "success": False,
         "recipient": RECIPIENT_EMAIL,
         "subject": subject,
-        "new_jobs": data["recent_count"],
+        "new_jobs": new_count,
         "total_jobs": data["stats"].get("total", 0),
         "digest_file": digest_path
     }
@@ -219,7 +224,7 @@ def send_daily_email(db_path: str = "data/jobs.db", dashboard_url: str = "") -> 
         print(f"[!] SMTP_PASSWORD / GMAIL_APP_PASSWORD not detected in environment.")
         print(f"[✓] Daily email digest compiled and saved to: {digest_path}")
         print(f"[*] Preview Subject: {subject}")
-        result["message"] = "Digest HTML generated successfully. Ready for SMTP / GitHub Actions dispatch."
+        result["message"] = "Digest saved locally. Add Gmail SMTP credentials to .env to enable email delivery."
         return result
 
     try:

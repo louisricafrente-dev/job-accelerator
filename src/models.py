@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 
-def normalize_date(raw: Any) -> str:
+def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
     """Normalize raw date strings/timestamps into ISO 'YYYY-MM-DD'.
     Handles:
       - 'YYYY-MM-DD' and ISO 8601 strings
@@ -27,7 +27,12 @@ def normalize_date(raw: Any) -> str:
 
     # Check relative dates ('3d ago', 'yesterday', 'today', '2w ago')
     s_lower = s.lower()
-    now_utc = datetime.now(timezone.utc)
+    if isinstance(ref_date, datetime):
+        now_utc = ref_date.astimezone(timezone.utc) if ref_date.tzinfo else ref_date.replace(tzinfo=timezone.utc)
+    elif ref_date is not None:
+        now_utc = datetime.combine(ref_date, datetime.min.time(), tzinfo=timezone.utc)
+    else:
+        now_utc = datetime.now(timezone.utc)
     if s_lower in ("today", "just now", "moments ago") or "hour" in s_lower or "minute" in s_lower or re.match(r"^\d+\s*h(?:r|ours?)?(\s*ago)?$", s_lower):
         return now_utc.strftime("%Y-%m-%d")
     if s_lower == "yesterday":
@@ -77,6 +82,31 @@ def normalize_date(raw: Any) -> str:
             continue
 
     return ""
+
+def is_within_14_days(raw_or_norm: Any, max_days: int = 14, ref_date: Optional[Any] = None) -> bool:
+    """Returns True if raw_or_norm represents a date between (ref_date - max_days) and (ref_date + 1 day).
+    Empty, missing, or unparseable dates return False.
+    """
+    if not raw_or_norm:
+        return False
+    norm = normalize_date(raw_or_norm, ref_date=ref_date)
+    if not norm:
+        return False
+    try:
+        target = datetime.strptime(norm, "%Y-%m-%d").date()
+    except Exception:
+        return False
+
+    if ref_date is None:
+        now_utc = datetime.now(timezone.utc).date()
+    elif isinstance(ref_date, datetime):
+        now_utc = ref_date.date()
+    else:
+        now_utc = ref_date
+
+    cutoff = now_utc - timedelta(days=max_days)
+    future_limit = now_utc + timedelta(days=1)
+    return cutoff <= target <= future_limit
 
 def clean_url(url: str) -> str:
     if not url:

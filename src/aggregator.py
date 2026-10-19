@@ -5,11 +5,11 @@ from src.connectors.remote_feed import (
     RemoteOKConnector,
     WeWorkRemotelyConnector,
     ArcConnector,
-    WellfoundConnector,
-    FounditConnector,
-    UpworkConnector,
     RemotiveConnector,
-    HimalayasConnector
+    HimalayasConnector,
+    JobicyConnector,
+    FreelancerConnector,
+    UpworkConnector
 )
 from src.connectors.ph_jobs import KalibrrConnector, BossjobConnector, JobStreetConnector, OnlineJobsConnector
 from src.connectors.jobspy_adapter import JobSpyAdapter
@@ -18,7 +18,7 @@ from src.classifier import is_relevant_opportunity
 import time
 import json
 import uuid
-from src.models import Job
+from src.models import Job, is_within_14_days
 
 DEFAULT_QUERIES = [
     # Priority 1: Core Titles & Junior/Entry (Highest Priority)
@@ -50,26 +50,28 @@ def get_default_connectors() -> List[BaseConnector]:
     return [
         # Tier 1 — Core PH & High-Yield Direct Client Boards
         JobSpyAdapter("LinkedIn", "linkedin", tier=1),
+        JobSpyAdapter("Indeed", "indeed", tier=1),
+        JobSpyAdapter("Glassdoor", "glassdoor", tier=1),
+        JobSpyAdapter("ZipRecruiter", "zip_recruiter", tier=2),
+        JobSpyAdapter("Bayt", "bayt", tier=2),
+        JobSpyAdapter("Naukri", "naukri", tier=2),
+        JobSpyAdapter("BDJobs", "bdjobs", tier=2),
+        JobSpyAdapter("HelloWork", "hellowork", tier=3),
         JobStreetConnector(),
         OnlineJobsConnector(),
-        JobSpyAdapter("Indeed", "indeed", tier=1),
         KalibrrConnector(),
 
         # Tier 2 — High Value Startups & PH Portals
         BossjobConnector(),
-        WellfoundConnector(),
-        FounditConnector(),
-
         # Tier 3 — Global Remote & Direct APIs (High Reliability)
         RemotiveConnector(),
         HimalayasConnector(),
+        JobicyConnector(),
         RemoteOKConnector(),
         WeWorkRemotelyConnector(),
         ArcConnector(),
-
-        # Tier 4 — Freelance & Company Reviews
+        FreelancerConnector(),
         UpworkConnector(),
-        JobSpyAdapter("Glassdoor", "glassdoor", tier=4),
     ]
 
 import collections
@@ -181,10 +183,10 @@ class Aggregator:
                         return cached_entry["jobs"]
 
                 results: List[Job] = []
+                if hasattr(conn, "last_error"):
+                    conn.last_error = ""
                 # 2. Distinguish feed connectors from query-based scrapers
-                is_feed = hasattr(conn, "is_feed") or conn.platform in (
-                    "Remote OK", "We Work Remotely", "Arc", "Foundit", "Upwork", "Wellfound", "Remotive", "Himalayas"
-                )
+                is_feed = getattr(conn, "is_feed", False)
 
                 if is_feed:
                     # Feed connectors return whole listings in 1 call; avoid looping redundant keywords
@@ -208,43 +210,51 @@ class Aggregator:
                             "timestamp": time.strftime("%H:%M:%S")
                         }
                 else:
-                    # MAX MODE: Multi-track dynamic query selection covering the user's entire stack
-                    tech_q = [q for q in search_queries if not any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad", "android", "mobile", "kotlin", "flutter", "react native", "ios", "virtual assistant", "assistant", "cyberbacker", "athena", "virtudesk", "pineapple"])]
-                    jr_q = [q for q in search_queries if any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad"])]
-                    mob_q = [q for q in search_queries if any(m in q.lower() for m in ["android", "mobile", "kotlin", "flutter", "react native", "ios"])]
-                    va_q = [q for q in search_queries if any(v in q.lower() for v in ["virtual assistant", "executive assistant", "administrative assistant", "remote assistant", "cyberbacker", "athena", "virtudesk", "pineapple staffing"])]
-
-                    active_queries = []
-                    # 1. Junior / Entry tracks (take up to 2 variations)
-                    if jr_q:
-                        active_queries.extend(jr_q[:2])
+                    # Honor a user-provided search set. The curated defaults are sampled by role.
+                    if queries is not None:
+                        final_queries = list(dict.fromkeys(q.strip() for q in search_queries if q.strip()))
+                        if not any(v in q.lower() for q in final_queries for v in ["virtual assistant", "executive assistant", "cyberbacker", "athena"]):
+                            final_queries.append("virtual assistant")
                     else:
-                        active_queries.append("junior software engineer")
+                        # MAX MODE: Multi-track dynamic query selection covering the user's stack
+                        tech_q = [q for q in search_queries if not any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad", "android", "mobile", "kotlin", "flutter", "react native", "ios", "virtual assistant", "assistant", "cyberbacker", "athena", "virtudesk", "pineapple"])]
+                        jr_q = [q for q in search_queries if any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad"])]
+                        mob_q = [q for q in search_queries if any(m in q.lower() for m in ["android", "mobile", "kotlin", "flutter", "react native", "ios"])]
+                        va_q = [q for q in search_queries if any(v in q.lower() for v in ["virtual assistant", "executive assistant", "administrative assistant", "remote assistant", "cyberbacker", "athena", "virtudesk", "pineapple staffing"])]
 
-                    # 2. Mobile / Android tracks (take up to 2 variations)
-                    if mob_q:
-                        active_queries.extend(mob_q[:2])
-                    else:
-                        active_queries.append("android developer")
+                        active_queries = []
+                        # 1. Junior / Entry tracks (take up to 2 variations)
+                        if jr_q:
+                            active_queries.extend(jr_q[:2])
+                        else:
+                            active_queries.append("junior software engineer")
 
-                    # 3. Web / Fullstack / Backend tracks (take up to 2 variations, e.g. React, Node, Next.js)
-                    if tech_q:
-                        active_queries.extend(tech_q[:2])
-                    else:
-                        active_queries.append("software developer")
+                        # 2. Mobile / Android tracks (take up to 2 variations)
+                        if mob_q:
+                            active_queries.extend(mob_q[:2])
+                        else:
+                            active_queries.append("android developer")
 
-                    # 4. Virtual Assistant & Remote Matrix track (Picture 2)
-                    if va_q:
-                        active_queries.extend(va_q[:2])
+                        # 3. Web / Fullstack / Backend tracks (take up to 2 variations, e.g. React, Node, Next.js)
+                        if tech_q:
+                            active_queries.extend(tech_q[:2])
+                        else:
+                            active_queries.append("software developer")
 
-                    # Deduplicate while preserving priority order (up to 6-7 queries in parallel)
-                    seen_q = set()
-                    final_queries = []
-                    for q in active_queries:
-                        ql = q.lower().strip()
-                        if ql not in seen_q:
-                            seen_q.add(ql)
-                            final_queries.append(q)
+                        # 4. Virtual Assistant & Remote Matrix track (Picture 2)
+                        if va_q:
+                            active_queries.extend(va_q[:2])
+                        else:
+                            active_queries.append("virtual assistant")
+
+                        # Deduplicate while preserving priority order (up to 6-7 queries in parallel)
+                        seen_q = set()
+                        final_queries = []
+                        for q in active_queries:
+                            ql = q.lower().strip()
+                            if ql not in seen_q:
+                                seen_q.add(ql)
+                                final_queries.append(q)
 
                     for q in final_queries:
                         try:
@@ -256,12 +266,21 @@ class Aggregator:
                             self.log_event(f"[{conn.platform}] Notice for '{q}': {e}")
 
                     self.log_event(f"[{conn.platform}] Harvested {len(results)} total listings across queries.")
-                    self.platform_telemetry[conn.platform] = {
-                        "status": "active",
-                        "count": len(results),
-                        "tier": conn.tier,
-                        "timestamp": time.strftime("%H:%M:%S")
-                    }
+                    if getattr(conn, "last_error", ""):
+                        self.platform_telemetry[conn.platform] = {
+                            "status": "error",
+                            "count": len(results),
+                            "tier": conn.tier,
+                            "timestamp": time.strftime("%H:%M:%S")
+                        }
+                        self.log_event(f"[{conn.platform}] Source error: {conn.last_error}")
+                    else:
+                        self.platform_telemetry[conn.platform] = {
+                            "status": "active",
+                            "count": len(results),
+                            "tier": conn.tier,
+                            "timestamp": time.strftime("%H:%M:%S")
+                        }
 
                 # Store in cache
                 self._cache[cache_key] = {"timestamp": now, "jobs": results}
@@ -280,10 +299,14 @@ class Aggregator:
 
             ingestion_error = None
             try:
-                relevant_jobs = [j for j in all_jobs if is_relevant_opportunity(getattr(j, "title", "") or "", getattr(j, "description", "") or "", allow_va_training=True)]
+                relevant_jobs = [
+                    j for j in all_jobs
+                    if is_within_14_days(getattr(j, "date_posted", ""))
+                    and is_relevant_opportunity(getattr(j, "title", "") or "", getattr(j, "description", "") or "", allow_va_training=True)
+                ]
                 dropped_cnt = len(all_jobs) - len(relevant_jobs)
                 if dropped_cnt > 0:
-                    self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} non-tech/unrelated listings; verified {len(relevant_jobs)} tech & training VA opportunities.")
+                    self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} stale (>14d) or non-matrix listings; verified {len(relevant_jobs)} matching 14-day opportunities.")
                 added, skipped = insert_jobs(self.db_path, relevant_jobs)
                 self.log_event(f"[Database] Synchronized {len(relevant_jobs)} listings: +{added} new opportunities, {skipped} existing/cross-board merged.")
             except Exception as e:
@@ -292,7 +315,7 @@ class Aggregator:
                 self.log_event(f"[Database] Ingestion notice: {e}")
 
             summary = {
-                "status": "error" if ingestion_error else "ok",
+                "status": "error" if ingestion_error else ("partial" if any(p.get("status") == "error" for p in self.platform_telemetry.values()) else "ok"),
                 "error": ingestion_error,
                 "is_syncing": False,
                 "total_fetched": len(all_jobs),
