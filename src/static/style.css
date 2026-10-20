@@ -2360,6 +2360,12 @@ a {
   border: 1px solid var(--accent-cyan-border);
 }
 
+.status-synced {
+  background-color: rgba(56, 189, 248, 0.12);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
 .status-idle {
   background-color: rgba(255, 255, 255, 0.05);
   color: var(--text-tertiary);
