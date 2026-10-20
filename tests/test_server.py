@@ -3,6 +3,7 @@ import tempfile
 import os
 import json
 import io
+from unittest.mock import patch
 from src.database import init_db, insert_jobs, get_jobs
 from src.models import Job
 from src.server import create_app
@@ -99,7 +100,8 @@ class TestServer(unittest.TestCase):
 
     def test_sync_background_and_status_endpoint(self):
         # Trigger background sync
-        res = self._request("POST", "/api/sync", body={"background": True})
+        with patch("src.server.Aggregator.start_background_sync", return_value=True):
+            res = self._request("POST", "/api/sync", body={"background": True})
         self.assertEqual(res["status"], "started")
         self.assertTrue(res["is_syncing"])
 

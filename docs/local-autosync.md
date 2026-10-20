@@ -1,7 +1,9 @@
-# Local auto-sync and Gmail alerts
+# Automatic scraping runs in the cloud
 
-The local dashboard starts a scraper in the background when the app launches. It runs one sync immediately, then repeats every six hours while the dashboard process stays open. Use the Auto sync checkbox in the header to pause or resume future cycles. Manual sync remains available.
+Local automatic runners have been retired. Launching the local dashboard does not schedule scraping. The legacy auto_runner.py and sync_and_notify.py entry points stop with a message directing users to cloud cron or the deployed dashboard.
 
-When a cycle adds new jobs, the app sends a digest to `michael18ricafrente@gmail.com`. Gmail SMTP credentials are read from the project `.env` file (`SMTP_USER` and `SMTP_PASSWORD`, or `GMAIL_APP_PASSWORD`). Keep that file private. The email links back to `http://localhost:8000`, so open it on the same computer where the dashboard is running.
+Vercel cron calls /api/cron/sync on the schedule in vercel.json. Automatic runs read the persisted target_stack matrix on each run. All nonempty saved keywords are used, with repeated entries removed. Defaults apply only if no nonempty matrix is saved. The Auto sync checkbox pauses future cloud runs; Manual Sync remains available.
 
-Start the app with `START_JOB_ACCELERATOR.bat`. Closing the dashboard process stops local scraping; the next launch starts a fresh cycle. This runs against `data/jobs.db` and does not depend on GitHub Actions or Vercel.
+Query-based boards use the saved matrix as search terms. Feed-based boards fetch their feed through their existing connector; this change does not add a new per-keyword request loop to feeds. Existing relevance/date filtering remains active.
+
+Matrix edits must finish saving to the server before a scheduled run can read them. Pending edits stored only in a browser are not yet available to cloud cron. Per-board rate limits, cooldowns and resumable batches remain separate pending work.

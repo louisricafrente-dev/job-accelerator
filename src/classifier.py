@@ -96,7 +96,7 @@ WEB_PATTERNS = [
 
 DATA_AI_PATTERNS = [
     r"\bdata analyst\b", r"\bdata analytics\b", r"\bdata engineer\b", r"\bdata platform\b",
-    r"\bmachine learning\b", r"\bml\b", r"\bml engineer\b", r"\bai\b", r"\bai engineer\b",
+    r"\bmachine learning\b", r"\bml (?:engineer|developer|researcher|scientist|model|pipeline)\b", r"\bai\b", r"\bai engineer\b",
     r"\bai developer\b", r"\bai application\b", r"\bgenerative ai\b", r"\bgen ai\b",
     r"\bllm\b", r"\bllm engineer\b", r"\bmlops\b",
     r"\bdata scientist\b", r"\bnlp\b", r"\bdeep learning\b", r"\bcomputer vision\b",
@@ -191,6 +191,10 @@ def is_non_tech(title: str, description: str = "") -> bool:
     d_str = str(description or "")
     title_lower = t_str.lower()
     text = f"{t_str} {d_str}".lower()
+    physical_role = re.search(r"\b(?:civil|structural|mechanical|construction|chemical|mining|petroleum)\s+(?:engineer|engineering)\b", title_lower)
+    explicit_software_role = re.search(r"\b(?:software|web|mobile|android|frontend|backend|full[- ]?stack|firmware|embedded)\b", title_lower)
+    if physical_role and not explicit_software_role:
+        return True
     has_tech_override = any(re.search(pat, title_lower) for pat in TECH_WHITELIST_OVERRIDE)
     if has_tech_override:
         return False

@@ -37,8 +37,16 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
     else:
         now_utc = datetime.now(timezone.utc)
 
-    # Detect terms containing 'recently', 'recent', 'just posted', 'today', etc.
-    if any(k in s_lower for k in ("today", "just now", "moments ago", "recently", "recent", "just posted", "new", "posted today", "active today")) or "hour" in s_lower or "minute" in s_lower or re.match(r"^\d+\s*h(?:r|ours?)?(\s*ago)?$", s_lower):
+    relative_time = re.fullmatch(r"(?:posted\s+)?(\d+)\s*(hours?|hrs?|h|minutes?|mins?)(?:\s+ago)?", s_lower)
+    if relative_time:
+        amount = int(relative_time.group(1))
+        unit = relative_time.group(2)
+        try:
+            delta = timedelta(hours=amount) if unit.startswith("h") else timedelta(minutes=amount)
+            return (now_utc - delta).strftime("%Y-%m-%d")
+        except OverflowError:
+            return ""
+    if s_lower in ("today", "just now", "moments ago", "recently", "recent", "posted recently", "posted recent", "just posted", "new", "posted today", "active today"):
         return now_utc.strftime("%Y-%m-%d")
     if "yesterday" in s_lower:
         return (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -159,6 +167,13 @@ class Job:
     sources: Optional[List[Dict[str, str]]] = None
 
     def __post_init__(self):
+        self.description = str(self.description or "").strip()
+        if re.search(r"</?[a-zA-Z][^>]*>", self.description):
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(self.description, "html.parser")
+            for element in soup(["script", "style"]):
+                element.decompose()
+            self.description = soup.get_text("\n", strip=True)
         self.title = str(self.title or "").strip()
         self.company = str(self.company or "").strip()
         self.location = str(self.location or "Philippines / Remote").strip()

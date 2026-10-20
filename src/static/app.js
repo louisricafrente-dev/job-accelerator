@@ -6,6 +6,7 @@
 // State management
 let currentViewMode = 'tech'; // 'tech' or 'va'
 let currentStatus = 'new';
+let viewFilters = {};
 let selectedLevels = new Set(['All']);
 let currentLevel = 'All';
 let currentRole = 'All';
@@ -326,6 +327,8 @@ function saveLocalStatusOverride(jobId, updates) {
     overrides[idKey] = {
       ...(overrides[idKey] || {}),
       ...updates,
+      revision: `${Date.now()}:${Math.random()}`,
+      save_state: 'pending',
       updated_at: new Date().toISOString()
     };
     localStorage.setItem(overrideStorageKey(), JSON.stringify(overrides));
@@ -342,47 +345,83 @@ function removeLocalStatusOverride(jobId, storageKey = overrideStorageKey()) {
   } catch (e) {}
 }
 
+const pendingStatusWrites = new Map();
+
+function renderNoteSaveState(jobId) {
+  const el = document.getElementById(`note-save-${jobId}`);
+  if (!el) return;
+  const ov = getLocalStatusOverrides()[String(jobId)];
+  const state = ov ? (ov.save_state || 'pending') : 'saved';
+  el.textContent = state === 'failed' ? 'Failed - retry' : state === 'pending' ? 'Pending' : 'Saved';
+  el.dataset.state = state;
+  el.disabled = state !== 'failed';
+}
+
+function flushJobOverride(jobId, token = currentSessionToken) {
+  const storageKey = overrideStorageKey(token);
+  const key = `${storageKey}:${jobId}`;
+  if (pendingStatusWrites.has(key)) return pendingStatusWrites.get(key);
+  const task = (async () => {
+    while (token === currentSessionToken) {
+      const ov = JSON.parse(localStorage.getItem(storageKey) || '{}')[String(jobId)];
+      if (!ov) return true;
+      if (ov.save_state === 'failed') {
+        const overrides = JSON.parse(localStorage.getItem(storageKey) || '{}');
+        overrides[String(jobId)].save_state = 'pending';
+        localStorage.setItem(storageKey, JSON.stringify(overrides));
+        if (token === currentSessionToken) renderNoteSaveState(jobId);
+      }
+      const payload = {};
+      for (const field of ['status', 'notes', 'stage', 'follow_up_date']) {
+        if (ov[field] !== undefined && ov[field] !== null) payload[field] = ov[field];
+      }
+      try {
+        const res = await window.fetch(`/api/jobs/${jobId}/status`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok || !(await res.json()).success) throw new Error('Save failed');
+        const latest = JSON.parse(localStorage.getItem(storageKey) || '{}')[String(jobId)];
+        if (latest && latest.revision === ov.revision) removeLocalStatusOverride(jobId, storageKey);
+        if (token === currentSessionToken) renderNoteSaveState(jobId);
+      } catch (_) {
+        const latest = JSON.parse(localStorage.getItem(storageKey) || '{}');
+        if (latest[String(jobId)]) {
+          latest[String(jobId)].save_state = 'failed';
+          localStorage.setItem(storageKey, JSON.stringify(latest));
+        }
+        if (token === currentSessionToken) renderNoteSaveState(jobId);
+        return false;
+      }
+    }
+    return false;
+  })();
+  const tracked = task.finally(() => pendingStatusWrites.delete(key));
+  pendingStatusWrites.set(key, tracked);
+  return tracked;
+}
+
 async function syncLocalOverridesToServer() {
   if (!currentUserRole || !currentSessionToken) return;
   const token = currentSessionToken;
-  const storageKey = overrideStorageKey(token);
-  const overrides = getLocalStatusOverrides();
-  const jobIds = Object.keys(overrides);
-  if (jobIds.length === 0) return;
-
-  for (const jid of jobIds) {
+  for (const id of Object.keys(getLocalStatusOverrides())) {
     if (token !== currentSessionToken) return;
-    const ov = overrides[jid];
-    try {
-      const payload = {};
-      if (ov.status !== undefined && ov.status !== null) payload.status = ov.status;
-      if (ov.notes !== undefined && ov.notes !== null) payload.notes = ov.notes;
-      if (ov.stage !== undefined && ov.stage !== null) payload.stage = ov.stage;
-      if (ov.follow_up_date !== undefined && ov.follow_up_date !== null) payload.follow_up_date = ov.follow_up_date;
-
-      const res = await window.fetch(`/api/jobs/${jid}/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(payload)
-      });
-      if (res && res.ok && (await res.json()).success) {
-        removeLocalStatusOverride(jid, storageKey);
-      }
-    } catch (e) {
-      // Background sync retry
-    }
+    await flushJobOverride(id, token);
   }
 }
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
+    startTelemetryPolling();
     syncLocalOverridesToServer();
+    flushPendingSettings();
     loadStats();
   }
 });
 
 window.addEventListener('online', () => {
   syncLocalOverridesToServer();
+  flushPendingSettings();
   loadStats();
   loadJobs();
 });
@@ -493,6 +532,7 @@ function hideAuthGate() {
 }
 
 function switchAuthTab(tab) {
+  if (tab === 'guest') return;
   const tabAdmin = document.getElementById('tab-admin');
   const tabGuest = document.getElementById('tab-guest');
   const panelAdmin = document.getElementById('auth-panel-admin');
@@ -672,6 +712,11 @@ async function lockSession() {
   localStorage.removeItem('job_accel_session_token');
   currentSessionToken = '';
   currentUserRole = null;
+  clearTimeout(telemetryTimer);
+  clearInterval(syncPollTimer);
+  syncPollTimer = null;
+  stopSyncIndicator();
+  document.getElementById('telemetry-log-stream').textContent = 'Sign in to view sync activity.';
   isDashboardBootstrapped = false;
   jobsList = [];
   loadJobsSequence++;
@@ -691,6 +736,8 @@ function handleAuthAction() {
 
 async function bootstrapDashboard() {
   await loadAllUserSettings();
+  flushPendingSettings();
+  startTelemetryPolling();
   if (isDashboardBootstrapped) {
     await loadStats();
     await loadJobs();
@@ -699,6 +746,8 @@ async function bootstrapDashboard() {
   isDashboardBootstrapped = true;
   renderSkillChips();
   updateActiveSkillsBadge();
+  const isTelemetryCollapsed = localStorage.getItem('job_accel_telemetry_collapsed') !== '0';
+  toggleTelemetryCollapse(isTelemetryCollapsed);
   await loadStats();
   await loadJobs();
 }
@@ -716,18 +765,96 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 
+const viewFilterKeys = new Set(['date_filter', 'role', 'experience_levels', 'platform', 'remote_only', 'hide_senior', 'has_salary_only', 'filter_skills_only']);
+function filterViewKey() { return currentViewMode === 'va' ? 'va' : currentStatus; }
+function rememberViewFilters() {
+  viewFilters[filterViewKey()] = { date: currentDateFilter, role: currentRole, level: currentLevel,
+    platform: currentPlatform, remote: remoteOnly, senior: hideSenior, salary: hasSalaryOnly,
+    skills: filterBySkillsOnly, search: searchQuery };
+  persistSetting('view_filters', JSON.stringify(viewFilters));
+}
+function restoreViewFilters() {
+  const f = viewFilters[filterViewKey()] || {};
+  currentDateFilter = f.date || (['saved', 'applied'].includes(currentStatus) ? 'all' : '7days');
+  currentRole = f.role || 'All'; currentLevel = f.level || 'All';
+  selectedLevels = new Set(currentLevel.split(',')); currentPlatform = f.platform || 'All';
+  remoteOnly = Boolean(f.remote); hideSenior = Boolean(f.senior);
+  hasSalaryOnly = Boolean(f.salary); filterBySkillsOnly = Boolean(f.skills);
+  searchQuery = f.search || '';
+  const input = document.getElementById('search-input');
+  if (input) input.value = searchQuery;
+}
+
 // Universal persistence helper (saves to both localStorage & server SQLite)
-function persistSetting(key, value) {
+let settingWriteQueue = Promise.resolve();
+let settingRetryTimer = null;
+const SETTINGS_TIMEOUT_MS = 10000;
+
+function pendingSettingsKey(token = currentSessionToken) {
+  return `${overrideStorageKey(token)}:settings`;
+}
+function pendingSettings(token = currentSessionToken) {
+  try { return JSON.parse(localStorage.getItem(pendingSettingsKey(token)) || '{}'); }
+  catch (_) { return {}; }
+}
+
+async function sendSettings(body, token) {
+  const controller = new AbortController();
+  let timeout;
   try {
+    return await Promise.race([
+      fetch('/api/settings', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(body), signal: controller.signal }),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => { controller.abort(); reject(new Error('Settings save timed out')); }, SETTINGS_TIMEOUT_MS);
+      })
+    ]);
+  } finally { clearTimeout(timeout); }
+}
+
+function flushPendingSettings(token = currentSessionToken) {
+  settingWriteQueue = settingWriteQueue.catch(() => {}).then(async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (token !== currentSessionToken || !currentUserRole) return;
+      const snapshot = pendingSettings(token);
+      if (!Object.keys(snapshot).length) return;
+      const body = { __revisions: {} };
+      for (const [key, entry] of Object.entries(snapshot)) {
+        body[key] = entry.value;
+        body.__revisions[key] = entry.revision;
+      }
+      try {
+        const response = await sendSettings(body, token);
+        if (!response.ok) throw new Error(`Settings save failed (${response.status})`);
+        const latest = pendingSettings(token);
+        for (const [key, entry] of Object.entries(snapshot)) {
+          if (latest[key]?.revision === entry.revision) delete latest[key];
+        }
+        localStorage.setItem(pendingSettingsKey(token), JSON.stringify(latest));
+      } catch (error) { console.warn('Settings remain pending:', error.message); }
+    }
+    if (token === currentSessionToken && currentUserRole && Object.keys(pendingSettings(token)).length) {
+      clearTimeout(settingRetryTimer);
+      settingRetryTimer = setTimeout(() => flushPendingSettings(token), 5000);
+    }
+  });
+  return settingWriteQueue;
+}
+
+function persistSetting(key, value) {
+  if (viewFilterKeys.has(key)) rememberViewFilters();
+  try {
+    const token = currentSessionToken;
     localStorage.setItem('job_accel_' + key, String(value));
-    fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [key]: String(value) })
-    }).catch(err => console.warn(`Could not persist setting "${key}":`, err));
-  } catch (err) {
-    console.warn(`Local save error for "${key}":`, err);
-  }
+    const pending = pendingSettings(token);
+    const clockKey = `${pendingSettingsKey(token)}:revision`;
+    const revision = Math.max(Date.now() * 1000, Number(localStorage.getItem(clockKey) || 0) + 1);
+    localStorage.setItem(clockKey, String(revision));
+    pending[key] = { value: String(value), revision };
+    localStorage.setItem(pendingSettingsKey(token), JSON.stringify(pending));
+    flushPendingSettings(token);
+  } catch (error) { console.warn('Could not queue setting:', error); }
 }
 
 // Load persistent user settings and filter toggle states from server SQLite (with localStorage fallback)
@@ -745,8 +872,11 @@ async function loadAllUserSettings() {
       date_filter: localStorage.getItem('job_accel_date_filter'),
       role: localStorage.getItem('job_accel_role'),
       experience_levels: localStorage.getItem('job_accel_experience_levels'),
+      view_filters: localStorage.getItem('job_accel_view_filters'),
       status: localStorage.getItem('job_accel_status'),
-      auto_sync_enabled: localStorage.getItem('job_accel_auto_sync_enabled')
+      auto_sync_enabled: localStorage.getItem('job_accel_auto_sync_enabled'),
+      proxy_list: localStorage.getItem('job_accel_proxy_list'),
+      proxy_mode: localStorage.getItem('job_accel_proxy_mode')
     };
   } catch (e) {}
 
@@ -762,6 +892,8 @@ async function loadAllUserSettings() {
   } catch (err) {
     console.warn('Could not load settings from server SQLite, using localStorage fallback:', err);
   }
+
+  for (const [key, entry] of Object.entries(pendingSettings())) settings[key] = entry.value;
 
   // 3. Hydrate state variables
   if (settings.target_stack && settings.target_stack.trim()) {
@@ -821,6 +953,9 @@ async function loadAllUserSettings() {
     }
   }
 
+  try { viewFilters = JSON.parse(settings.view_filters || '{}'); } catch (_) { viewFilters = {}; }
+  if (!viewFilters || typeof viewFilters !== 'object' || Array.isArray(viewFilters)) viewFilters = {};
+  restoreViewFilters();
   // 4. Update UI elements to reflect restored toggles & selections
   syncFilterControlsUI();
 }
@@ -907,7 +1042,7 @@ async function loadStats() {
     const res = await fetch('/api/stats');
     const data = await res.json();
     currentStats = data;
-    
+
     const setNum = (id, val) => {
       const el = document.getElementById(id);
       if (el) el.textContent = val || 0;
@@ -918,7 +1053,7 @@ async function loadStats() {
     setNum('stat-applied', data.applied);
     setNum('stat-ignored', data.ignored);
     setNum('stat-va', data.va);
-    
+
     renderPipelineSummary(data.by_stage || {});
   } catch (err) {
     console.error('Failed to load telemetry stats:', err);
@@ -1115,7 +1250,7 @@ function getSkillsMatch(job) {
         isMatch = true;
         break;
       }
-      if ((cleanPart === 'c#' || cleanPart === '.net' || cleanPart === 'c# / .net') && 
+      if ((cleanPart === 'c#' || cleanPart === '.net' || cleanPart === 'c# / .net') &&
           (targetText.includes('c#') || targetText.includes('.net') || targetText.includes('dotnet') || targetText.includes('csharp'))) {
         isMatch = true;
         break;
@@ -1124,22 +1259,22 @@ function getSkillsMatch(job) {
         isMatch = true;
         break;
       }
-      if ((cleanPart === 'kmp' || cleanPart === 'kmm' || cleanPart === 'compose multiplatform' || cleanPart === 'kotlin multiplatform') && 
+      if ((cleanPart === 'kmp' || cleanPart === 'kmm' || cleanPart === 'compose multiplatform' || cleanPart === 'kotlin multiplatform') &&
           (targetText.includes('kmp') || targetText.includes('kmm') || targetText.includes('compose multiplatform') || targetText.includes('kotlin multiplatform'))) {
         isMatch = true;
         break;
       }
-      if ((cleanPart === 'android media3' || cleanPart === 'media3' || cleanPart === 'exoplayer') && 
+      if ((cleanPart === 'android media3' || cleanPart === 'media3' || cleanPart === 'exoplayer') &&
           (targetText.includes('media3') || targetText.includes('exoplayer'))) {
         isMatch = true;
         break;
       }
-      if ((cleanPart === 'ci/cd' || cleanPart === 'cicd') && 
+      if ((cleanPart === 'ci/cd' || cleanPart === 'cicd') &&
           (targetText.includes('ci/cd') || targetText.includes('cicd') || targetText.includes('continuous integration'))) {
         isMatch = true;
         break;
       }
-      if ((cleanPart === 'qa' || cleanPart === 'sdet' || cleanPart === 'qa automation') && 
+      if ((cleanPart === 'qa' || cleanPart === 'sdet' || cleanPart === 'qa automation') &&
           (targetText.includes('qa') || targetText.includes('sdet') || targetText.includes('quality assurance') || targetText.includes('testing'))) {
         isMatch = true;
         break;
@@ -1195,8 +1330,8 @@ function renderSkillMatrix() {
           ${cat.skills.map(skill => {
             const isActive = activeSet.has(skill.toLowerCase());
             return `
-              <button type="button" 
-                      class="preset-chip ${isActive ? 'active' : ''}" 
+              <button type="button"
+                      class="preset-chip ${isActive ? 'active' : ''}"
                       onclick="toggleSkill('${escapeHtml(skill)}')"
                       title="${isActive ? 'Remove ' + skill : 'Add ' + skill}">
                 <span>${escapeHtml(skill)}</span>
@@ -1360,7 +1495,7 @@ function toggleSkill(skill) {
 
 function resetToCandidateProfile() {
   const verifiedStack = [
-    'Kotlin', 'Jetpack Compose', 'Android Media3', 'React', 'Next.js', 
+    'Kotlin', 'Jetpack Compose', 'Android Media3', 'React', 'Next.js',
     'TypeScript', 'Node.js', 'Express', 'MySQL', 'Tailwind CSS', 'Junior / Entry'
   ];
   saveActiveSkills(verifiedStack);
@@ -1427,7 +1562,7 @@ function toggleAutoSync(checkbox) {
   autoSyncEnabled = checkbox.checked;
   localStorage.setItem('job_accel_auto_sync_enabled', String(autoSyncEnabled));
   persistSetting('auto_sync_enabled', autoSyncEnabled ? '1' : '0');
-  showToast(autoSyncEnabled ? 'Automatic job sync enabled. It runs while the app is open.' : 'Automatic job sync paused.');
+  showToast(autoSyncEnabled ? 'Automatic cloud sync enabled. It runs on the server schedule.' : 'Automatic job sync paused.');
 }
 
 // Calculate days since a given date string
@@ -1544,11 +1679,7 @@ function renderJobs() {
   }
 
   if (jobsList.length === 0) {
-    feed.innerHTML = headerHtml + `
-      <div class="state-empty">
-        <p>${currentViewMode === 'va' ? 'No Virtual Assistant jobs match your current search/date criteria.' : 'No job postings match the active filter criteria.'}</p>
-        <span class="sub-text">${currentViewMode === 'va' ? 'Try changing the date filter or clearing search keywords.' : 'Broaden your search or click "Sync Job Sites" to refresh opportunities.'}</span>
-      </div>`;
+    feed.innerHTML = headerHtml + renderEmptyStateHtml();
     return;
   }
 
@@ -1585,7 +1716,7 @@ function renderJobs() {
       <div class="job-card ${isSelected}" id="job-card-${idx}" onclick="selectCard(${idx})">
         <div class="job-main-block">
           <div class="job-headline">
-            <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer" 
+            <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer"
                class="job-title-link" onclick="event.stopPropagation()">
               ${escapeHtml(job.title)}
             </a>
@@ -1604,9 +1735,9 @@ function renderJobs() {
                   <div class="multi-platform-group" title="Available on ${sources.length} job boards">
                     <span class="multi-platform-label">Available on:</span>
                     ${sources.map(s => `
-                      <a href="${escapeHtml(safeJobUrl(s.url))}" target="_blank" rel="noopener noreferrer" 
-                         class="badge-platform badge-source-link multi-source-badge" 
-                         onclick="event.stopPropagation()" 
+                      <a href="${escapeHtml(safeJobUrl(s.url))}" target="_blank" rel="noopener noreferrer"
+                         class="badge-platform badge-source-link multi-source-badge"
+                         onclick="event.stopPropagation()"
                          title="Open on ${escapeHtml(s.platform)}">
                         ${escapeHtml(s.platform)} ↗
                       </a>
@@ -1616,9 +1747,9 @@ function renderJobs() {
               }
               const single = sources[0];
               return `
-                <a href="${escapeHtml(safeJobUrl(single.url || job.job_url))}" target="_blank" rel="noopener noreferrer" 
-                   class="badge-platform badge-source-link" 
-                   onclick="event.stopPropagation()" 
+                <a href="${escapeHtml(safeJobUrl(single.url || job.job_url))}" target="_blank" rel="noopener noreferrer"
+                   class="badge-platform badge-source-link"
+                   onclick="event.stopPropagation()"
                    title="Open on ${escapeHtml(single.platform || job.platform)}">
                   ${escapeHtml(single.platform || job.platform)} ↗
                 </a>
@@ -1631,7 +1762,13 @@ function renderJobs() {
             ${formatPostingDate(job.date_posted)}
           </div>
 
-          ${isAppliedView ? `
+          ${job.description ? `<details class="job-description" onclick="event.stopPropagation()">
+              <summary>Read saved job details</summary>
+              <p class="job-description-note">Source-provided text; some sites supply only a preview.</p>
+              <div class="job-description-body">${escapeHtml(job.description)}</div>
+            </details>` : ''}
+
+            ${isAppliedView ? `
             <div class="pipeline-card-controls" onclick="event.stopPropagation()">
               <div class="stage-select-wrapper">
                 <label class="stage-label-text">Stage:</label>
@@ -1643,37 +1780,40 @@ function renderJobs() {
               </div>
               <div class="followup-input-wrapper" title="Set follow-up reminder date">
                 <label class="stage-label-text">Follow Up:</label>
-                <input type="date" class="followup-date-input" 
-                       value="${escapeHtml(job.follow_up_date ? job.follow_up_date.slice(0, 10) : '')}" 
+                <input type="date" class="followup-date-input"
+                       value="${escapeHtml(job.follow_up_date ? job.follow_up_date.slice(0, 10) : '')}"
                        onchange="saveJobFollowUp(${job.id}, this.value)">
               </div>
               <div class="notes-input-wrapper">
-                <input type="text" class="notes-text-input" placeholder="Recruiter notes or assessment deadline..." 
-                       value="${escapeHtml(job.notes || '')}" onblur="saveJobNotes(${job.id}, this.value)" 
+                <input type="text" class="notes-text-input" placeholder="Recruiter notes or assessment deadline..."
+                       value="${escapeHtml(job.notes || '')}" onblur="saveJobNotes(${job.id}, this.value)"
                        onkeydown="if(event.key==='Enter')this.blur()">
+                <button type="button" id="note-save-${job.id}" class="note-save-state" aria-live="polite"
+                        ${getLocalStatusOverrides()[String(job.id)]?.save_state === 'failed' ? '' : 'disabled'}
+                        onclick="retryNoteSave(${job.id})">${getLocalStatusOverrides()[String(job.id)]?.save_state === 'failed' ? 'Failed - retry' : getLocalStatusOverrides()[String(job.id)] ? 'Pending' : 'Saved'}</button>
               </div>
             </div>
           ` : ''}
         </div>
 
         <div class="card-actions-cluster" onclick="event.stopPropagation()">
-          <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer" 
+          <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer"
              class="btn-card-apply" onclick="handleApplyClick(event, ${job.id})">
             <span>${isAppliedView ? 'Open' : 'Apply'}</span>
             ${ICONS.external}
           </a>
 
-          <button class="btn-icon-action ${job.status === 'applied' ? 'is-applied' : ''}" 
+          <button class="btn-icon-action ${job.status === 'applied' ? 'is-applied' : ''}"
                   title="Mark as Applied" onclick="updateJobStatus(${job.id}, 'applied')">
             ${ICONS.check}
           </button>
 
-          <button class="btn-icon-action ${job.status === 'saved' ? 'is-saved' : ''}" 
+          <button class="btn-icon-action ${job.status === 'saved' ? 'is-saved' : ''}"
                   title="Save Opportunity" onclick="updateJobStatus(${job.id}, 'saved')">
             ${ICONS.star}
           </button>
 
-          <button class="btn-icon-action action-dismiss" 
+          <button class="btn-icon-action action-dismiss"
                   title="Archive Opportunity" onclick="updateJobStatus(${job.id}, 'ignored')">
             ${ICONS.dismiss}
           </button>
@@ -1719,9 +1859,7 @@ function changeJobStage(jobId, stage) {
 function saveJobNotes(jobId, newNotes) {
   const job = jobsList.find(j => j.id === jobId);
   if (job && (job.notes || '') !== newNotes) {
-    updateJobStatus(jobId, null, newNotes).then(() => {
-      showToast('Application notes updated.');
-    });
+    updateJobStatus(jobId, null, newNotes);
   }
 }
 
@@ -1734,6 +1872,138 @@ function saveJobFollowUp(jobId, newDate) {
       showToast(newDate ? `Follow-up set for ${newDate}.` : 'Follow-up date cleared.');
     });
   }
+}
+
+// Interactive & Actionable Empty State
+function renderEmptyStateHtml() {
+  const isVa = currentViewMode === 'va';
+  const activeFilters = [];
+
+  if (searchQuery && searchQuery.trim()) {
+    activeFilters.push({ label: `Search: "${searchQuery}"`, action: 'clearSearchInput()' });
+  }
+  if (currentRole && currentRole !== 'All') {
+    activeFilters.push({ label: `Role: ${currentRole}`, action: `setRole('All', document.querySelector('#role-group button[data-val="All"]'))` });
+  }
+  if (selectedLevels && !selectedLevels.has('All') && selectedLevels.size > 0) {
+    const levelsStr = Array.from(selectedLevels).join(', ');
+    activeFilters.push({ label: `Seniority: ${levelsStr}`, action: `setLevel('All', document.querySelector('#level-group button[data-val="All"]'))` });
+  }
+  if (currentDateFilter && currentDateFilter !== '15days' && currentDateFilter !== 'all') {
+    const dateLabels = { today: 'Today', '3days': 'Past 3 days', '7days': 'Past 7 days' };
+    activeFilters.push({ label: `Date: ${dateLabels[currentDateFilter] || currentDateFilter}`, action: `setDateFilter('15days', document.querySelector('#date-group button[data-val="15days"]'))` });
+  }
+  if (currentPlatform && currentPlatform !== 'All') {
+    activeFilters.push({ label: `Site: ${currentPlatform}`, action: `setPlatform('All', document.getElementById('platform-select'))` });
+  }
+  if (filterBySkillsOnly) {
+    activeFilters.push({ label: 'Match Stack Only', action: 'toggleFilterBySkills()' });
+  }
+
+  const chipsHtml = activeFilters.map(f => `
+    <button type="button" class="empty-filter-pill" onclick="${f.action}" title="Click to remove this filter">
+      <span>${escapeHtml(f.label)}</span>
+      <span class="pill-remove">&times;</span>
+    </button>
+  `).join('');
+
+  return `
+    <div class="state-empty enhanced-empty-state">
+      <div class="empty-state-icon-wrap">
+        <svg class="empty-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          <line x1="8" y1="11" x2="14" y2="11"/>
+        </svg>
+      </div>
+      <h3 class="empty-state-title">${isVa ? 'No Virtual Assistant opportunities match active filters' : 'No job opportunities match active criteria'}</h3>
+      <p class="empty-state-desc">
+        ${activeFilters.length > 0
+          ? 'Your active filters narrowed the view to 0 results. You can remove individual filters below or reset everything to explore the full inventory.'
+          : 'No postings are currently indexed for this view. Click "Sync Job Sites" to scan connected boards.'}
+      </p>
+
+      ${activeFilters.length > 0 ? `
+        <div class="empty-active-filters">
+          <span class="empty-filters-label">Active constraints</span>
+          <div class="empty-pills-row">
+            ${chipsHtml}
+          </div>
+        </div>
+      ` : ''}
+
+      <div class="empty-actions-row">
+        <button type="button" class="btn-primary" onclick="resetAllFeedFilters()">
+          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          <span>Reset All Filters</span>
+        </button>
+        ${currentDateFilter !== '15days' && currentDateFilter !== 'all' ? `
+          <button type="button" class="btn-secondary" onclick="setDateFilter('15days', document.querySelector('#date-group button[data-val=\\'15days\\']'))">
+            <span>Expand to Past 15d</span>
+          </button>
+        ` : ''}
+        ${selectedLevels && !selectedLevels.has('All') ? `
+          <button type="button" class="btn-secondary" onclick="setLevel('All', document.querySelector('#level-group button[data-val=\\'All\\']'))">
+            <span>All Experience Levels</span>
+          </button>
+        ` : ''}
+        <button type="button" class="btn-secondary" onclick="triggerSync()">
+          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+            <path d="M16 21h5v-5"/>
+          </svg>
+          <span>Sync Job Sites</span>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function resetAllFeedFilters() {
+  searchQuery = '';
+  const searchInput = document.getElementById('search-input');
+  if (searchInput) searchInput.value = '';
+  const clearBtn = document.getElementById('clear-search-btn');
+  if (clearBtn) clearBtn.style.display = 'none';
+
+  currentRole = 'All';
+  document.querySelectorAll('#role-group .filter-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.val === 'All');
+  });
+
+  selectedLevels.clear();
+  selectedLevels.add('All');
+  document.querySelectorAll('#level-group .filter-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.val === 'All');
+  });
+
+  currentDateFilter = '15days';
+  document.querySelectorAll('#date-group .filter-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.val === '15days');
+  });
+
+  currentPlatform = 'All';
+  const platformSelect = document.getElementById('platform-select');
+  if (platformSelect) platformSelect.value = 'All';
+
+  if (filterBySkillsOnly) {
+    filterBySkillsOnly = false;
+    const btn = document.getElementById('filter-by-skills-btn');
+    if (btn) btn.classList.remove('active');
+  }
+
+  rememberViewFilters();
+  persistSetting('date_filter', '15days');
+  persistSetting('level', 'All');
+  persistSetting('role', 'All');
+  persistSetting('platform', 'All');
+  loadJobs();
+  showToast('Filters reset to full 15-day inventory.', 'info');
 }
 
 // Update status via API (Optimistic in-place update with Local-First persistence & auto-retry)
@@ -1890,34 +2160,18 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
     targetJob.follow_up_date = followUp;
   }
 
-  // 3. Background Persistence to Server with Resilient Retries
-  try {
-    const payload = {};
-    if (status !== null) {
-      payload.status = status;
-    }
-    if (notes !== null) payload.notes = notes;
-    if (stage !== null) payload.stage = stage;
-    if (followUp !== null) payload.follow_up_date = followUp;
+  renderNoteSaveState(jobId);
+  const saved = await flushJobOverride(jobId, token);
+  if (saved && token === currentSessionToken) loadStats();
+}
 
-    const res = await resilientFetchWithRetry(`/api/jobs/${jobId}/status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    }, 3);
-
-    if (res && res.ok && (await res.json()).success) {
-      removeLocalStatusOverride(jobId, storageKey);
-      loadStats(); // Silently update telemetry badges without reloading feed
-    } else if (res && res.status === 401) {
-      showToast('⚠️ Session timed out while idle. Please log in again.');
-      currentUserRole = null;
-      updateAuthUI();
-      showAuthGate();
-    }
-  } catch (err) {
-    console.warn('Network sync warning (local storage is preserved):', err);
-  }
+async function retryNoteSave(jobId) {
+  const overrides = getLocalStatusOverrides();
+  if (!overrides[String(jobId)]) return;
+  overrides[String(jobId)].save_state = 'pending';
+  localStorage.setItem(overrideStorageKey(), JSON.stringify(overrides));
+  renderNoteSaveState(jobId);
+  await flushJobOverride(jobId);
 }
 
 let syncPollTimer = null;
@@ -1944,36 +2198,60 @@ async function triggerSync() {
   if (spinner) spinner.classList.add('is-spinning');
   if (txt) txt.textContent = 'Syncing...';
 
+  const syncToken = currentSessionToken;
+  let sessionAdded = 0;
   try {
-    const res = await fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keywords, background: true })
-    });
-    let data;
-    try {
-      data = await res.json();
-    } catch (_) {
-      throw new Error(`Sync failed (${res.status}): the server did not return a valid response.`);
-    }
+    while (syncToken === currentSessionToken && currentUserRole === 'admin') {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keywords, background: true })
+      });
+      let data;
+      try {
+        data = await res.json();
+      } catch (_) {
+        throw new Error(`Sync failed (${res.status}): the server did not return a valid response.`);
+      }
 
-    if (!res.ok || data.status === 'error') {
-      throw new Error(data.error || `Sync failed (${res.status})`);
-    }
-    if (data.status === 'ok') {
-      stopSyncIndicator();
-      showToast(`Sync complete! +${data.added || 0} new jobs.`);
-      await loadStats();
-      await loadJobs();
+      if (!res.ok || data.status === 'error') {
+        throw new Error(data.error || `Sync failed (${res.status})`);
+      }
+      if (syncToken !== currentSessionToken || currentUserRole !== 'admin') return;
+      if (data.cloud_run && ['queued', 'running', 'waiting'].includes(data.cloud_run.status)) {
+        showToast('Cloud sync accepted. You can close this tab or laptop.');
+        startSyncPoller();
+        return;
+      }
+      if (data.progress) {
+        sessionAdded += data.added || 0;
+        if (typeof renderTelemetry === 'function') renderTelemetry(data);
+        await loadStats();
+        await loadJobs();
+        if (data.progress.has_more && data.progress.can_continue === true) {
+          if (txt) txt.textContent = 'Continuing sync...';
+          continue;
+        }
+        stopSyncIndicator();
+        showToast(batchSyncMessage({ ...data, added: sessionAdded }));
+        return;
+      }
+      if (data.status === 'ok') {
+        stopSyncIndicator();
+        showToast(`Sync complete! +${data.added || 0} new jobs.`);
+        await loadStats();
+        await loadJobs();
+        return;
+      }
+      if (data.status === 'already_syncing') {
+        showToast('Job site sync is already running in the background.');
+      } else {
+        showToast('Job site sync started in the background.');
+      }
+
+      startSyncPoller();
       return;
     }
-    if (data.status === 'already_syncing') {
-      showToast('Job site sync is already running in the background.');
-    } else {
-      showToast('Job site sync started in the background.');
-    }
-
-    startSyncPoller();
   } catch (err) {
     showToast(`Could not trigger sync: ${err.message}`);
     stopSyncIndicator();
@@ -1984,12 +2262,11 @@ function startSyncPoller() {
   if (syncPollTimer) clearInterval(syncPollTimer);
   syncPollTimer = setInterval(async () => {
     try {
-      const res = await fetch('/api/sync/status');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not read sync status');
+      const data = await fetchSyncTelemetry();
+      if (!data) return;
 
       // Live update telemetry modal if open
-      const modal = document.getElementById('sync-log-modal');
+      const modal = document.getElementById('sync-activity');
       if (modal && modal.style.display !== 'none' && typeof renderTelemetry === 'function') {
         renderTelemetry(data);
       }
@@ -2004,7 +2281,9 @@ function startSyncPoller() {
         }
         const added = (data.last_result && data.last_result.added !== undefined) ? data.last_result.added : 0;
         const skipped = (data.last_result && data.last_result.skipped !== undefined) ? data.last_result.skipped : 0;
-        if (data.last_result?.status === 'partial') {
+        if (data.last_result?.progress) {
+          showToast(batchSyncMessage(data.last_result));
+        } else if (data.last_result?.status === 'partial') {
           showToast(`Sync finished: ${added} new jobs found. Some sites were unavailable; check Logs.`);
         } else {
           showToast(`Sync complete: ${added} new jobs found, ${skipped} existing listings updated.`);
@@ -2021,6 +2300,13 @@ function startSyncPoller() {
       stopSyncIndicator();
     }
   }, 1800);
+}
+
+function batchSyncMessage(result) {
+  const progress = result.progress;
+  const coverage = `${progress.completed_searches}/${progress.total_searches} keyword-board searches saved`;
+  const next = !progress.has_more ? 'Current search cycle complete.' : progress.can_continue === false ? 'Remaining boards are paused by cooldowns; sync again after they clear.' : 'Next run continues; board cooldowns still apply.';
+  return `Batch saved: +${result.added || 0} jobs. ${coverage}. ${next}${result.status === 'partial' ? ' Some searches need retry; check Logs.' : ''}`;
 }
 
 function stopSyncIndicator() {
@@ -2104,20 +2390,13 @@ function setStatus(status, elem) {
     switchToVAMode(elem);
     return;
   }
+  rememberViewFilters();
   currentViewMode = 'tech';
   currentStatus = status;
+  restoreViewFilters();
   persistSetting('status', status);
   document.querySelectorAll('.status-nav .status-tab').forEach(t => t.classList.remove('active'));
   if (elem) elem.classList.add('active');
-
-  // When switching to pipeline, default date filter to 'all' so no applied jobs are hidden
-  if (status === 'applied' && currentDateFilter !== 'all') {
-    currentDateFilter = 'all';
-    persistSetting('date_filter', 'all');
-    document.querySelectorAll('#date-group .filter-chip').forEach(chip => {
-      chip.classList.toggle('active', chip.getAttribute('data-val') === 'all');
-    });
-  }
 
   syncFilterControlsUI();
   loadJobs();
@@ -2258,6 +2537,7 @@ function clearSearchInput() {
   if (input) {
     input.value = '';
     searchQuery = '';
+    rememberViewFilters();
     updateClearSearchBtn();
     input.focus();
     loadJobs();
@@ -2269,6 +2549,7 @@ function handleSearchInput() {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
     searchQuery = document.getElementById('search-input').value.trim();
+    rememberViewFilters();
     loadJobs();
   }, 220);
 }
@@ -2337,32 +2618,49 @@ const MONITORED_BOARDS = [
   { key: 'HelloWork', label: 'HelloWork', domain: 'hellowork.com', type: 'JobSpy' }
 ];
 
+let telemetryTimer = null;
+let telemetryRequest = null;
+
 function toggleSyncLogModal() {
-  const modal = document.getElementById('sync-log-modal');
-  if (!modal) return;
-  const isHidden = modal.style.display === 'none' || !modal.style.display;
-  modal.style.display = isHidden ? 'flex' : 'none';
-  if (isHidden) {
-    fetchSyncTelemetry();
+  const activitySec = document.getElementById('sync-activity');
+  if (activitySec && activitySec.classList.contains('is-collapsed')) {
+    toggleTelemetryCollapse(false);
   }
+  activitySec?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  fetchSyncTelemetry();
 }
 
-function handleModalBackdropClick(event) {
-  if (event.target && event.target.id === 'sync-log-modal') {
-    toggleSyncLogModal();
-  }
+function startTelemetryPolling() {
+  clearTimeout(telemetryTimer);
+  if (!currentUserRole || document.visibilityState === 'hidden') return;
+  fetchSyncTelemetry().then(data => {
+    if (currentUserRole && document.visibilityState !== 'hidden') {
+      telemetryTimer = setTimeout(startTelemetryPolling, data?.is_syncing ? 2000 : 10000);
+    }
+  });
 }
 
 async function fetchSyncTelemetry() {
-  try {
-    const res = await fetch('/api/sync/status');
-    const data = await res.json();
-    renderTelemetry(data);
-  } catch (err) {
-    console.error('Failed to fetch sync telemetry:', err);
-    const stream = document.getElementById('telemetry-log-stream');
-    if (stream) stream.textContent = `Error fetching telemetry: ${err.message}`;
-  }
+  if (!currentUserRole) return;
+  if (telemetryRequest) return telemetryRequest;
+  const token = currentSessionToken;
+  telemetryRequest = (async () => {
+    const hint = document.getElementById('telemetry-update-status');
+    try {
+      const res = await fetch('/api/sync/status', { signal: AbortSignal.timeout(10000) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not read sync status');
+      if (token !== currentSessionToken) return;
+      renderTelemetry(data);
+      if (hint) hint.textContent = `Updated ${new Date().toLocaleTimeString()} · Refreshes every ${data.is_syncing ? '2' : '10'} seconds`;
+      return data;
+    } catch (err) {
+      if (token === currentSessionToken && hint) hint.textContent = `Live updates unavailable: ${err.message}. Retrying automatically.`;
+    } finally {
+      telemetryRequest = null;
+    }
+  })();
+  return telemetryRequest;
 }
 
 function renderTelemetry(data) {
@@ -2371,7 +2669,13 @@ function renderTelemetry(data) {
   // 1. Status overview bar
   const syncStateEl = document.getElementById('telemetry-sync-state');
   if (syncStateEl) {
-    syncStateEl.textContent = data.is_syncing ? 'Scanning...' : 'Idle / Standby';
+    const progress = data.progress || data.last_result?.progress;
+    syncStateEl.textContent = progress ? `${progress.completed_searches}/${progress.total_searches} searches saved${data.is_syncing ? ' · Syncing' : ''}` : data.is_syncing ? 'Scanning...' : 'Idle / Standby';
+    if (data.cloud_run?.status === 'waiting') {
+      syncStateEl.textContent += ` · Cloud retry ${new Date(data.cloud_run.next_at * 1000).toLocaleTimeString()}`;
+    } else if (data.cloud_run?.status === 'queued') {
+      syncStateEl.textContent += ' · Queued in cloud';
+    }
     syncStateEl.style.color = data.is_syncing ? 'var(--accent-blue)' : '#3fb950';
   }
 
@@ -2406,25 +2710,28 @@ function renderTelemetry(data) {
       const boardInfo = telem[b.key] || telem[b.label] || {};
       const count = platformCounts[b.key] !== undefined ? platformCounts[b.key] : (boardInfo.count || 0);
       const isRunning = data.is_syncing;
-      
+
       let badgeClass = 'status-idle';
       let badgeLabel = 'STANDBY';
-      if (isRunning) {
+      if (boardInfo.status === 'error' || boardInfo.error) {
+        badgeClass = 'status-error';
+        badgeLabel = 'RETRY';
+      } else if (boardInfo.status === 'cooldown') {
+        badgeLabel = 'COOLDOWN';
+      } else if (isRunning && boardInfo.status === 'fetching') {
         badgeClass = 'status-running';
         badgeLabel = 'SCANNING';
       } else if (boardInfo.status === 'active' || count > 0) {
         badgeClass = 'status-success';
         badgeLabel = `${count} JOBS`;
-      } else if (boardInfo.status === 'error') {
-        badgeClass = 'status-error';
-        badgeLabel = 'RETRY';
       }
+
 
       return `
         <div class="telemetry-board-card">
           <div class="board-header-row">
             <span class="board-name" title="${escapeHtml(b.domain)}">${escapeHtml(b.label)}</span>
-            <span class="board-status-badge ${badgeClass}">${badgeLabel}</span>
+            <span class="board-status-badge ${badgeClass}" title="${escapeHtml(boardInfo.error || '')}">${badgeLabel}</span>
           </div>
           <div class="board-meta-row">
             <span>${escapeHtml(b.type)}</span>
@@ -2463,6 +2770,22 @@ function copySyncLogs() {
   });
 }
 
+function toggleTelemetryCollapse(forceState) {
+  const activitySec = document.getElementById('sync-activity');
+  const label = document.getElementById('telemetry-toggle-text');
+  if (!activitySec) return;
+
+  const isCurrentlyCollapsed = activitySec.classList.contains('is-collapsed');
+  const willCollapse = typeof forceState === 'boolean' ? forceState : !isCurrentlyCollapsed;
+
+  activitySec.classList.toggle('is-collapsed', willCollapse);
+  if (label) label.textContent = willCollapse ? 'Expand' : 'Minimize';
+
+  try {
+    localStorage.setItem('job_accel_telemetry_collapsed', willCollapse ? '1' : '0');
+  } catch (e) {}
+}
+
 // --------------------------------------------------------------------------
 // VIRTUAL ASSISTANT & REMOTE FREELANCE HUB
 // --------------------------------------------------------------------------
@@ -2478,7 +2801,9 @@ function toggleVaHub() {
 }
 
 function switchToVAMode(elem) {
+  rememberViewFilters();
   currentViewMode = 'va';
+  restoreViewFilters();
   document.querySelectorAll('.status-nav .status-tab').forEach(t => t.classList.remove('active'));
   const vaTab = elem || document.getElementById('va-feed-tab');
   if (vaTab) vaTab.classList.add('active');
@@ -2489,8 +2814,6 @@ function switchToVAMode(elem) {
 }
 
 function switchToTechMode(targetStatus = 'new') {
-  currentViewMode = 'tech';
-  currentStatus = targetStatus;
   const tab = document.querySelector(`.status-nav [data-val="${targetStatus}"]`);
   setStatus(targetStatus, tab);
 }
@@ -2520,6 +2843,187 @@ async function triggerEmailDigest() {
     }
   } catch (err) {
     showToast(`Digest error: ${err.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+
+// --------------------------------------------------------------------------
+// RESIDENTIAL PROXY & HYBRID ROUTING MANAGER
+// --------------------------------------------------------------------------
+const DEFAULT_WEBSHARE_PROXIES = `45.38.107.97:6014:qbpwgfwy:5h0usxx7tj71
+64.137.96.74:6641:qbpwgfwy:5h0usxx7tj71
+198.23.243.226:6361:qbpwgfwy:5h0usxx7tj71
+38.154.185.97:6370:qbpwgfwy:5h0usxx7tj71
+84.247.60.125:6095:qbpwgfwy:5h0usxx7tj71
+191.96.254.138:6185:qbpwgfwy:5h0usxx7tj71
+198.46.161.42:5092:qbpwgfwy:5h0usxx7tj71
+64.137.10.153:5803:qbpwgfwy:5h0usxx7tj71
+104.164.49.38:7693:qbpwgfwy:5h0usxx7tj71
+23.26.71.145:5628:qbpwgfwy:5h0usxx7tj71`;
+
+function toggleProxyModal() {
+  const modal = document.getElementById('proxy-modal');
+  if (!modal) return;
+  const isHidden = modal.style.display === 'none';
+  modal.style.display = isHidden ? 'flex' : 'none';
+  if (isHidden) {
+    loadProxyStatus();
+  }
+}
+
+function handleProxyOverlayClick(event) {
+  if (event.target === document.getElementById('proxy-modal')) {
+    toggleProxyModal();
+  }
+}
+
+async function loadProxyStatus() {
+  try {
+    const res = await fetch('/api/proxy/status');
+    if (!res.ok) return;
+    const data = await res.json();
+    const modeSelect = document.getElementById('proxy-mode-select');
+    const listInput = document.getElementById('proxy-list-input');
+    const badge = document.getElementById('proxy-modal-badge');
+    const pill = document.getElementById('proxy-status-pill');
+
+    if (modeSelect) modeSelect.value = data.mode || 'hybrid';
+    if (listInput) {
+      const activeRaw = (data.raw && data.raw.trim()) ? data.raw : DEFAULT_WEBSHARE_PROXIES;
+      listInput.value = activeRaw;
+    }
+    if (badge) badge.textContent = `${data.count || 0} Configured`;
+    if (pill) {
+      pill.textContent = (data.mode || 'hybrid').toUpperCase();
+      pill.className = `proxy-status-pill ${data.mode || 'hybrid'}`;
+    }
+    updateProxyHint(data.mode || 'hybrid');
+  } catch (err) {
+    console.warn('Could not load proxy status:', err);
+  }
+}
+
+function onProxyModeChange() {
+  const select = document.getElementById('proxy-mode-select');
+  if (select) updateProxyHint(select.value);
+}
+
+function updateProxyHint(mode) {
+  const hint = document.getElementById('proxy-mode-hint');
+  if (!hint) return;
+  if (mode === 'hybrid') {
+    hint.textContent = 'Hybrid mode automatically routes requests through residential proxies on Vercel Cloud to prevent anti-bot blocks, but turns them OFF when running on your laptop to save bandwidth.';
+  } else if (mode === 'always') {
+    hint.textContent = 'Always Active routes all scraping requests through the residential proxy pool regardless of environment.';
+  } else {
+    hint.textContent = 'Disabled turns off all proxies. Requests will connect directly from your current network.';
+  }
+}
+
+function resetToDefaultProxies() {
+  const listInput = document.getElementById('proxy-list-input');
+  if (listInput) {
+    listInput.value = DEFAULT_WEBSHARE_PROXIES;
+    showToast('Reset to verified Webshare 10-proxy pool.', 'info');
+  }
+}
+
+async function runProxyLiveTest() {
+  const listInput = document.getElementById('proxy-list-input');
+  const resultsGrid = document.getElementById('proxy-test-results');
+  const btn = document.getElementById('btn-test-proxies');
+  const btnText = document.getElementById('btn-test-proxies-text');
+
+  if (!resultsGrid) return;
+  const rawText = listInput ? listInput.value.trim() : '';
+  if (!rawText) {
+    resultsGrid.innerHTML = '<div class="test-empty-state" style="color:#ef4444;">Please enter at least one proxy before testing.</div>';
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  if (btnText) btnText.textContent = 'Testing...';
+  resultsGrid.innerHTML = '<div class="test-empty-state">Pinging proxy nodes across global regions...</div>';
+
+  try {
+    const res = await fetch('/api/proxy/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proxies: rawText })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Test request failed');
+
+    const results = data.results || [];
+    if (!results.length) {
+      resultsGrid.innerHTML = '<div class="test-empty-state">No valid proxies tested.</div>';
+      return;
+    }
+
+    resultsGrid.innerHTML = results.map(r => {
+      const isOk = r.status === 'ok';
+      return `
+        <div class="proxy-result-chip ${isOk ? 'ok' : 'error'}">
+          <div class="chip-info">
+            <span class="chip-proxy">${escapeHtml(r.proxy || '')}</span>
+            <span class="chip-meta" style="color:var(--text-secondary); font-size:10px; display:block;">
+              ${isOk ? `${escapeHtml(r.country || '')} (${escapeHtml(r.city || '')}) ? ${r.latency_ms}ms` : escapeHtml(r.error || 'Failed')}
+            </span>
+          </div>
+          <span class="proxy-result-status ${isOk ? 'ok' : 'error'}">
+            ${isOk ? '? OK' : '? FAIL'}
+          </span>
+        </div>
+      `;
+    }).join('');
+
+    const okCount = results.filter(r => r.status === 'ok').length;
+    showToast(`Tested ${results.length} proxies: ${okCount} working.`, okCount > 0 ? 'success' : 'error');
+  } catch (err) {
+    resultsGrid.innerHTML = `<div class="test-empty-state" style="color:#ef4444;">Test error: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+    if (btnText) btnText.textContent = 'Test Proxies Live';
+  }
+}
+
+async function saveProxyConfiguration() {
+  const modeSelect = document.getElementById('proxy-mode-select');
+  const listInput = document.getElementById('proxy-list-input');
+  const feedback = document.getElementById('proxy-save-feedback');
+  const btn = document.getElementById('btn-save-proxy-config');
+
+  const mode = modeSelect ? modeSelect.value : 'hybrid';
+  const rawList = listInput ? listInput.value.trim() : '';
+
+  if (btn) btn.disabled = true;
+  if (feedback) feedback.textContent = 'Saving...';
+
+  try {
+    persistSetting('proxy_mode', mode);
+    persistSetting('proxy_list', rawList);
+
+    const pill = document.getElementById('proxy-status-pill');
+    if (pill) {
+      pill.textContent = mode.toUpperCase();
+      pill.className = `proxy-status-pill ${mode}`;
+    }
+
+    const badge = document.getElementById('proxy-modal-badge');
+    const lines = rawList.split('\n').filter(l => l.trim() && !l.startsWith('#')).length;
+    if (badge) badge.textContent = `${lines} Configured`;
+
+    if (feedback) feedback.textContent = 'Settings saved successfully';
+    showToast('Proxy settings saved & synchronized.', 'success');
+    setTimeout(() => {
+      if (feedback) feedback.textContent = '';
+      toggleProxyModal();
+    }, 1200);
+  } catch (err) {
+    if (feedback) feedback.textContent = `Error: ${err.message}`;
+    showToast(`Failed to save proxies: ${err.message}`, 'error');
   } finally {
     if (btn) btn.disabled = false;
   }

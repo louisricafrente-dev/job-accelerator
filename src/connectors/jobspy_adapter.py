@@ -11,19 +11,29 @@ class JobSpyAdapter(BaseConnector):
         self.last_error = ""
 
     def fetch(self, query: str = "software engineer", location: str = "Philippines") -> List[Job]:
+        self.last_error = ""
         jobs: List[Job] = []
         try:
             import importlib
             jobspy = importlib.import_module("jobspy")
             scrape_jobs = getattr(jobspy, "scrape_jobs")
+            try:
+                from src.proxy_manager import get_proxy_pool
+                active_proxies = get_proxy_pool()
+            except Exception:
+                active_proxies = []
             df = scrape_jobs(
                 site_name=[self.site_name],
                 search_term=query,
                 location=location,
                 results_wanted=35,
                 country_indeed="philippines" if self.site_name in ("indeed", "glassdoor") else None,
-                hours_old=360  # Strict 15 days (15 * 24 hours)
+                hours_old=360,  # Strict 15 days (15 * 24 hours)
+                proxies=active_proxies if active_proxies else None
             )
+            errors = getattr(df, "attrs", {}).get("errors")
+            if errors:
+                self.last_error = str(errors)
             import pandas as pd
             for _, row in df.iterrows():
                 title = str(row.get("title", "")).strip()
@@ -33,7 +43,9 @@ class JobSpyAdapter(BaseConnector):
                     continue
                 if not url or url.lower() in ("nan", "none", "null"):
                     continue
-                if not is_relevant_opportunity(title, ""):
+                raw_description = row.get("description")
+                description = "" if pd.isna(raw_description) else str(raw_description).strip()
+                if not is_relevant_opportunity(title, description, allow_va_training=True):
                     continue
                 if company.lower() in ("nan", "none", "null", ""):
                     company = "Direct Employer"
@@ -55,7 +67,8 @@ class JobSpyAdapter(BaseConnector):
                     salary=salary,
                     role_category=classify_role(title),
                     experience_level=classify_experience_level(title),
-                    date_posted=date_str
+                    date_posted=date_str,
+                    description=description
                 ))
         except Exception as e:
             self.last_error = str(e)

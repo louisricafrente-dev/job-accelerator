@@ -1,3 +1,4 @@
+import time
 import os
 import json
 import uuid
@@ -5,7 +6,7 @@ import hashlib
 import hmac
 import bottle
 from src.database import (
-    get_jobs, update_job_status, get_stats, export_jobs_csv, 
+    get_jobs, update_job_status, get_stats, export_jobs_csv,
     get_user_setting, set_user_setting, get_all_user_settings
 )
 from src.aggregator import Aggregator
@@ -16,14 +17,14 @@ from src.auth import (
     admin_login_retry_after, record_admin_login_failure, clear_admin_login_failures
 )
 
-def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
+def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False) -> bottle.Bottle:
     app = bottle.Bottle()
     aggregator = Aggregator(db_path=db_path)
 
     # Pre-initialize master admin TOTP secret so it exists in database
     get_or_create_admin_totp_secret(db_path)
 
-    public_settings = {"target_stack", "filter_skills_only", "has_salary_only", "remote_only", "hide_senior", "date_filter", "role", "experience_levels", "status", "platform", "va_training_enabled", "auto_sync_enabled"}
+    public_settings = {"view_filters", "target_stack", "filter_skills_only", "has_salary_only", "remote_only", "hide_senior", "date_filter", "role", "experience_levels", "status", "platform", "va_training_enabled", "auto_sync_enabled", "proxy_list", "proxy_mode"}
 
     @app.error(400)
     def bad_request(error):
@@ -61,7 +62,10 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             token = bottle.request.get_cookie("job_accel_session")
         if not token:
             return None
-        return verify_session_token(token)
+        session = verify_session_token(token)
+        if session and session.get("role") == "guest" and not guest_access_enabled:
+            return None
+        return session
 
     def resolve_target_db() -> str:
         session = get_current_session()
@@ -77,9 +81,9 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             bottle.response.status = 401
             bottle.response.content_type = "application/json"
             return json.dumps({
-                "error": "Unauthorized", 
+                "error": "Unauthorized",
                 "auth_required": True,
-                "message": "Authentication required. Log in with Google Authenticator or continue as Guest."
+                "message": "Authentication required. Log in with your admin credentials."
             })
         return None
 
@@ -161,7 +165,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
 
         # 1. Cryptographic password verification (admin / password)
         is_valid = _verify_admin_credentials(username or "admin", password or code)
-        
+
         # 2. Dual fallback: Google Authenticator TOTP verification
         if not is_valid:
             candidate_code = code or password
@@ -175,12 +179,12 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             bottle.response.status = 401
             bottle.response.content_type = "application/json"
             return json.dumps({
-                "success": False, 
+                "success": False,
                 "error": "Invalid username or password."
             })
 
         clear_admin_login_failures(db_path, client_id)
-            
+
         # 1-year persistent session token
         token = create_session_token("admin", "louis_admin", max_age=365 * 86400)
         bottle.response.set_cookie("job_accel_session", token, path="/", max_age=365 * 86400, httponly=True, secure=bool(os.environ.get("VERCEL")), samesite="Strict")
@@ -197,6 +201,9 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
     def api_login_guest():
         if bottle.request.method == "OPTIONS":
             return ""
+        if not guest_access_enabled:
+            bottle.response.status = 403
+            return {"success": False, "error": "Guest access is temporarily unavailable."}
         guest_id = f"guest_{uuid.uuid4().hex[:10]}"
         # Ensure fresh isolated guest database clone is created
         resolve_guest_db_path(guest_id, db_path)
@@ -220,7 +227,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             bottle.response.status = 400
             bottle.response.content_type = "application/json"
             return json.dumps({"success": False, "error": "Sandbox reset is only available for guest sessions."})
-            
+
         guest_id = session.get("id", "guest_sandbox")
         reset_guest_db(guest_id, db_path)
         bottle.response.content_type = "application/json"
@@ -365,6 +372,9 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             data = {}
         session = get_current_session()
         is_admin = session and session.get("role") == "admin"
+        revisions = data.get("__revisions", {})
+        if not isinstance(revisions, dict) or any(type(v) is not int or not 0 <= v <= 9007199254740991 for v in revisions.values()):
+            bottle.abort(400, "Invalid setting revisions")
         for k, v in data.items():
             if k not in public_settings:
                 continue
@@ -374,7 +384,7 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
             if str(k) in ("admin_totp_secret", "admin_password", "smtp_password", "ADMIN_TOTP_SECRET") and not is_admin:
                 continue
             val_str = json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v)
-            set_user_setting(target_db, str(k), val_str)
+            set_user_setting(target_db, str(k), val_str, revision=revisions.get(k))
             if not is_admin:
                 set_user_setting(db_path, f"guest:{session['id']}:setting:{k}", val_str)
         settings = {k: v for k, v in get_all_user_settings(target_db).items() if k in public_settings}
@@ -441,8 +451,14 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
                 "error": "Forbidden: Requires valid CRON_SECRET, Vercel Cron header, or Admin session."
             })
 
+        if get_user_setting(db_path, "auto_sync_enabled", "1").strip().lower() in ("0", "false"):
+            return {"status": "skipped", "reason": "Automatic sync is paused", "email_notification": None}
+
         try:
-            stats = aggregator.run_sync(force=True)
+            stats = aggregator.run_sync(force=True, budget_seconds=150)
+            if os.environ.get("VERCEL"):
+                from src.cloud_sync import start_run
+                stats["cloud_continuation"] = start_run(db_path, automatic=True)
             added = stats.get("added", 0)
             email_result = None
             if added > 0:
@@ -455,8 +471,14 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
                 except Exception as mail_err:
                     email_result = {"status": "error", "error": str(mail_err)}
             bottle.response.content_type = "application/json"
+            sync_status = stats.get("status", "error")
+            status = "success" if sync_status == "ok" else sync_status
+            if sync_status == "error":
+                bottle.response.status = 500
+            if email_result is not None and (email_result.get("success") is False or email_result.get("status") == "error") and status == "success":
+                status = "partial"
             return json.dumps({
-                "status": "success",
+                "status": status,
                 "sync_stats": stats,
                 "email_notification": email_result
             })
@@ -493,6 +515,11 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
         bottle.response.content_type = "application/json"
         telemetry = aggregator.get_telemetry()
         telemetry.setdefault("last_result", aggregator.last_sync_result)
+        from src.cloud_sync import read_run, public_run, ACTIVE
+        cloud_run = read_run(db_path)
+        telemetry["cloud_run"] = public_run(cloud_run)
+        if cloud_run.get("status") in ACTIVE and cloud_run.get("expires_at", 0) > time.time():
+            telemetry["is_syncing"] = True
         return json.dumps(telemetry)
 
     @app.route("/api/sync", method=["GET", "POST", "OPTIONS"])
@@ -534,6 +561,14 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
                 bottle.abort(400, "The selected keyword matrix must be at most 10000 characters")
             keywords = list(dict.fromkeys(k.strip() for k in keywords))
 
+        if os.environ.get("VERCEL"):
+            from src.cloud_sync import start_run
+            try:
+                return start_run(db_path, queries=keywords if keywords else None)
+            except Exception as exc:
+                bottle.response.status = 503
+                return {"status": "error", "error": str(exc)}
+
         if is_background and not os.environ.get("VERCEL"):
             started = aggregator.start_background_sync(queries=keywords if keywords else None, force=force)
             bottle.response.content_type = "application/json"
@@ -543,9 +578,55 @@ def create_app(db_path: str = "data/jobs.db") -> bottle.Bottle:
                 "message": "Background sync started." if started else "Sync already running in background."
             })
 
-        stats = aggregator.run_sync(queries=keywords if keywords else None, force=force)
+        stats = aggregator.run_sync(queries=keywords if keywords else None, force=force, budget_seconds=150 if os.environ.get("VERCEL") else None)
         bottle.response.content_type = "application/json"
         return json.dumps(stats)
+
+    @app.route("/api/proxy/status", method=["GET", "OPTIONS"])
+    def api_proxy_status():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
+        from src.proxy_manager import get_proxy_settings, is_proxy_active, format_proxy_for_display
+        config = get_proxy_settings(target_db)
+        bottle.response.content_type = "application/json"
+        return json.dumps({
+            "mode": config.get("mode", "hybrid"),
+            "active": is_proxy_active(target_db),
+            "count": len(config.get("proxies", [])),
+            "proxies": [format_proxy_for_display(p) for p in config.get("proxies", [])],
+            "raw": config.get("raw", "")
+        })
+
+    @app.route("/api/proxy/test", method=["POST", "OPTIONS"])
+    def api_proxy_test():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+        target_db = resolve_target_db()
+        try:
+            data = bottle.request.json or {}
+        except Exception:
+            data = {}
+        from src.proxy_manager import get_proxy_settings, test_single_proxy, parse_proxy_list
+        raw = str(data.get("proxies", "")).strip()
+        proxies_to_test = parse_proxy_list(raw) if raw else get_proxy_settings(target_db).get("proxies", [])
+
+        results = []
+        for p in proxies_to_test[:10]:
+            results.append(test_single_proxy(p, timeout=4))
+
+        bottle.response.content_type = "application/json"
+        return json.dumps({"status": "ok", "results": results})
+
+    @app.route("/api/health", method="GET")
+    def api_health():
+        return {"service": "job-accelerator", "status": "ok"}
 
     @app.route("/")
     def index():

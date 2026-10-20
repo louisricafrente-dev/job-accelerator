@@ -4,6 +4,18 @@
     "api/index.py": {
       "maxDuration": 300,
       "includeFiles": "{src,scripts,data}/**"
+    },
+    "api/queue_worker.py": {
+      "maxDuration": 300,
+      "includeFiles": "{src,scripts}/**",
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "job-sync",
+          "retryAfterSeconds": 60,
+          "maxConcurrency": 1
+        }
+      ]
     }
   },
   "crons": [

@@ -1,0 +1,12 @@
+# Production matrix observation - 20 October 2026
+
+Read-only inspection of the authenticated deployed application at https://job-accelerator.vercel.app/. Direct Turso access was unavailable because Vercel exports sensitive credentials as placeholders. The authenticated deployed GET /api/settings and GET /api/sync/status endpoints were used instead. No sync was triggered and no production settings or jobs were edited. The temporary environment export was deleted.
+
+- Production target_stack contains 295 entries, all unique after whitespace/case normalization. The previously inspected local SQLite matrix contains 254 entries and must not be used as the production source of truth.
+- Saved progress reports 105 of 4,130 keyword-board searches completed, has_more=true, is_syncing=false. This is about 2.54 percent of query searches, not percent of all available jobs.
+- Last stored batch reports partial, 518 fetched, 55 added, 370 skipped. Those counters are for that batch; progress is durable across batches.
+- JobStreet: cursor 2, retry [0,1], HTTP 403. Upwork: cursor 1, retry [0], HTTP 403. Bossjob: cursor 2, retry [0,1], HTTP 404. Other query-board cursors are predominantly 9 or 10. These historical stored errors do not prove the sources are still blocked at inspection time.
+- Stored progress lacks can_continue. The currently served /static/app.js requires progress.has_more AND progress.can_continue === true to request another batch. If a new sync returns the same progress schema, continuation will stop. The stored result may predate a backend update; a fresh sync response or inspection of deployed Python source is required to establish a current mismatch. Do not assert a confirmed deployed backend defect from this old snapshot alone.
+- Stored completion logs are generally separated by roughly two to three seconds across different boards. This suggests serialized ingestion/checkpoint overhead is worth measuring, but logs do not separate fetch, database, and checkpoint time, so they do not establish the bottleneck quantitatively.
+
+OR grouping remains an unimplemented hypothesis requiring source-specific search semantics and complete-pagination comparisons. It is not the sole optimization and does not resolve HTTP errors or continuation problems. Priority for further verification: fresh batch response/continuation compatibility, fetch-versus-save timing, and source connector errors, while retaining the full production matrix.

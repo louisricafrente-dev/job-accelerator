@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     tier INTEGER NOT NULL,
     job_url TEXT NOT NULL,
     salary TEXT,
+    description TEXT DEFAULT '',
     role_category TEXT NOT NULL,
     experience_level TEXT NOT NULL,
     date_posted TEXT,
@@ -275,7 +276,20 @@ def get_db_connection(db_path: str = "data/jobs.db", timeout: float = 25.0):
 
 def init_db(db_path: str = "data/jobs.db") -> None:
     if is_turso_active(db_path):
-        return  # Turso cloud schema is managed and persisted
+        conn = get_db_connection(db_path)
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "description" not in columns:
+                try:
+                    conn.execute("ALTER TABLE jobs ADD COLUMN description TEXT DEFAULT ''")
+                except Exception:
+                    # Another cold start may have completed the same additive migration.
+                    columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+                    if "description" not in columns:
+                        raise
+        finally:
+            conn.close()
+        return
     parent = os.path.dirname(db_path)
     if parent and not os.path.exists(parent):
         os.makedirs(parent, exist_ok=True)
@@ -288,6 +302,8 @@ def init_db(db_path: str = "data/jobs.db") -> None:
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(jobs);")
         existing_cols = {col[1] for col in cursor.fetchall()}
+        if "description" not in existing_cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN description TEXT DEFAULT ''")
         if "pipeline_stage" not in existing_cols:
             conn.execute("ALTER TABLE jobs ADD COLUMN pipeline_stage TEXT DEFAULT 'applied';")
         if "follow_up_date" not in existing_cols:
@@ -317,7 +333,9 @@ def init_db(db_path: str = "data/jobs.db") -> None:
     finally:
         conn.close()
 
-def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
+def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = None) -> Tuple[int, int]:
+    if not jobs:
+        return 0, 0
     conn = get_db_connection(db_path)
     conn.row_factory = sqlite3.Row
     added = 0
@@ -328,8 +346,11 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
         pending = []
         catalog = {}
         known_hashes = set()
-        if cloud:
-            for row in cursor.execute("SELECT * FROM jobs ORDER BY id DESC").fetchall():
+        if cloud and sync_cache is not None and sync_cache.get("db_path") == db_path and "catalog" in sync_cache:
+            catalog = sync_cache["catalog"]
+            known_hashes = sync_cache["known_hashes"]
+        elif cloud:
+            for row in cursor.execute("SELECT dedup_hash, company, title, location, platform, job_url, salary, description, date_posted, sources, status FROM jobs ORDER BY id DESC").fetchall():
                 item = dict(row)
                 norm_co = normalize_company(item["company"]) or item["company"].strip().lower()
                 norm_ti = normalize_title(item["title"]) or item["title"].strip().lower()
@@ -352,7 +373,7 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
             else:
                 cursor.execute(
                     """
-                    SELECT id, dedup_hash, platform, job_url, salary, date_posted, sources, status, location, company, title
+                    SELECT id, dedup_hash, platform, job_url, salary, description, date_posted, sources, status, location, company, title
                     FROM jobs
                     WHERE lower(trim(company)) = ? AND lower(trim(title)) = ?
                     ORDER BY id DESC;
@@ -363,7 +384,7 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
                 if not candidates:
                     cursor.execute(
                         """
-                        SELECT id, dedup_hash, platform, job_url, salary, date_posted, sources, status, location, company, title
+                        SELECT id, dedup_hash, platform, job_url, salary, description, date_posted, sources, status, location, company, title
                         FROM jobs
                         WHERE lower(trim(company)) LIKE ?
                         ORDER BY id DESC;
@@ -376,21 +397,23 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
                         if (normalize_company(r["company"]) or r["company"].strip().lower()) == canonical_co
                         and (normalize_title(r["title"]) or r["title"].strip().lower()) == canonical_title
                     ]
-            existing = next((row for row in candidates if clean_url(row["job_url"]) == clean_url(job.job_url)), None)
+            def sources_for(row):
+                try:
+                    sources = json.loads(row["sources"] or "[]")
+                    if not isinstance(sources, list):
+                        sources = []
+                except (ValueError, TypeError):
+                    sources = []
+                return [{"platform": row["platform"], "url": row["job_url"]}] + [source for source in sources if isinstance(source, dict)]
+
+            existing = next((row for row in candidates
+                             if any(clean_url(source.get("url", "")) == clean_url(job.job_url)
+                                    for source in sources_for(row))), None)
             if existing is None:
-                # Same-platform same-timeline check:
-                # If company, title, platform match and location is compatible AND timeline/date matches,
-                # treat as duplicate posting of the same requisition (e.g. redundant job IDs on JobStreet/LinkedIn).
                 existing = next((row for row in candidates
-                                 if row["platform"].lower() == job.platform.lower()
-                                 and is_compatible_location(row["location"], job.location)
-                                 and (row["date_posted"] or "") == (norm_date or "")), None)
-            if existing is None:
-                # Merge across boards (e.g. Indeed and Glassdoor, or Indeed and LinkedIn)
-                # when location is compatible:
-                existing = next((row for row in candidates
-                                 if row["platform"].lower() != job.platform.lower()
-                                 and is_compatible_location(row["location"], job.location)), None)
+                                 if is_compatible_location(row["location"], job.location)
+                                 and not any(source.get("platform", "").lower() == job.platform.lower()
+                                             for source in sources_for(row))), None)
             if existing:
                 # Aggregate source platform and link
                 try:
@@ -408,6 +431,8 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
                     sources_list.append({"platform": job.platform, "url": job.job_url})
 
                 new_salary = job.salary or existing["salary"] or ""
+                old_description = existing.get("description") or ""
+                new_description = job.description if len(job.description or "") > len(old_description) else old_description
 
                 # Check if incoming listing has a newer date or fresh date vs empty
                 existing_date = existing["date_posted"] or ""
@@ -434,24 +459,31 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
                     target_status = existing_status
                     skipped += 1
 
+                encoded_sources = json.dumps(sources_list)
+                if (encoded_sources == existing["sources"]
+                        and new_salary == (existing["salary"] or "")
+                        and new_date == existing_date
+                        and new_description == old_description):
+                    continue
+
                 write(
                     """
                     UPDATE jobs
-                    SET sources = ?, salary = ?, date_posted = ?,
+                    SET sources = ?, salary = ?, date_posted = ?, description = ?,
                         status = CASE WHEN status = 'ignored' AND ? THEN 'new' ELSE status END,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE dedup_hash = ?
                     """,
-                    (json.dumps(sources_list), new_salary, new_date, int(is_new_post), existing["dedup_hash"]),
+                    (encoded_sources, new_salary, new_date, new_description, int(is_new_post), existing["dedup_hash"]),
                 )
                 if cloud:
-                    existing.update(sources=json.dumps(sources_list), salary=new_salary, date_posted=new_date, status=target_status)
+                    existing.update(sources=encoded_sources, salary=new_salary, description=new_description, date_posted=new_date, status=target_status)
             else:
                 initial_sources = json.dumps([{"platform": job.platform, "url": job.job_url}])
                 write(
                     """
-                    INSERT INTO jobs (dedup_hash, title, company, location, platform, tier, job_url, salary, role_category, experience_level, date_posted, status, sources)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
+                    INSERT INTO jobs (dedup_hash, title, company, location, platform, tier, job_url, salary, role_category, experience_level, date_posted, status, sources, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)
                     ON CONFLICT(dedup_hash) DO NOTHING;
                     """,
                     (
@@ -467,6 +499,7 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
                         job.experience_level,
                         norm_date,
                         initial_sources,
+                        job.description or "",
                     ),
                 )
                 inserted = job.dedup_hash not in known_hashes if cloud else cursor.rowcount > 0
@@ -481,6 +514,12 @@ def insert_jobs(db_path: str, jobs: List[Job]) -> Tuple[int, int]:
             for start in range(0, len(pending), 50):
                 conn._client.batch(pending[start:start + 50])
         conn.commit()
+        if cloud and sync_cache is not None:
+            sync_cache.update(db_path=db_path, catalog=catalog, known_hashes=known_hashes)
+    except Exception:
+        if sync_cache is not None:
+            sync_cache.clear()
+        raise
     finally:
         conn.close()
     return added, skipped
@@ -739,30 +778,6 @@ def update_job_status(
         params.append(job_id)
         cursor = conn.execute(query, params)
 
-        # When marking saved, applied, or ignored, automatically sync sibling duplicates
-        # to ensure no duplicate listing lingers in the Inbox
-        if status in ("saved", "applied", "ignored") and cursor.rowcount > 0:
-            try:
-                cur2 = conn.execute("SELECT company, title, location FROM jobs WHERE id = ?", (job_id,))
-                target_row = cur2.fetchone()
-                if target_row:
-                    co, ti, loc = target_row[0], target_row[1], target_row[2]
-                    norm_co = normalize_company(co) or co.strip().lower()
-                    norm_ti = normalize_title(ti) or ti.strip().lower()
-
-                    cur_sibs = conn.execute("SELECT id, company, title, location FROM jobs WHERE id != ? AND status != ?", (job_id, status))
-                    sib_rows = cur_sibs.fetchall()
-                    sib_ids = []
-                    for s in sib_rows:
-                        s_co = normalize_company(s[1]) or s[1].strip().lower()
-                        s_ti = normalize_title(s[2]) or s[2].strip().lower()
-                        if s_co == norm_co and s_ti == norm_ti and is_compatible_location(loc, s[3]):
-                            sib_ids.append(s[0])
-                    for sid in sib_ids:
-                        conn.execute("UPDATE jobs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (status, sid))
-            except Exception:
-                pass
-
         conn.commit()
         return cursor.rowcount > 0
     finally:
@@ -858,6 +873,16 @@ def get_stats(db_path: str) -> Dict[str, Any]:
     finally:
         conn.close()
 
+def decode_setting_value(raw):
+    try:
+        value = json.loads(raw)
+        if isinstance(value, dict) and "__preference_revision" in value and "value" in value:
+            return value["value"]
+    except (ValueError, TypeError):
+        pass
+    return raw
+
+
 def get_user_setting(db_path: str, key: str, default: Optional[str] = None) -> Optional[str]:
     conn = get_db_connection(db_path)
     try:
@@ -865,22 +890,22 @@ def get_user_setting(db_path: str, key: str, default: Optional[str] = None) -> O
         cursor.execute("SELECT value FROM user_settings WHERE key = ?", (key,))
         row = cursor.fetchone()
         if row and row[0] is not None:
-            return row[0]
+            return decode_setting_value(row[0])
         return default
     finally:
         conn.close()
 
-def set_user_setting(db_path: str, key: str, value: str) -> bool:
+def set_user_setting(db_path: str, key: str, value: str, revision: Optional[int] = None) -> bool:
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
+        stored = value if revision is None else json.dumps({"__preference_revision": revision, "value": value})
+        condition = "" if revision is None else "WHERE CASE WHEN json_valid(user_settings.value) THEN COALESCE(json_extract(user_settings.value, '$.__preference_revision'), 0) ELSE 0 END <= ?"
+        params = (key, stored) if revision is None else (key, stored, revision)
         cursor.execute(
-            """
-            INSERT INTO user_settings (key, value, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
-            """,
-            (key, value),
+            "INSERT INTO user_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP " + condition,
+            params,
         )
         conn.commit()
         return True
@@ -888,24 +913,38 @@ def set_user_setting(db_path: str, key: str, value: str) -> bool:
         conn.close()
 
 
-def acquire_sync_lease(db_path: str, lease: str, now: int) -> bool:
+def set_sync_checkpoint(db_path: str, checkpoint: str, status: str) -> None:
+    conn = get_db_connection(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO user_settings (key, value, updated_at) VALUES "
+            "('sync_batch_progress', ?, CURRENT_TIMESTAMP), ('sync_status', ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",
+            (checkpoint, status),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def acquire_sync_lease(db_path: str, lease: str, now: int, key: str = "sync_lease") -> bool:
     conn = get_db_connection(db_path)
     try:
         cursor = conn.execute("""
-            INSERT INTO user_settings (key, value) VALUES ('sync_lease', ?)
+            INSERT INTO user_settings (key, value) VALUES (?, ?)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value
             WHERE CAST(substr(user_settings.value, 1, instr(user_settings.value, '|') - 1) AS INTEGER) <= ?
-        """, (lease, now))
+        """, (key, lease, now))
         conn.commit()
         return cursor.rowcount > 0
     finally:
         conn.close()
 
 
-def release_sync_lease(db_path: str, lease: str) -> None:
+def release_sync_lease(db_path: str, lease: str, key: str = "sync_lease") -> None:
     conn = get_db_connection(db_path)
     try:
-        conn.execute("DELETE FROM user_settings WHERE key='sync_lease' AND value=?", (lease,))
+        conn.execute("DELETE FROM user_settings WHERE key=? AND value=?", (key, lease))
         conn.commit()
     finally:
         conn.close()
@@ -916,7 +955,7 @@ def get_all_user_settings(db_path: str) -> Dict[str, str]:
         cursor = conn.cursor()
         cursor.execute("SELECT key, value FROM user_settings")
         rows = cursor.fetchall()
-        return {row[0]: row[1] for row in rows}
+        return {row[0]: decode_setting_value(row[1]) for row in rows}
     finally:
         conn.close()
 

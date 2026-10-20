@@ -116,6 +116,8 @@ class Aggregator:
         return {
             "is_syncing": self.is_syncing,
             "last_sync_time": self.last_sync_time,
+            "last_result": self.last_sync_result,
+            "progress": self.last_sync_result.get("progress"),
             "total_boards": len(self.connectors),
             "telemetry": cached_telem,
             "platforms": self.last_sync_result.get("platforms", {}),
@@ -134,7 +136,20 @@ class Aggregator:
         thread.start()
         return True
 
-    def run_sync(self, queries: Optional[List[str]] = None, force: bool = False) -> Dict[str, Any]:
+    def run_sync(self, queries: Optional[List[str]] = None, force: bool = False, budget_seconds: Optional[float] = None, cycle_id=None) -> Dict[str, Any]:
+        try:
+            from src.proxy_manager import apply_proxy_environment
+            apply_proxy_environment(self.db_path)
+        except Exception:
+            pass
+        if queries is None:
+            saved_stack = get_user_setting(self.db_path, "target_stack", "")
+            saved_queries = list(dict.fromkeys(q.strip() for q in saved_stack.split(",") if q.strip()))
+            if saved_queries:
+                queries = saved_queries
+        if budget_seconds is not None:
+            from src.sync_batches import run_batch
+            return run_batch(self, queries if queries is not None else DEFAULT_QUERIES, budget_seconds=budget_seconds, cycle_id=cycle_id)
         # Guard against concurrent duplicate runs / spamming
         acquired = self._sync_lock.acquire(blocking=False)
         if not acquired:
@@ -183,6 +198,7 @@ class Aggregator:
                         return cached_entry["jobs"]
 
                 results: List[Job] = []
+                errors: List[str] = []
                 if hasattr(conn, "last_error"):
                     conn.last_error = ""
                 # 2. Distinguish feed connectors from query-based scrapers
@@ -193,6 +209,8 @@ class Aggregator:
                     try:
                         self.log_event(f"[{conn.platform}] Reading high-yield stream...")
                         jobs = conn.fetch()
+                        if isinstance(getattr(conn, "last_error", None), str) and conn.last_error:
+                            errors.append(conn.last_error)
                         results.extend(jobs)
                         self.log_event(f"[{conn.platform}] Retrieved {len(jobs)} active opportunities.")
                         self.platform_telemetry[conn.platform] = {
@@ -202,6 +220,7 @@ class Aggregator:
                             "timestamp": time.strftime("%H:%M:%S")
                         }
                     except Exception as e:
+                        errors.append(str(e) or type(e).__name__)
                         self.log_event(f"[{conn.platform}] Stream notice: {e}")
                         self.platform_telemetry[conn.platform] = {
                             "status": "error",
@@ -213,8 +232,6 @@ class Aggregator:
                     # Honor a user-provided search set. The curated defaults are sampled by role.
                     if queries is not None:
                         final_queries = list(dict.fromkeys(q.strip() for q in search_queries if q.strip()))
-                        if not any(v in q.lower() for q in final_queries for v in ["virtual assistant", "executive assistant", "cyberbacker", "athena"]):
-                            final_queries.append("virtual assistant")
                     else:
                         # MAX MODE: Multi-track dynamic query selection covering the user's stack
                         tech_q = [q for q in search_queries if not any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad", "android", "mobile", "kotlin", "flutter", "react native", "ios", "virtual assistant", "assistant", "cyberbacker", "athena", "virtudesk", "pineapple"])]
@@ -258,22 +275,26 @@ class Aggregator:
 
                     for q in final_queries:
                         try:
+                            conn.last_error = ""
                             self.log_event(f"[{conn.platform}] Querying '{q}'...")
                             jobs = conn.fetch(query=q)
+                            if isinstance(getattr(conn, "last_error", None), str) and conn.last_error:
+                                errors.append(conn.last_error)
                             results.extend(jobs)
                             time.sleep(0.1)
                         except Exception as e:
+                            errors.append(str(e) or type(e).__name__)
                             self.log_event(f"[{conn.platform}] Notice for '{q}': {e}")
 
                     self.log_event(f"[{conn.platform}] Harvested {len(results)} total listings across queries.")
-                    if getattr(conn, "last_error", ""):
+                    if errors:
                         self.platform_telemetry[conn.platform] = {
                             "status": "error",
                             "count": len(results),
                             "tier": conn.tier,
                             "timestamp": time.strftime("%H:%M:%S")
                         }
-                        self.log_event(f"[{conn.platform}] Source error: {conn.last_error}")
+                        self.log_event(f"[{conn.platform}] Source error: {'; '.join(errors)}")
                     else:
                         self.platform_telemetry[conn.platform] = {
                             "status": "active",
@@ -282,8 +303,11 @@ class Aggregator:
                             "timestamp": time.strftime("%H:%M:%S")
                         }
 
-                # Store in cache
-                self._cache[cache_key] = {"timestamp": now, "jobs": results}
+                if errors:
+                    self.platform_telemetry[conn.platform].update(status="error", error="; ".join(errors))
+                    self._cache.pop(cache_key, None)
+                else:
+                    self._cache[cache_key] = {"timestamp": now, "jobs": results}
                 return results
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
@@ -294,8 +318,9 @@ class Aggregator:
                         jobs = future.result()
                         all_jobs.extend(jobs)
                         platform_reports[conn.platform] = len(jobs)
-                    except Exception:
+                    except Exception as exc:
                         platform_reports[conn.platform] = 0
+                        self.platform_telemetry[conn.platform] = {"status": "error", "count": 0, "tier": conn.tier, "error": str(exc)}
 
             ingestion_error = None
             try:

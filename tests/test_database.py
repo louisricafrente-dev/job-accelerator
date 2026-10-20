@@ -391,8 +391,8 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(all_settings["target_stack"], "Next.js, TypeScript")
         self.assertEqual(all_settings["remote_only"], "1")
 
-    def test_same_platform_same_timeline_dedup(self):
-        """Redundant postings on the same platform with same company, title, date, but different URLs should be merged and preserve saved status."""
+    def test_same_platform_same_timeline_keeps_requisitions(self):
+        """Different same-board URLs retain separate tracking even on the same date."""
         job1 = Job(
             title="Junior Full Stack Developer",
             company="Microgenesis Business Systems",
@@ -422,13 +422,12 @@ class TestDatabase(unittest.TestCase):
             date_posted="2026-10-14"
         )
         added2, skipped2 = insert_jobs(self.db_path, [job2])
-        self.assertEqual(added2, 0)
-        self.assertEqual(skipped2, 1)
-
-        # Ensure only 1 row exists and status remains 'saved'
+        self.assertEqual(added2, 1)
+        self.assertEqual(skipped2, 0)
         jobs = get_jobs(self.db_path, search="Microgenesis")
-        self.assertEqual(len(jobs), 1)
-        self.assertEqual(jobs[0]["status"], "saved")
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual(next(j for j in jobs if j["job_url"] == job1.job_url)["status"], "saved")
+        self.assertEqual(next(j for j in jobs if j["job_url"] == job2.job_url)["status"], "new")
 
     def test_same_platform_diff_timeline_repost(self):
         """Reposts on the same platform with different dates should be treated as new opportunities."""

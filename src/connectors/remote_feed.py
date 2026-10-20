@@ -14,6 +14,7 @@ class RemoteOKConnector(BaseConnector):
     is_feed = True
 
     def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
+        self.last_error = ""
         url = "https://remoteok.com/api"
         req = urllib.request.Request(url, headers=HEADERS)
         jobs: List[Job] = []
@@ -47,6 +48,7 @@ class RemoteOKConnector(BaseConnector):
                         date_posted=pub_date
                     ))
         except Exception as e:
+            self.last_error = str(e) or type(e).__name__
             logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 
@@ -56,6 +58,7 @@ class WeWorkRemotelyConnector(BaseConnector):
     is_feed = True
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
+        self.last_error = ""
         feed_urls = [
             "https://weworkremotely.com/categories/remote-programming-jobs.rss",
             "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss",
@@ -105,22 +108,27 @@ class WeWorkRemotelyConnector(BaseConnector):
                             salary="",
                             role_category=classify_role(title, desc_text),
                             experience_level=classify_experience_level(title, desc_text),
+                            description=desc_text,
                             date_posted=pub_text
                         ))
             except Exception as e:
+                self.last_error = str(e) or type(e).__name__
                 logger.warning(f"[{self.platform}] feed notice for {rss_url}: {e}")
         return jobs
 
 class ArcConnector(BaseConnector):
     platform = "Arc"
     tier = 3
+    is_feed = True
 
-    def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
+    def fetch(self, query: str = "", location: str = "remote") -> List[Job]:
+        self.last_error = ""
         jobs: List[Job] = []
         try:
             from curl_cffi import requests as cffi_requests
             from bs4 import BeautifulSoup
             r = cffi_requests.get("https://arc.dev/remote-jobs", impersonate="chrome120", timeout=12)
+            r.raise_for_status()
             if r.status_code == 200:
                 soup = BeautifulSoup(r.text, "html.parser")
                 next_data = soup.find("script", {"id": "__NEXT_DATA__"})
@@ -156,6 +164,7 @@ class ArcConnector(BaseConnector):
                             date_posted=pub_date
                         ))
         except Exception as e:
+            self.last_error = str(e) or type(e).__name__
             logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 
@@ -165,12 +174,13 @@ class RemotiveConnector(BaseConnector):
     is_feed = True
 
     def fetch(self, query: str = "software-dev", location: str = "remote") -> List[Job]:
+        self.last_error = ""
         jobs: List[Job] = []
-        categories = ["software-dev", "qa", "data", "customer-support"]
+        categories = [None]
         seen_urls = set()
         for cat in categories:
             try:
-                url = f"https://remotive.com/api/remote-jobs?category={cat}&limit=50"
+                url = "https://remotive.com/api/remote-jobs"
                 req = urllib.request.Request(url, headers=HEADERS)
                 with urllib.request.urlopen(req, timeout=12) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
@@ -199,9 +209,11 @@ class RemotiveConnector(BaseConnector):
                             salary=sal,
                             role_category=classify_role(title, desc),
                             experience_level=classify_experience_level(title, desc),
+                            description=desc,
                             date_posted=pub
                         ))
             except Exception as e:
+                self.last_error = str(e) or type(e).__name__
                 logger.warning(f"[{self.platform}] fetch notice for category '{cat}': {e}")
         return jobs
 
@@ -211,6 +223,7 @@ class HimalayasConnector(BaseConnector):
     is_feed = True
 
     def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
+        self.last_error = ""
         jobs: List[Job] = []
         try:
             url = "https://himalayas.app/jobs/api?limit=100"
@@ -240,9 +253,11 @@ class HimalayasConnector(BaseConnector):
                         salary=sal,
                         role_category=classify_role(title, desc),
                         experience_level=classify_experience_level(title, desc),
+                        description=desc,
                         date_posted=pub
                     ))
         except Exception as e:
+            self.last_error = str(e) or type(e).__name__
             logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 
@@ -254,6 +269,7 @@ class JobicyConnector(BaseConnector):
     _last_fetch = 0
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
+        self.last_error = ""
         import time
         jobs: List[Job] = []
         now = time.time()
@@ -265,12 +281,14 @@ class JobicyConnector(BaseConnector):
                     JobicyConnector._cached_data = json.loads(resp.read().decode("utf-8")).get("jobs", [])
                     JobicyConnector._last_fetch = now
             except urllib.error.HTTPError as e:
+                self.last_error = str(e)
                 if e.code == 429:
                     logger.warning("[Jobicy] Rate limited by upstream API (HTTP 429). Skipping.")
                 else:
                     logger.warning(f"[Jobicy] HTTP error: {e}")
                 return []
             except Exception as e:
+                self.last_error = str(e) or type(e).__name__
                 logger.warning(f"[{self.platform}] fetch failed: {e}")
                 return []
 
@@ -304,6 +322,7 @@ class FreelancerConnector(BaseConnector):
     tier = 2
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
+        self.last_error = ""
         import datetime
         jobs: List[Job] = []
         try:
@@ -336,9 +355,11 @@ class FreelancerConnector(BaseConnector):
                         salary=sal,
                         role_category=classify_role(title, desc),
                         experience_level=classify_experience_level(title, desc),
+                        description=desc,
                         date_posted=pub_date
                     ))
         except Exception as e:
+            self.last_error = str(e) or type(e).__name__
             logger.warning(f"[{self.platform}] fetch failed for query '{query}': {e}")
         return jobs
 
@@ -347,6 +368,7 @@ class UpworkConnector(BaseConnector):
     tier = 2
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
+        self.last_error = ""
         import os
         jobs: List[Job] = []
         feed_url = os.environ.get("UPWORK_FEED_URL", "").strip()
@@ -358,6 +380,7 @@ class UpworkConnector(BaseConnector):
             from curl_cffi import requests as cffi_requests
             import xml.etree.ElementTree as ET
             resp = cffi_requests.get(feed_url, impersonate="chrome120", timeout=12)
+            resp.raise_for_status()
             if resp.status_code == 200 and resp.content:
                 tree = ET.fromstring(resp.content)
                 for item in tree.findall(".//item"):
@@ -383,9 +406,11 @@ class UpworkConnector(BaseConnector):
                         salary="",
                         role_category=classify_role(title, desc),
                         experience_level=classify_experience_level(title, desc),
+                        description=desc,
                         date_posted=pub
                     ))
         except Exception as e:
+            self.last_error = str(e) or type(e).__name__
             logger.warning(f"[{self.platform}] fetch notice: {e}")
         return jobs
 

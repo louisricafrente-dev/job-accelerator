@@ -1,0 +1,15 @@
+[project]
+name = "job-accelerator"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "bottle>=0.12.25",
+  "beautifulsoup4>=4.12.0",
+  "curl_cffi>=0.7.0",
+  "python-jobspy>=1.1.50",
+  "lxml>=5.0.0",
+  "requests>=2.31.0",
+  "libsql-client>=0.3.1",
+  "vercel-queue==0.9.2"
+]
+
