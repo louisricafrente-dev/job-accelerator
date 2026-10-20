@@ -2723,7 +2723,9 @@ function renderTelemetry(data) {
         badgeClass = 'status-success';
         badgeLabel = `${count} JOBS`;
       } else if (boardInfo.status === 'cooldown') {
-        badgeLabel = 'COOLDOWN';
+        const isFeed = b.type && (b.type.includes('API') || b.type.includes('Feed') || b.type.includes('RSS'));
+        badgeClass = isFeed ? 'status-synced' : 'status-idle';
+        badgeLabel = isFeed ? 'SYNCED' : 'STANDBY';
       }
 
 
