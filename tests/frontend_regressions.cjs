@@ -7,11 +7,11 @@ const token = (role, id) => Buffer.from(JSON.stringify({ role, id })).toString('
 const requests = [];
 const elements = new Map();
 const context = vm.createContext({
-  console, URLSearchParams, atob,
+  console, URLSearchParams, atob, setTimeout, clearTimeout, AbortController,
   currentSessionToken: token('guest', 'guest-a'), currentUserRole: 'guest',
   localStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) },
   window: { fetch: async (url, options) => { requests.push({ url, options }); return { ok: true, json: async () => ({ success: true }) }; } },
-  document: { getElementById: id => { if (!elements.has(id)) elements.set(id, { style: {}, innerHTML: '' }); return elements.get(id); } },
+  document: { getElementById: id => { if (!elements.has(id)) elements.set(id, { style: {}, innerHTML: '', dataset: {} }); return elements.get(id); } },
   currentViewMode: 'tech', currentStatus: 'new', currentRole: 'All', currentLevel: 'All', searchQuery: '', currentDateFilter: 'all',
   hasSalaryOnly: false, remoteOnly: false, hideSenior: false, vaTrainingEnabled: false, currentPlatform: 'All',
   selectedLevels: new Set(), filterBySkillsOnly: false, userStack: 'Junior / Entry',
@@ -22,6 +22,15 @@ vm.runInContext(code.slice(code.indexOf('function getSkillsMatch(job)'), code.in
 vm.runInContext(code.slice(code.indexOf('let loadJobsSequence ='), code.indexOf('// Skills matching calculator')), context);
 
 async function main() {
+  context.currentStats = {};
+  context.MONITORED_BOARDS = [{key: 'LinkedIn', label: 'LinkedIn', domain: 'linkedin.com', type: 'Feed'}];
+  context.escapeHtml = value => String(value);
+  vm.runInContext(code.slice(code.indexOf('function renderTelemetry(data)'), code.indexOf('function copySyncLogs()')), context);
+  context.renderTelemetry({is_syncing: true, progress: {completed_searches: 10, total_searches: 100}, telemetry: {LinkedIn: {status: 'error', error: 'HTTP 429', count: 5}}});
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /RETRY/);
+  assert.doesNotMatch(elements.get('telemetry-boards-grid').innerHTML, /SCANNING/);
+  assert.match(elements.get('telemetry-sync-state').textContent, /10\/100/);
+
   for (const title of ['Software Engineer III', 'Senior Software Engineer, Backend (Identity International)']) {
     assert.equal(context.getSkillsMatch({ title, experience_level: 'Senior / Lead' }).count, 0);
   }
@@ -77,6 +86,38 @@ async function main() {
     sent = JSON.parse(options.body);
     return { ok: true, json: async () => ({ status: 'ok', added: 0 }) };
   };
+  let batches = 0;
+  context.fetch = async (_, options) => {
+    sent = JSON.parse(options.body);
+    batches++;
+    return { ok: true, json: async () => ({ status: 'ok', added: 1,
+      progress: { has_more: batches < 3, can_continue: batches < 3, completed_searches: batches, total_searches: 3 } }) };
+  };
+  context.batchSyncMessage = () => 'Sync complete';
+  await context.triggerSync();
+  assert.equal(batches, 3, 'One click must continue available cloud batches');
+  batches = 0;
+  context.fetch = async () => {
+    batches++;
+    return { ok: true, json: async () => ({ status: 'partial', progress: { has_more: true, can_continue: false } }) };
+  };
+  await context.triggerSync();
+  assert.equal(batches, 1, 'Cooldown-only work must not produce an infinite continuation loop');
+  const originalSyncToken = context.currentSessionToken;
+  let switchedRequests = 0;
+  context.fetch = async () => {
+    switchedRequests++;
+    context.currentSessionToken = token('admin', 'other-session');
+    return { ok: true, json: async () => ({ status: 'ok', progress: { has_more: true, can_continue: true } }) };
+  };
+  await context.triggerSync();
+  assert.equal(switchedRequests, 1, 'A changed session must stop automatic continuation');
+  context.currentSessionToken = originalSyncToken;
+
+  context.fetch = async (_, options) => {
+    sent = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ status: 'ok', added: 0 }) };
+  };
   await context.triggerSync();
   assert.equal(sent.keywords.length, matrix.length, 'Sync must send the entire selected matrix');
   assert.ok(toasts.at(-1).startsWith('Sync complete!'));
@@ -86,6 +127,11 @@ async function main() {
   context.fetch = async () => ({ ok: false, status: 502, json: async () => { throw new SyntaxError('HTML response'); } });
   await context.triggerSync();
   assert.ok(toasts.at(-1).includes('Sync failed (502)'));
+  vm.runInContext(code.slice(code.indexOf('function batchSyncMessage('), code.indexOf('function stopSyncIndicator(')), context);
+  context.fetch = async () => ({ ok: true, json: async () => ({ status: 'ok', added: 12, progress: {completed_searches: 2, total_searches: 295, has_more: true} }) });
+  await context.triggerSync();
+  assert.ok(toasts.at(-1).includes('2/295'));
+  assert.ok(toasts.at(-1).includes('Next run continues'));
   console.log('Frontend regressions passed: seniority, account isolation, replay, pagination, response ordering, full-matrix sync, API errors');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

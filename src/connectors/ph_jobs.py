@@ -16,6 +16,7 @@ class KalibrrConnector(BaseConnector):
     tier = 1
 
     def fetch(self, query: str = "software engineer", location: str = "Philippines") -> List[Job]:
+        self.last_error = ""
         jobs: List[Job] = []
         seen_codes = set()
         for page in (1, 2):
@@ -61,6 +62,7 @@ class KalibrrConnector(BaseConnector):
                 # Polite anti-ban pause between pages
                 time.sleep(random.uniform(0.4, 0.7))
             except Exception as e:
+                self.last_error = str(e) or type(e).__name__
                 logger.error(f"[{self.platform}] fetch failed on page {page}: {e}")
                 break
         return jobs
@@ -70,6 +72,7 @@ class BossjobConnector(BaseConnector):
     tier = 2
 
     def fetch(self, query: str = "developer", location: str = "Philippines") -> List[Job]:
+        self.last_error = ""
         jobs: List[Job] = []
         try:
             params = urllib.parse.urlencode({"query": query, "size": 20})
@@ -99,36 +102,9 @@ class BossjobConnector(BaseConnector):
                         experience_level=classify_experience_level(title),
                         date_posted=pub_date
                     ))
-        except Exception:
-            try:
-                search_term = urllib.parse.quote(query.strip())
-                url = f"https://himalayas.app/jobs/api?search={search_term}&limit=50"
-                req = urllib.request.Request(url, headers=HEADERS)
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    for item in data.get("jobs", []):
-                        title = item.get("title", "")
-                        if not is_relevant_opportunity(title, ""):
-                            continue
-                        pub_date = str(item.get("pubDate", ""))[:10]
-                        if not is_within_15_days(pub_date):
-                            continue
-                        company = item.get("companyName", "Tech Enterprise")
-                        link = item.get("applicationLink") or "https://bossjob.ph"
-                        jobs.append(Job(
-                            title=title,
-                            company=company,
-                            location="Philippines / Remote",
-                            platform=self.platform,
-                            tier=self.tier,
-                            job_url=link,
-                            salary="",
-                            role_category=classify_role(title),
-                            experience_level=classify_experience_level(title),
-                            date_posted=pub_date
-                        ))
-            except Exception as e2:
-                logger.error(f"[{self.platform}] fetch failed: {e2}")
+        except Exception as e:
+            self.last_error = str(e) or type(e).__name__
+            logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 
 class JobStreetConnector(BaseConnector):
@@ -136,6 +112,7 @@ class JobStreetConnector(BaseConnector):
     tier = 1
 
     def fetch(self, query: str = "developer", location: str = "philippines") -> List[Job]:
+        self.last_error = ""
         jobs: List[Job] = []
         try:
             from curl_cffi import requests as cffi_requests
@@ -152,12 +129,12 @@ class JobStreetConnector(BaseConnector):
                     url = f"https://www.jobstreet.com.ph/{clean_q}-jobs?page={page}"
                     try:
                         resp = cffi_requests.get(url, impersonate="chrome120", timeout=12)
+                        resp.raise_for_status()
                         if resp.status_code == 200:
                             soup = BeautifulSoup(resp.text, "html.parser")
                             articles = soup.find_all("article")
                             if not articles:
                                 break
-                            page_valid_dates = 0
                             for art in articles:
                                 title_a = art.find("a", {"data-automation": "jobTitle"}) or art.find("a")
                                 if not title_a:
@@ -175,7 +152,6 @@ class JobStreetConnector(BaseConnector):
                                 date_val = date_elem.text.strip() if date_elem else ""
                                 if not is_within_15_days(date_val):
                                     continue
-                                page_valid_dates += 1
                                 comp_a = art.find("a", {"data-automation": "jobCompany"})
                                 comp = comp_a.text.strip() if comp_a else "Company Confidential"
                                 loc_a = art.find("a", {"data-automation": "jobLocation"})
@@ -194,14 +170,13 @@ class JobStreetConnector(BaseConnector):
                                     experience_level=classify_experience_level(title),
                                     date_posted=date_val
                                 ))
-                            if not page_valid_dates and articles:
-                                # Stop paginating if no articles on page were within 14 days
-                                break
                         time.sleep(random.uniform(0.6, 1.0))
                     except Exception as inner_e:
+                        self.last_error = str(inner_e) or type(inner_e).__name__
                         logger.warning(f"[{self.platform}] sub-query '{q_term}' page {page} notice: {inner_e}")
                         break
         except Exception as e:
+            self.last_error = str(e) or type(e).__name__
             logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 
@@ -211,6 +186,7 @@ class OnlineJobsConnector(BaseConnector):
     tier = 1
 
     def fetch(self, query: str = "developer", location: str = "philippines") -> List[Job]:
+        self.last_error = ""
         jobs: List[Job] = []
         try:
             from bs4 import BeautifulSoup
@@ -292,6 +268,7 @@ class OnlineJobsConnector(BaseConnector):
                                 salary=salary,
                                 role_category=classify_role(title, desc_text),
                                 experience_level=classify_experience_level(title, desc_text),
+                                description=desc_text,
                                 date_posted=date_val
                             ))
                         if not page_valid_dates and cards:
@@ -300,9 +277,11 @@ class OnlineJobsConnector(BaseConnector):
                     # Polite anti-ban delay between pages
                     time.sleep(random.uniform(0.4, 0.7))
                 except Exception as page_e:
+                    self.last_error = str(page_e) or type(page_e).__name__
                     logger.warning(f"[{self.platform}] page {page} fetch notice: {page_e}")
                     break
         except Exception as e:
+            self.last_error = str(e) or type(e).__name__
             logger.error(f"[{self.platform}] fetch failed: {e}")
         return jobs
 

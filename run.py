@@ -3,6 +3,8 @@ import sys
 import webbrowser
 import threading
 import time
+import json
+import socket
 
 if sys.platform == "win32":
     try:
@@ -51,8 +53,9 @@ def main():
     import urllib.request
     server_responding = False
     try:
-        urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/stats", timeout=0.8)
-        server_responding = True
+        with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/health", timeout=0.8) as response:
+            health = json.loads(response.read())
+            server_responding = health.get("service") == "job-accelerator" and health.get("status") == "ok"
     except Exception:
         server_responding = False
 
@@ -63,21 +66,12 @@ def main():
         time.sleep(1.5)
         return
 
-    # Clear any stale listening process on PORT if needed
-    if sys.platform == "win32":
-        try:
-            import subprocess
-            out = subprocess.check_output(f"netstat -ano | findstr :{PORT}", shell=True, text=True, errors="replace")
-            for line in out.strip().splitlines():
-                if "LISTENING" in line:
-                    parts = line.strip().split()
-                    pid = parts[-1]
-                    if pid.isdigit() and int(pid) != os.getpid():
-                        print(f"[*] Reclaiming port {PORT} from stale process (PID {pid})...")
-                        subprocess.call(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        time.sleep(0.5)
-        except Exception:
-            pass
+    try:
+        with socket.create_connection(("127.0.0.1", PORT), timeout=0.8):
+            print(f"[!] Port {PORT} is occupied by an unrecognized service. Choose another PORT or stop it manually.")
+            return
+    except OSError:
+        pass
 
     # 4. Schedule browser opening
     if not IS_CLOUD:
@@ -97,10 +91,6 @@ def main():
             server.serve_forever()
 
     app = create_app(DB_PATH)
-    if not IS_CLOUD:
-        from scripts.auto_runner import start_background_runner
-        start_background_runner(DB_PATH)
-        print("[+] Local auto-sync is enabled. You can switch it off in the dashboard.")
     print(f"\n[✓] Server running on http://{HOST}:{PORT} (Press Ctrl+C to stop)")
     app.run(server=ThreadedServer(host=HOST, port=PORT), quiet=False)
 

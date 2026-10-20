@@ -156,11 +156,11 @@ class TestRegressions(unittest.TestCase):
         second = Job(first.title, first.company, first.location, "Indeed", 1, "https://indeed.example/1")
         try:
             with patch("src.database.get_db_connection", side_effect=lambda *args, **kwargs: TursoConnection(client)):
-                added, skipped = insert_jobs(self.db, [first, second, self.job("https://example.com/2", "Cebu")])
+                added, skipped = insert_jobs(self.db, [first, second, self.job("https://example.com/2", "Manila")])
             self.assertEqual((added, skipped), (2, 1))
             rows = get_jobs(self.db)
             self.assertEqual(len(rows), 2)
-            self.assertEqual(len(next(row for row in rows if row["location"] == "Manila")["sources"]), 2)
+            self.assertEqual(len(next(row for row in rows if row["job_url"] == first.job_url)["sources"]), 2)
         finally:
             sql.close()
 
@@ -181,11 +181,13 @@ class TestRegressions(unittest.TestCase):
         release_sync_lease(self.db, f"{now+600}|first")
         self.assertTrue(acquire_sync_lease(self.db, f"{now+600}|second", now))
 
-    def test_serverless_sync_waits_for_result(self):
-        with patch.dict(os.environ, {"VERCEL": "1", "TURSO_AUTH_TOKEN": "test", "TURSO_DATABASE_URL": "https://unused.example"}), patch("src.server.Aggregator.run_sync", return_value={"status": "ok", "added": 0}) as run:
+    def test_serverless_sync_returns_after_durable_queue_acceptance(self):
+        queued = {"status": "queued", "cloud_run": {"id": "run-1", "status": "queued"}, "is_syncing": True}
+        with patch.dict(os.environ, {"VERCEL": "1", "TURSO_AUTH_TOKEN": "test", "TURSO_DATABASE_URL": "https://unused.example"}), patch("src.cloud_sync.start_run", return_value=queued) as enqueue, patch("src.server.Aggregator.run_sync") as run:
             result = wsgi_request(self.app, "POST", "/api/sync", {"background": True}, cookie=self.cookie)
-            self.assertEqual(result["json"]["status"], "ok")
-            run.assert_called_once()
+            self.assertEqual(result["json"]["status"], "queued")
+            enqueue.assert_called_once()
+            run.assert_not_called()
 
     def test_sync_accepts_every_frontend_preset(self):
         source = (Path(__file__).parents[1] / "src/static/app.js").read_text(encoding="utf-8")

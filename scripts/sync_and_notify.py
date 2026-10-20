@@ -1,5 +1,4 @@
-"""Run one local sync and email a digest only when new jobs are added."""
-from scripts.auto_runner import run_cycle
+"""Retired local scheduler. Automatic scraping runs through cloud cron."""
 
 if __name__ == "__main__":
-    run_cycle()
+    raise SystemExit("Local automatic scraping is disabled. Use the deployed dashboard or cloud cron.")

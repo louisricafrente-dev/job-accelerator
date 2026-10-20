@@ -1,0 +1,105 @@
+"""Durable cloud continuation; only a queue consumer executes batches."""
+import asyncio
+import json
+import math
+import time
+import uuid
+from src.database import acquire_sync_lease, release_sync_lease, get_user_setting, set_user_setting
+
+RUN_KEY = "cloud_sync_run"
+TOPIC = "job-sync"
+ACTIVE = {"queued", "running", "waiting"}
+RUN_SECONDS = 24 * 3600
+
+
+def read_run(db_path):
+    raw = get_user_setting(db_path, RUN_KEY, "")
+    return json.loads(raw) if raw else {}
+
+
+def public_run(run):
+    return {key: value for key, value in run.items() if key != "queries"}
+
+
+async def publish(run_id, step, delay=0):
+    from vercel.queue import send
+    return await send(TOPIC, {"run_id": run_id, "step": step},
+                      idempotency_key=f"{run_id}:{step}", delay=delay, retention=RUN_SECONDS)
+
+
+def start_run(db_path, queries=None, automatic=False):
+    lease = f"{int(time.time()) + 30}|queue-start-{uuid.uuid4().hex}"
+    if not acquire_sync_lease(db_path, lease, int(time.time()), key="cloud_sync_start_lease"):
+        return {"status": "already_syncing", "is_syncing": True,
+                "cloud_run": public_run(read_run(db_path))}
+    try:
+        return _start_run(db_path, queries, automatic)
+    finally:
+        release_sync_lease(db_path, lease, key="cloud_sync_start_lease")
+
+
+def _start_run(db_path, queries, automatic):
+    current = read_run(db_path)
+    now = time.time()
+    if current.get("status") in ACTIVE and current.get("expires_at", 0) > now:
+        return {"status": "queued", "cloud_run": public_run(current), "is_syncing": True}
+    if not queries:
+        from src.aggregator import DEFAULT_QUERIES
+        saved = get_user_setting(db_path, "target_stack", "")
+        queries = [q.strip() for q in saved.split(",") if q.strip()] or DEFAULT_QUERIES
+    run = {"id": uuid.uuid4().hex, "queries": list(dict.fromkeys(queries)),
+           "status": "queued", "automatic": automatic, "started_at": now,
+           "expires_at": now + RUN_SECONDS, "step": 0, "updated_at": now}
+    set_user_setting(db_path, RUN_KEY, json.dumps(run))
+    try:
+        asyncio.run(publish(run["id"], 0))
+    except Exception as exc:
+        run.update(status="error", error=f"Cloud queue unavailable: {exc}")
+        set_user_setting(db_path, RUN_KEY, json.dumps(run))
+        raise RuntimeError("Could not start the cloud queue; no unattended run was accepted") from exc
+    return {"status": "queued", "cloud_run": public_run(run), "is_syncing": True}
+
+
+def continuation_delay(progress, now):
+    if progress.get("can_continue"):
+        return 1
+    return max(1, math.ceil(progress.get("next_run_at", now + 60) - now))
+
+
+
+async def process_message(db_path, payload, aggregator):
+    run = await asyncio.to_thread(read_run, db_path)
+    if run.get("id") != payload.get("run_id") or run.get("status") not in ACTIVE:
+        return
+    step = int(payload.get("step", 0))
+    if step < run.get("step", 0):
+        return
+    now = time.time()
+    if now >= run["expires_at"]:
+        run.update(status="partial", error="24-hour run limit reached; unfinished searches remain saved")
+    elif run.get("automatic") and await asyncio.to_thread(get_user_setting, db_path, "auto_sync_enabled", "1") in ("0", "false"):
+        run.update(status="paused")
+    else:
+        run.update(status="running", updated_at=now)
+        await asyncio.to_thread(set_user_setting, db_path, RUN_KEY, json.dumps(run))
+        result = await asyncio.to_thread(aggregator.run_sync, queries=run["queries"], budget_seconds=120, cycle_id=run["id"])
+        progress = result.get("progress", {})
+        if result.get("status") == "already_syncing":
+            delay = 30
+        elif result.get("status") == "error":
+            raise RuntimeError(result.get("error", "Cloud ingestion failed; checkpoint retained"))
+        elif not progress.get("has_more"):
+            run.update(status="complete", completed_at=time.time())
+            delay = None
+        else:
+            delay = continuation_delay(progress, time.time())
+        if delay is not None:
+            if time.time() + delay >= run["expires_at"]:
+                run.update(status="partial", error="Remaining cooldown exceeds the run deadline")
+            else:
+                # Publish before advancing step: an interrupted send is retried with the same key.
+                await publish(run["id"], step + 1, delay)
+                run.update(status="waiting" if delay > 2 else "queued", step=step + 1,
+                           next_at=time.time() + delay)
+    run["updated_at"] = time.time()
+    await asyncio.to_thread(set_user_setting, db_path, RUN_KEY, json.dumps(run))

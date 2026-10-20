@@ -1,7 +1,7 @@
 import unittest
 import tempfile
 import os
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from src.database import init_db, get_jobs
 from src.models import Job
 from src.aggregator import Aggregator
@@ -112,10 +112,19 @@ class TestAggregator(unittest.TestCase):
         mock_connector.fetch.return_value = []
 
         aggregator = Aggregator(self.db_path, connectors=[mock_connector])
-        started = aggregator.start_background_sync()
+        import threading
+        real_thread = threading.Thread
+        workers = []
+        def capture_worker(*args, **kwargs):
+            worker = real_thread(*args, **kwargs)
+            workers.append(worker)
+            return worker
+        with patch("src.aggregator.threading.Thread", side_effect=capture_worker):
+            started = aggregator.start_background_sync()
         self.assertTrue(started)
-        # Give thread a brief moment to finish
-        time.sleep(0.15)
+        self.assertEqual(len(workers), 1)
+        workers[0].join(timeout=5)
+        self.assertFalse(workers[0].is_alive(), "Background sync did not finish")
         self.assertFalse(aggregator.is_syncing)
 
 if __name__ == "__main__":

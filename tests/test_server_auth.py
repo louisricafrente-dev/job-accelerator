@@ -98,7 +98,7 @@ def test_full_auth_and_guest_isolation():
         job_id = get_jobs(master_db)[0]["id"]
 
         
-        app = create_app(master_db)
+        app = create_app(master_db, guest_access_enabled=True)
         
         # 1. Unauthenticated request to /api/jobs -> 401
         res = wsgi_request(app, "GET", "/api/jobs")
