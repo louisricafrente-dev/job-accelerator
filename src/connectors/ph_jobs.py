@@ -128,7 +128,16 @@ class JobStreetConnector(BaseConnector):
                 for page in (1, 2):
                     url = f"https://www.jobstreet.com.ph/{clean_q}-jobs?page={page}"
                     try:
-                        resp = cffi_requests.get(url, impersonate="chrome120", timeout=12)
+                        req_kwargs = {"impersonate": "chrome120", "timeout": 12}
+                        try:
+                            from src.proxy_manager import is_proxy_active, get_next_proxy
+                            if is_proxy_active():
+                                proxy_url = get_next_proxy()
+                                if proxy_url:
+                                    req_kwargs["proxy"] = proxy_url
+                        except Exception:
+                            pass
+                        resp = cffi_requests.get(url, **req_kwargs)
                         resp.raise_for_status()
                         if resp.status_code == 200:
                             soup = BeautifulSoup(resp.text, "html.parser")

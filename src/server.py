@@ -387,6 +387,19 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             set_user_setting(target_db, str(k), val_str, revision=revisions.get(k))
             if not is_admin:
                 set_user_setting(db_path, f"guest:{session['id']}:setting:{k}", val_str)
+        if "proxy_list" in data or "proxy_mode" in data:
+            try:
+                raw_cp = get_user_setting(target_db, "sync_batch_progress", "")
+                if raw_cp:
+                    cp = json.loads(raw_cp)
+                    now_ts = time.time()
+                    for b_state in cp.get("boards", {}).values():
+                        b_state["blocked_until"] = 0
+                        if b_state.get("next_at", 0) > now_ts:
+                            b_state["next_at"] = now_ts
+                    set_user_setting(target_db, "sync_batch_progress", json.dumps(cp))
+            except Exception:
+                pass
         settings = {k: v for k, v in get_all_user_settings(target_db).items() if k in public_settings}
         if "target_stack" not in settings:
             settings["target_stack"] = DEFAULT_TARGET_STACK
