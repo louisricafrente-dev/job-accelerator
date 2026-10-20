@@ -2712,18 +2712,18 @@ function renderTelemetry(data) {
       const isRunning = data.is_syncing;
 
       let badgeClass = 'status-idle';
-      let badgeLabel = 'STANDBY';
-      if (boardInfo.status === 'error' || boardInfo.error) {
+      let badgeLabel = 'READY';
+      if (boardInfo.status === 'error') {
         badgeClass = 'status-error';
         badgeLabel = 'RETRY';
-      } else if (boardInfo.status === 'cooldown') {
-        badgeLabel = 'COOLDOWN';
       } else if (isRunning && boardInfo.status === 'fetching') {
         badgeClass = 'status-running';
         badgeLabel = 'SCANNING';
-      } else if (boardInfo.status === 'active' || count > 0) {
+      } else if (count > 0 || boardInfo.status === 'active') {
         badgeClass = 'status-success';
         badgeLabel = `${count} JOBS`;
+      } else if (boardInfo.status === 'cooldown') {
+        badgeLabel = 'COOLDOWN';
       }
 
 

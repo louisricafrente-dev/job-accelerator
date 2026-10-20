@@ -187,7 +187,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         if index not in state["retry"]:
                             state["retry"].append(index)
                         blocked = any(code in error.lower() for code in ("429", "403", "captcha", "rate limit", "forbidden"))
-                        state["next_at"] = time.time() + (BLOCK_COOLDOWN_SECONDS if blocked else ERROR_COOLDOWN_SECONDS)
+                        cooldown_secs = BLOCK_COOLDOWN_SECONDS if blocked else ERROR_COOLDOWN_SECONDS
+                        state["next_at"] = time.time() + cooldown_secs
                         state["blocked_until"] = state["next_at"]
                         result["status"] = "partial"
                     else:
