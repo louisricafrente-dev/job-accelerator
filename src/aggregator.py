@@ -127,7 +127,10 @@ class Aggregator:
                     )
             if "telemetry" in status and isinstance(status["telemetry"], dict):
                 status["telemetry"] = {
-                    p: t for p, t in status["telemetry"].items() if p in valid_platforms
+                    conn.platform: status["telemetry"].get(
+                        conn.platform, {"status": "ready", "count": 0, "tier": conn.tier}
+                    )
+                    for conn in self.connectors
                 }
             lease = get_user_setting(self.db_path, "sync_lease", "0|")
             status["is_syncing"] = int(lease.split("|", 1)[0]) > time.time()
