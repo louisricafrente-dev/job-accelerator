@@ -125,17 +125,28 @@ NON_TECH_BLACKLIST = [
     r"\bsales manager\b", r"\bsales assistant\b", r"\bmecánico\b", r"\bautomotriz\b",
     r"\bdispense technician\b", r"\bcider\b", r"\bcrypto trader\b", r"\boperations manager\b",
     r"\bhead of operations\b", r"\bpeople operations\b", r"\bhr specialist\b",
-    r"\bhuman resources\b", r"\brecruiter\b", r"\btalent acquisition\b", r"\bcredentialing specialist\b"
+    r"\bhuman resources\b", r"\brecruiter\b", r"\btalent acquisition\b", r"\bcredentialing specialist\b",
+    r"\bgraphic designer\b", r"\bvideo editor\b", r"\bcopywriter\b", r"\bcontent writer\b",
+    r"\btranscriptionist\b", r"\bcontent moderator\b", r"\bcnc machinist\b", r"\bmachinist\b",
+    r"\belectrician\b", r"\bplumber\b", r"\bcarpenter\b", r"\bwelder\b", r"\bdriver\b", r"\brider\b"
 ]
 
 TECH_WHITELIST_OVERRIDE = [
-    r"\bdeveloper\b", r"\bengineer\b", r"\bprogrammer\b", r"\bsoftware\b",
-    r"\bdevops\b", r"\bsdet\b", r"\barchitect\b", r"\bfrontend\b", r"\bbackend\b",
-    r"\bfull[- ]?stack\b", r"\bandroid\b", r"\bios\b", r"\bdata engineer\b",
-    r"\bweb dev\b", r"\bweb application\b", r"\bdatabase administrator\b", r"\bdba\b",
-    r"\bcyber\s?security\b", r"\binfosec\b", r"\bweb designer\b", r"\bui/ux\b",
-    r"\bqa\b", r"\bquality assurance\b", r"\bsysadmin\b", r"\bsystem(?:s)? administrator\b",
-    r"\bnetwork engineer\b", r"\bcloud\b", r"\bproduct designer\b", r"\bquality engineering\b"
+    r"\bdeveloper\b",
+    r"\bprogrammer\b",
+    r"\bcomputer programmer\b",
+    r"\bsoftware\b",
+    r"\b(?:software|web|frontend|front[- ]?end|backend|back[- ]?end|full[- ]?stack|mobile|android|ios|cloud|devops|sre|qa|sdet|data|ai|ml|systems?|platform|application|firmware|embedded|security|solutions?|infrastructure)\s+(?:engineer|developer|architect)\b",
+    r"\b(?:junior|jr|associate|entry[- ]level|graduate|trainee|intern)\s+(?:developer|engineer|programmer)\b",
+    r"\bdevops\b", r"\bsdet\b", r"\bsoftware architect\b", r"\bsolutions architect\b",
+    r"\bfrontend\b", r"\bbackend\b", r"\bfull[- ]?stack\b", r"\bandroid\b", r"\bios\b",
+    r"\bdata engineer\b", r"\bweb dev\b", r"\bweb application\b",
+    r"\bdatabase administrator\b", r"\bdba\b", r"\bcyber\s?security\b", r"\binfosec\b",
+    r"\bweb designer\b", r"\bui/ux\b", r"\bqa\b", r"\bquality assurance\b",
+    r"\bsysadmin\b", r"\bsystem(?:s)? administrator\b", r"\bnetwork engineer\b",
+    r"\bcloud\b", r"\bproduct designer\b", r"\bquality engineering\b",
+    r"\bsalesforce (?:developer|administrator|admin)\b",
+    r"\bmarketing cloud developer\b"
 ]
 
 VA_PATTERNS = [
@@ -181,8 +192,16 @@ def is_virtual_assistant(title: str, description: str = "") -> bool:
 def is_entry_training_va(title: str, description: str = "") -> bool:
     t_str = str(title or "")
     d_str = str(description or "")
+    title_lower = t_str.lower()
     text = f"{t_str} {d_str}".lower()
     if not is_virtual_assistant(t_str, d_str):
+        return False
+    # Strict rejection of senior, lead, executive-to-c-level, or high-tenure VA roles
+    if any(re.search(pat, title_lower) for pat in SENIOR_PATTERNS):
+        return False
+    if re.search(r"\b(?:senior|lead|director|head of|manager|5\+|7\+|10\+)\b", text):
+        return False
+    if re.search(r"\b(?:executive assistant to (?:the )?(?:ceo|president|vp|vice president|director|managing director|board))\b", title_lower):
         return False
     return any(re.search(pat, text) for pat in VA_TRAINING_PATTERNS)
 
@@ -191,10 +210,33 @@ def is_non_tech(title: str, description: str = "") -> bool:
     d_str = str(description or "")
     title_lower = t_str.lower()
     text = f"{t_str} {d_str}".lower()
-    physical_role = re.search(r"\b(?:civil|structural|mechanical|construction|chemical|mining|petroleum)\s+(?:engineer|engineering)\b", title_lower)
-    explicit_software_role = re.search(r"\b(?:software|web|mobile|android|frontend|backend|full[- ]?stack|firmware|embedded)\b", title_lower)
-    if physical_role and not explicit_software_role:
+
+    # Explicit software / IT engineering roles that should NEVER be flagged as non-tech
+    explicit_software_role = re.search(
+        r"\b(?:software|web|mobile|android|ios|frontend|front[- ]?end|backend|back[- ]?end|full[- ]?stack|firmware|embedded|devops|sre|site reliability|cloud engineer|sdet|qa automation|data engineer|machine learning|ai engineer|salesforce developer|marketing cloud developer)\b",
+        title_lower
+    )
+    if explicit_software_role:
+        # If it's specifically sales/presales engineering, still catch it below
+        if not re.search(r"\b(?:sales|presales|pre-sales)\s+engineer\b", title_lower):
+            return False
+
+    # Physical, traditional engineering & construction roles (catches multi-word titles like Mechanical Design Engineer)
+    physical_role = re.search(
+        r"\b(?:civil|structural|mechanical|construction|chemical|mining|petroleum|sanitary|geotechnical|marine|architectural|draftsman|cad|hvac|refrigeration|plumbing|piping|electrical|electronics|instrumentation|site|field|facilities|building)\b.*?\b(?:engineer|engineering|technician|estimator|draftsman|inspector|supervisor)\b",
+        title_lower
+    )
+    if physical_role and not ("site reliability" in title_lower or re.search(r"\bsre\b", title_lower)):
         return True
+
+    # Non-software sales, presales, and marketing roles
+    sales_role = re.search(
+        r"\b(?:sales|presales|pre-sales|telemarketer|telemarketing|cold call(?:er|ing)?|account executive|account developer|business developer|business development|real estate|leasing|property management|broker|bidding)\b",
+        title_lower
+    )
+    if sales_role and not re.search(r"\b(?:software|web|full[- ]?stack|salesforce developer)\b", title_lower):
+        return True
+
     has_tech_override = any(re.search(pat, title_lower) for pat in TECH_WHITELIST_OVERRIDE)
     if has_tech_override:
         return False
@@ -228,7 +270,7 @@ def classify_experience_level(title: str, description: str = "") -> str:
     matches_tech = any(re.search(pat, title_lower) for pat in WEB_PATTERNS + DATA_AI_PATTERNS + TECH_WHITELIST_OVERRIDE)
     return "Mid-Level" if matches_tech else "Unspecified"
 
-def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True) -> bool:
+def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True, matrix: list = None) -> bool:
     t_str = str(title or "")
     d_str = str(description or "")
     if is_non_tech(t_str, d_str):
@@ -244,6 +286,12 @@ def is_relevant_opportunity(title: str, description: str = "", allow_va_training
             return is_entry_training_va(t_str, d_str)
         return False
 
+    # If matrix list is passed, enforce match against user matrix
+    if matrix:
+        text_lower = f"{t_str} {d_str}".lower()
+        if not any(k.lower().strip() in text_lower for k in matrix if k.strip()):
+            return False
+
     text = f"{t_str} {d_str}".lower()
     is_web = any(re.search(pat, text) for pat in WEB_PATTERNS)
     is_data = any(re.search(pat, text) for pat in DATA_AI_PATTERNS)
@@ -258,11 +306,12 @@ def classify_role(title: str, description: str = "") -> str:
         return "Virtual Assistant"
     matches_web = any(re.search(pat, text) for pat in WEB_PATTERNS)
     matches_data = any(re.search(pat, text) for pat in DATA_AI_PATTERNS)
+    matches_tech = any(re.search(pat, text) for pat in TECH_WHITELIST_OVERRIDE)
 
     if matches_web and matches_data:
         return "Both"
     if matches_data:
         return "Data/AI/ML"
-    if matches_web:
+    if matches_web or matches_tech:
         return "Web/Software Dev"
     return "Web/Software Dev"
