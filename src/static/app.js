@@ -2675,6 +2675,10 @@ function renderTelemetry(data) {
       syncStateEl.textContent += ` · Cloud retry ${new Date(data.cloud_run.next_at * 1000).toLocaleTimeString()}`;
     } else if (data.cloud_run?.status === 'queued') {
       syncStateEl.textContent += ' · Queued in cloud';
+    } else if (data.cloud_run?.status === 'stalled') {
+      syncStateEl.textContent += ' · Cloud stalled - click Sync to resume';
+    } else if (data.cloud_run?.status === 'partial') {
+      syncStateEl.textContent += ' · Cloud run ended - click Sync to resume';
     }
     syncStateEl.style.color = data.is_syncing ? 'var(--accent-blue)' : '#3fb950';
   }

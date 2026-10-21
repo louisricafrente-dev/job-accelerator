@@ -2,6 +2,7 @@
 import asyncio
 import json
 import math
+import os
 import time
 import uuid
 from src.database import acquire_sync_lease, release_sync_lease, get_user_setting, set_user_setting
@@ -10,6 +11,7 @@ RUN_KEY = "cloud_sync_run"
 TOPIC = "job-sync"
 ACTIVE = {"queued", "running", "waiting"}
 RUN_SECONDS = 24 * 3600
+STALE_SECONDS = 600
 
 
 def read_run(db_path):
@@ -17,8 +19,21 @@ def read_run(db_path):
     return json.loads(raw) if raw else {}
 
 
+def is_stale(run):
+    deployment = os.environ.get("VERCEL_DEPLOYMENT_ID")
+    moved = deployment and run.get("deployment_id") != deployment
+    return (run.get("status") in ACTIVE and
+            (moved or time.time() > max(run.get("updated_at", 0), run.get("next_at", 0)) + STALE_SECONDS))
+
+
 def public_run(run):
-    return {key: value for key, value in run.items() if key != "queries"}
+    public = {key: value for key, value in run.items() if key != "queries"}
+    if public.get("status") in ACTIVE:
+        if public.get("expires_at", 0) <= time.time():
+            public.update(status="partial", error="Cloud run expired; sync again to resume saved searches")
+        elif is_stale(run):
+            public.update(status="stalled", error="Cloud worker has not continued; sync again to recover")
+    return public
 
 
 async def publish(run_id, step, delay=0):
@@ -42,6 +57,31 @@ def _start_run(db_path, queries, automatic):
     current = read_run(db_path)
     now = time.time()
     if current.get("status") in ACTIVE and current.get("expires_at", 0) > now:
+        if is_stale(current):
+            for key in ("sync_lease", "cloud_sync_worker_lease"):
+                lease = get_user_setting(db_path, key, "0|")
+                if int(lease.split("|", 1)[0]) > now:
+                    return {"status": "already_syncing", "cloud_run": public_run(current), "is_syncing": True}
+            recovery_lease = f"{int(now) + 30}|recover-{uuid.uuid4().hex}"
+            if not acquire_sync_lease(db_path, recovery_lease, int(now), key="cloud_sync_worker_lease"):
+                return {"status": "already_syncing", "cloud_run": public_run(current), "is_syncing": True}
+            try:
+                current = read_run(db_path)
+                if not is_stale(current):
+                    return {"status": "queued", "cloud_run": public_run(current), "is_syncing": True}
+                # Invalidate late deliveries without resetting the saved search cycle.
+                step = current.get("step", 0) + 1
+                try:
+                    delay = max(1, math.ceil(current.get("next_at", now) - time.time()))
+                    asyncio.run(publish(current["id"], step, delay))
+                except Exception as exc:
+                    raise RuntimeError("Could not recover the cloud queue; saved searches are retained") from exc
+                current.update(status="waiting" if delay > 2 else "queued", step=step,
+                               updated_at=time.time(), next_at=time.time() + delay,
+                               deployment_id=os.environ.get("VERCEL_DEPLOYMENT_ID"))
+                set_user_setting(db_path, RUN_KEY, json.dumps(current))
+            finally:
+                release_sync_lease(db_path, recovery_lease, key="cloud_sync_worker_lease")
         return {"status": "queued", "cloud_run": public_run(current), "is_syncing": True}
     if not queries:
         from src.aggregator import DEFAULT_QUERIES
@@ -49,7 +89,8 @@ def _start_run(db_path, queries, automatic):
         queries = [q.strip() for q in saved.split(",") if q.strip()] or DEFAULT_QUERIES
     run = {"id": uuid.uuid4().hex, "queries": list(dict.fromkeys(queries)),
            "status": "queued", "automatic": automatic, "started_at": now,
-           "expires_at": now + RUN_SECONDS, "step": 0, "updated_at": now}
+           "expires_at": now + RUN_SECONDS, "step": 0, "updated_at": now,
+           "deployment_id": os.environ.get("VERCEL_DEPLOYMENT_ID")}
     set_user_setting(db_path, RUN_KEY, json.dumps(run))
     try:
         asyncio.run(publish(run["id"], 0))
@@ -68,6 +109,16 @@ def continuation_delay(progress, now):
 
 
 async def process_message(db_path, payload, aggregator):
+    lease = f"{int(time.time()) + 360}|{uuid.uuid4().hex}"
+    if not await asyncio.to_thread(acquire_sync_lease, db_path, lease, int(time.time()), key="cloud_sync_worker_lease"):
+        raise RuntimeError("Another cloud worker is processing this run; retry delivery")
+    try:
+        await _process_message(db_path, payload, aggregator)
+    finally:
+        await asyncio.to_thread(release_sync_lease, db_path, lease, key="cloud_sync_worker_lease")
+
+
+async def _process_message(db_path, payload, aggregator):
     run = await asyncio.to_thread(read_run, db_path)
     if run.get("id") != payload.get("run_id") or run.get("status") not in ACTIVE:
         return
@@ -80,7 +131,7 @@ async def process_message(db_path, payload, aggregator):
     elif run.get("automatic") and await asyncio.to_thread(get_user_setting, db_path, "auto_sync_enabled", "1") in ("0", "false"):
         run.update(status="paused")
     else:
-        run.update(status="running", updated_at=now)
+        run.update(status="running", updated_at=now, deployment_id=os.environ.get("VERCEL_DEPLOYMENT_ID"))
         await asyncio.to_thread(set_user_setting, db_path, RUN_KEY, json.dumps(run))
         result = await asyncio.to_thread(aggregator.run_sync, queries=run["queries"], budget_seconds=120, cycle_id=run["id"])
         progress = result.get("progress", {})
