@@ -8,6 +8,7 @@ from src.database import get_user_setting, set_user_setting
 WORKER_KEY = "local_worker_status"
 REQUEST_KEY = "local_sync_request"
 WORKER_TTL = 45
+LEASE_SECONDS = 90
 
 
 def read_json_setting(db_path, key):
@@ -24,10 +25,30 @@ def worker_status(db_path, now=None):
     return status
 
 
+def owns_execution(db_path, request, now=None):
+    lease = get_user_setting(db_path, "sync_lease", "0|") or "0|"
+    expiry, _, owner = lease.partition("|")
+    return (expiry.isdigit() and int(expiry) > (time.time() if now is None else now)
+            and owner == request.get("lease_owner") and bool(owner))
+
+
+def public_request(db_path, request, worker=None):
+    result = dict(request)
+    worker = worker if worker is not None else worker_status(db_path)
+    if result.get("status") in {"queued", "running"}:
+        if not worker.get("online") or (result["status"] == "running" and not owns_execution(db_path, result)):
+            result.update(status="interrupted", error="Local worker disconnected; click Sync to resume or use cloud fallback")
+    return result
+
+
 def request_local_sync(db_path, queries=None, automatic=False):
     now = time.time()
     worker = worker_status(db_path, now)
     if not worker["online"]:
+        return None
+    lease = get_user_setting(db_path, "sync_lease", "0|") or "0|"
+    expiry, _, owner = lease.partition("|")
+    if expiry.isdigit() and int(expiry) > now and not owner.startswith("local:"):
         return None
     if not queries:
         saved = get_user_setting(db_path, "target_stack", "") or ""
@@ -45,7 +66,7 @@ def request_local_sync(db_path, queries=None, automatic=False):
 
 def cancel_queued_local_sync(db_path):
     request = read_json_setting(db_path, REQUEST_KEY)
-    if request.get("status") == "queued":
+    if request.get("status") in {"queued", "running"} and not worker_status(db_path)["online"]:
         request.update(status="cancelled", updated_at=time.time())
         set_user_setting(db_path, REQUEST_KEY, json.dumps(request))
 
