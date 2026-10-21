@@ -528,11 +528,9 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         bottle.response.content_type = "application/json"
         telemetry = aggregator.get_telemetry()
         telemetry.setdefault("last_result", aggregator.last_sync_result)
-        from src.cloud_sync import read_run, public_run, ACTIVE
+        from src.cloud_sync import read_run, public_run
         cloud_run = read_run(db_path)
         telemetry["cloud_run"] = public_run(cloud_run)
-        if cloud_run.get("status") in ACTIVE and cloud_run.get("expires_at", 0) > time.time():
-            telemetry["is_syncing"] = True
         return json.dumps(telemetry)
 
     @app.route("/api/sync", method=["GET", "POST", "OPTIONS"])

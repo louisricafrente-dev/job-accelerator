@@ -4,7 +4,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
-from src.cloud_sync import start_run, read_run, process_message, RUN_KEY, continuation_delay
+from src.cloud_sync import start_run, read_run, process_message, RUN_KEY, continuation_delay, public_run
 from src.database import init_db, set_user_setting
 
 
@@ -119,3 +119,88 @@ class TestCloudQueue(unittest.TestCase):
         immediate(process_message(self.db, {"run_id": run_id, "step": 0}, self.aggregator))
         self.assertEqual(read_run(self.db)["status"], "partial")
         self.aggregator.run_sync.assert_not_called()
+
+    def stale_run(self):
+        run_id = self.begin()
+        run = read_run(self.db)
+        run["updated_at"] = time.time() - 700
+        set_user_setting(self.db, RUN_KEY, json.dumps(run))
+        return run_id
+
+    def test_stale_queue_republishes_without_resetting_queries(self):
+        run_id = self.stale_run()
+        start_run(self.db, queries=["Different"])
+        run = read_run(self.db)
+        self.assertEqual(run["id"], run_id)
+        self.assertEqual(run["queries"], ["Kotlin", "React"])
+        self.assertEqual(run["step"], 1)
+        self.publisher.assert_awaited_with(run_id, 1, 1)
+        immediate(process_message(self.db, {"run_id": run_id, "step": 0}, self.aggregator))
+        self.aggregator.run_sync.assert_not_called()
+        immediate(process_message(self.db, {"run_id": run_id, "step": 1}, self.aggregator))
+        self.aggregator.run_sync.assert_called_once()
+
+    def test_failed_recovery_keeps_original_step(self):
+        self.stale_run()
+        self.publisher.side_effect = RuntimeError("queue unavailable")
+        with self.assertRaisesRegex(RuntimeError, "Could not recover"):
+            start_run(self.db)
+        self.assertEqual(read_run(self.db)["step"], 0)
+
+    def test_delayed_cooldown_is_not_stalled_or_republished(self):
+        self.stale_run()
+        run = read_run(self.db)
+        run.update(status="waiting", next_at=time.time() + 21600)
+        set_user_setting(self.db, RUN_KEY, json.dumps(run))
+        self.assertEqual(public_run(run)["status"], "waiting")
+        start_run(self.db)
+        self.publisher.assert_awaited_once()
+
+    def test_stale_and_expired_runs_are_reported_truthfully(self):
+        self.stale_run()
+        run = read_run(self.db)
+        self.assertEqual(public_run(run)["status"], "stalled")
+        run["expires_at"] = time.time() - 1
+        self.assertEqual(public_run(run)["status"], "partial")
+
+    def test_recovery_does_not_interrupt_live_worker(self):
+        self.stale_run()
+        set_user_setting(self.db, "cloud_sync_worker_lease", f"{int(time.time())+360}|busy")
+        self.assertEqual(start_run(self.db)["status"], "already_syncing")
+        self.publisher.assert_awaited_once()
+
+    def test_simultaneous_worker_retries_instead_of_forking(self):
+        run_id = self.begin()
+        set_user_setting(self.db, "cloud_sync_worker_lease", f"{int(time.time())+360}|busy")
+        with self.assertRaisesRegex(RuntimeError, "Another cloud worker"):
+            immediate(process_message(self.db, {"run_id": run_id, "step": 0}, self.aggregator))
+        self.aggregator.run_sync.assert_not_called()
+
+    def test_api_callback_registers_vercel_assigned_consumer_group(self):
+        import importlib
+        callback = importlib.import_module("api.queue_worker")
+        with patch.object(callback, "subscribe") as register, patch.object(callback, "accept_and_handle", new_callable=AsyncMock) as accept:
+            immediate(callback.handle_delivery(b"{}", {"Ce-VqsConsumerGroup": "test-deployment-consumer"}))
+            immediate(callback.handle_delivery(b"{}", {"ce-vqsconsumergroup": "test-deployment-consumer"}))
+            register.assert_called_once()
+            self.assertEqual(str(register.call_args.kwargs["consumer_group"]), "test-deployment-consumer")
+            self.assertEqual(accept.await_count, 2)
+
+    def test_api_callback_rejects_missing_delivery_metadata(self):
+        from api.queue_worker import handle_delivery
+        with self.assertRaisesRegex(ValueError, "Missing queue consumer"):
+            immediate(handle_delivery(b"{}", {}))
+
+    def test_redeploy_requeues_same_cycle_and_preserves_future_cooldown(self):
+        with patch.dict(os.environ, {"VERCEL_DEPLOYMENT_ID": "deployment-old"}):
+            run_id = self.begin()
+        run = read_run(self.db)
+        run.update(status="waiting", next_at=time.time() + 3600)
+        set_user_setting(self.db, RUN_KEY, json.dumps(run))
+        with patch.dict(os.environ, {"VERCEL_DEPLOYMENT_ID": "deployment-new"}):
+            start_run(self.db)
+        recovered = read_run(self.db)
+        self.assertEqual(recovered["id"], run_id)
+        self.assertEqual(recovered["deployment_id"], "deployment-new")
+        self.assertEqual(recovered["status"], "waiting")
+        self.assertGreaterEqual(self.publisher.await_args.args[2], 3599)

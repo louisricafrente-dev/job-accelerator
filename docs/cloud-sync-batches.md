@@ -14,9 +14,13 @@ Automatic cron and production Manual Sync use the same durable search queue. The
 
 ## Using the progress indicator
 
-`28/4130 searches saved` counts completed keyword-board pairs, not unique jobs and not just 28 of 295 keywords globally. A single Manual Sync click automatically requests the next cloud batch while work is immediately available. Keep the dashboard tab open for this continuation; closing it prevents the next request. Each active request still runs in the cloud. Cooldown-only work pauses rather than polling or repeatedly retrying blocked boards. Automatic cron advances one batch per daily invocation. Some boards may be waiting for a cooldown. Manual Sync reloads results and counts after each completed batch.
+`28/4130 searches saved` counts completed keyword-board pairs, not unique jobs. Manual Sync publishes a durable cloud run. A private queue worker executes 120-second batches and publishes the next delivery; the browser can close. Cron still executes an initial 150-second batch and requests queue continuation.
 
-The existing cloud cron remains once per day. This change does not introduce a paid worker, more frequent schedule, or a guarantee that every keyword on every source is refreshed daily. Full 295-keyword rotation may require multiple runs. A more frequent supported cloud scheduler would be a separate hosting change.
+The API-directory deployment explicitly routes `/api/queue_worker` to its private queue function before the dashboard catch-all. The callback registers the consumer group supplied in Vercel's private delivery headers before SDK dispatch; this must match the deployment trigger's generated group.
+
+Queued work is distinct from an active scrape. Status only shows Syncing while a sync lease is active. A run with no worker update for ten minutes past its scheduled delivery is reported as stalled; expired runs are reported as partial. Clicking Sync or the next cron invocation republishes stalled work with a new message step, retaining its run ID, snapshotted keywords, search cursors, and cooldowns. Runs from another deployment are similarly republished into the current deployment partition, preserving a future scheduled retry. A worker lease serializes deliveries and recovery, so late or duplicate messages cannot fork continuation. Failed recovery retains the old step and reports an error.
+
+The cron schedule remains once daily. Source blocking and hosting failures can still prevent a complete rotation; unfinished searches remain checkpointed.
 
 ## Validation
 
