@@ -29,6 +29,9 @@ def request_local_sync(db_path, queries=None, automatic=False):
     worker = worker_status(db_path, now)
     if not worker["online"]:
         return None
+    if not queries:
+        saved = get_user_setting(db_path, "target_stack", "") or ""
+        queries = [query.strip() for query in saved.split(",") if query.strip()] or None
     current = read_json_setting(db_path, REQUEST_KEY)
     if current.get("status") in {"queued", "running"}:
         return {"status": "already_syncing", "is_syncing": True, "local_request": current,
