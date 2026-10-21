@@ -10,6 +10,26 @@ from src.models import Job
 
 
 class TestSyncIngestionCache(unittest.TestCase):
+    def test_cloud_entry_backfill_is_idempotent_and_preserves_tracking(self):
+        job = self.job()
+        job.title = "Developer II"
+        job.description = "Fresh graduates are welcome. Minimum 3 years experience required."
+        self.write([job])
+        row = get_jobs(self.db)[0]
+        update_job_status(self.db, row["id"], "saved", notes="Keep this")
+        self.sql.execute("UPDATE jobs SET experience_level = 'Mid-Level'")
+        self.sql.commit()
+        with patch("src.database.is_turso_active", return_value=True), patch(
+            "src.database.get_db_connection", side_effect=lambda *args: TursoConnection(self.client)
+        ):
+            init_db(self.db)
+            writes = self.writes
+            init_db(self.db)
+            self.assertEqual(self.writes, writes)
+        row = get_jobs(self.db)[0]
+        self.assertEqual((row["experience_level"], row["status"], row["notes"]),
+                         ("Junior / Entry", "saved", "Keep this"))
+
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)

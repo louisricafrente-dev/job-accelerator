@@ -6,7 +6,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 from src.models import Job, normalize_date, clean_url
-from src.classifier import is_work_authorized_location
+from src.classifier import is_work_authorized_location, classify_experience_level
 
 VALID_STATUSES = {"new", "saved", "applied", "ignored"}
 VALID_STAGES = {"applied", "hr_screening", "tech_exam", "final_interview", "offer", "rejected", "screening", "interview", "technical", "withdrawn"}
@@ -288,6 +288,15 @@ def init_db(db_path: str = "data/jobs.db") -> None:
                     columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
                     if "description" not in columns:
                         raise
+            migration_key = "entry_description_backfill_20261021_inclusive_v2"
+            if not conn.execute("SELECT value FROM user_settings WHERE key = ?", (migration_key,)).fetchone():
+                rows = conn.execute("SELECT id, title, description FROM jobs WHERE experience_level != 'Junior / Entry'").fetchall()
+                changes = [("Junior / Entry", row[0]) for row in rows
+                           if classify_experience_level(row[1], row[2] or "") == "Junior / Entry"]
+                for start in range(0, len(changes), 50):
+                    conn.cursor().executemany("UPDATE jobs SET experience_level = ? WHERE id = ?", changes[start:start + 50])
+                conn.execute("INSERT INTO user_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
+                             (migration_key, str(len(changes))))
         finally:
             conn.close()
         return
@@ -316,13 +325,12 @@ def init_db(db_path: str = "data/jobs.db") -> None:
 
         # Safe backfill for legacy unclassified junior/entry opportunities
         try:
-            from src.classifier import classify_experience_level
-            cursor.execute("SELECT id, title, experience_level FROM jobs WHERE experience_level != 'Junior / Entry';")
+            cursor.execute("SELECT id, title, experience_level, description FROM jobs WHERE experience_level != 'Junior / Entry';")
             legacy_rows = cursor.fetchall()
             to_update = []
             for row in legacy_rows:
                 jid, title, old_lvl = row[0], row[1], row[2]
-                new_lvl = classify_experience_level(title)
+                new_lvl = classify_experience_level(title, row[3] or "")
                 if new_lvl == "Junior / Entry" and old_lvl != "Junior / Entry":
                     to_update.append((new_lvl, jid))
             if to_update:
@@ -351,7 +359,7 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
             catalog = sync_cache["catalog"]
             known_hashes = sync_cache["known_hashes"]
         elif cloud:
-            for row in cursor.execute("SELECT dedup_hash, company, title, location, platform, job_url, salary, description, date_posted, sources, status FROM jobs ORDER BY id DESC").fetchall():
+            for row in cursor.execute("SELECT dedup_hash, company, title, location, platform, job_url, salary, description, date_posted, sources, status, experience_level FROM jobs ORDER BY id DESC").fetchall():
                 item = dict(row)
                 norm_co = normalize_company(item["company"]) or item["company"].strip().lower()
                 norm_ti = normalize_title(item["title"]) or item["title"].strip().lower()
@@ -365,6 +373,8 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                 cursor.execute(sql, params)
 
         for job in jobs:
+            if classify_experience_level(job.title, job.description or "") == "Junior / Entry":
+                job.experience_level = "Junior / Entry"
             if not is_work_authorized_location(job.location, job.title, job.platform, job.description):
                 skipped += 1
                 continue
@@ -377,7 +387,7 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
             else:
                 cursor.execute(
                     """
-                    SELECT id, dedup_hash, platform, job_url, salary, description, date_posted, sources, status, location, company, title
+                    SELECT id, dedup_hash, platform, job_url, salary, description, date_posted, sources, status, location, company, title, experience_level
                     FROM jobs
                     WHERE lower(trim(company)) = ? AND lower(trim(title)) = ?
                     ORDER BY id DESC;
@@ -388,7 +398,7 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                 if not candidates:
                     cursor.execute(
                         """
-                        SELECT id, dedup_hash, platform, job_url, salary, description, date_posted, sources, status, location, company, title
+                        SELECT id, dedup_hash, platform, job_url, salary, description, date_posted, sources, status, location, company, title, experience_level
                         FROM jobs
                         WHERE lower(trim(company)) LIKE ?
                         ORDER BY id DESC;
@@ -464,6 +474,11 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                     skipped += 1
 
                 encoded_sources = json.dumps(sources_list)
+                if (existing.get("experience_level") != "Junior / Entry"
+                        and classify_experience_level(existing["title"], new_description) == "Junior / Entry"):
+                    write("UPDATE jobs SET experience_level = ? WHERE dedup_hash = ?",
+                          ("Junior / Entry", existing["dedup_hash"]))
+                    existing["experience_level"] = "Junior / Entry"
                 if (encoded_sources == existing["sources"]
                         and new_salary == (existing["salary"] or "")
                         and new_date == existing_date

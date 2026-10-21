@@ -68,7 +68,7 @@ class JobSpyAdapter(BaseConnector):
                     job_url=url,
                     salary=salary,
                     role_category=classify_role(title),
-                    experience_level=classify_experience_level(title),
+                    experience_level=classify_experience_level(title, description),
                     date_posted=date_str,
                     description=description
                 ))

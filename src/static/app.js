@@ -2617,10 +2617,11 @@ const MONITORED_BOARDS = [
   { key: 'Arc', label: 'Arc Dev', domain: 'arc.dev', type: 'Global Remote' },
   { key: 'Jobicy', label: 'Jobicy', domain: 'jobicy.com/api', type: 'Remote jobs API' },
   { key: 'ZipRecruiter', label: 'ZipRecruiter', domain: 'ziprecruiter.com', type: 'JobSpy' },
-  { key: 'Bayt', label: 'Bayt', domain: 'bayt.com', type: 'JobSpy' },
-  { key: 'Naukri', label: 'Naukri', domain: 'naukri.com', type: 'JobSpy' },
-  { key: 'BDJobs', label: 'BDJobs', domain: 'bdjobs.com', type: 'JobSpy' },
-  { key: 'HelloWork', label: 'HelloWork', domain: 'hellowork.com', type: 'JobSpy' }
+  { key: 'Freelancer', label: 'Freelancer', domain: 'freelancer.com', type: 'Direct Contract' },
+  { key: 'Upwork', label: 'Upwork', domain: 'upwork.com', type: 'Direct Contract' },
+  { key: 'Wellfound', label: 'Wellfound', domain: 'wellfound.com', type: 'Tech Startups' },
+  { key: 'Contra', label: 'Contra', domain: 'contra.com', type: 'Direct Freelance' },
+  { key: 'FlexJobs', label: 'FlexJobs', domain: 'flexjobs.com', type: 'Screened Remote' }
 ];
 
 let telemetryTimer = null;

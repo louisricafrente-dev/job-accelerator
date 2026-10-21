@@ -9,7 +9,10 @@ from src.connectors.remote_feed import (
     HimalayasConnector,
     JobicyConnector,
     FreelancerConnector,
-    UpworkConnector
+    UpworkConnector,
+    WellfoundConnector,
+    ContraConnector,
+    FlexJobsConnector
 )
 from src.connectors.ph_jobs import KalibrrConnector, BossjobConnector, JobStreetConnector, OnlineJobsConnector
 from src.connectors.jobspy_adapter import JobSpyAdapter
@@ -57,8 +60,11 @@ def get_default_connectors() -> List[BaseConnector]:
         OnlineJobsConnector(),
         KalibrrConnector(),
 
-        # Tier 2 — High Value Startups & PH Portals
+        # Tier 2 — High Value Startups, Direct Clients & Portals
         BossjobConnector(),
+        WellfoundConnector(),
+        ContraConnector(),
+        FlexJobsConnector(),
         # Tier 3 — Global Remote & Direct APIs (High Reliability)
         RemotiveConnector(),
         HimalayasConnector(),
@@ -101,6 +107,28 @@ class Aggregator:
         shared = get_user_setting(self.db_path, "sync_status", "")
         if shared and not self.is_syncing:
             status = json.loads(shared)
+            valid_platforms = {conn.platform for conn in self.connectors}
+            status["total_boards"] = len(self.connectors)
+            if "progress" in status and isinstance(status["progress"], dict) and "boards" in status["progress"]:
+                status["progress"]["boards"] = {
+                    p: b for p, b in status["progress"]["boards"].items() if p in valid_platforms
+                }
+            if "last_result" in status and isinstance(status["last_result"], dict):
+                lr_prog = status["last_result"].get("progress")
+                if isinstance(lr_prog, dict) and "boards" in lr_prog:
+                    lr_prog["boards"] = {
+                        p: b for p, b in lr_prog["boards"].items() if p in valid_platforms
+                    }
+                    query_boards = [c for c in self.connectors if not getattr(c, "is_feed", False)]
+                    lr_prog["total_searches"] = lr_prog.get("keywords", 0) * len(query_boards)
+                    lr_prog["completed_searches"] = sum(
+                        max(0, lr_prog["boards"].get(c.platform, {}).get("cursor", 0) - len(lr_prog["boards"].get(c.platform, {}).get("retry", [])))
+                        for c in query_boards
+                    )
+            if "telemetry" in status and isinstance(status["telemetry"], dict):
+                status["telemetry"] = {
+                    p: t for p, t in status["telemetry"].items() if p in valid_platforms
+                }
             lease = get_user_setting(self.db_path, "sync_lease", "0|")
             status["is_syncing"] = int(lease.split("|", 1)[0]) > time.time()
             if not status["is_syncing"] and status.get("last_result", {}).get("status") == "running":
