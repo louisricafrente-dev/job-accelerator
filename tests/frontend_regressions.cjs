@@ -30,6 +30,20 @@ async function main() {
   assert.match(elements.get('telemetry-boards-grid').innerHTML, /RETRY/);
   assert.doesNotMatch(elements.get('telemetry-boards-grid').innerHTML, /SCANNING/);
   assert.match(elements.get('telemetry-sync-state').textContent, /10\/100/);
+  context.renderTelemetry({is_syncing: true,
+    local_request: {id: 'run-1', status: 'running'}, local_worker: {online: true, heartbeat_at: Date.now() / 1000},
+    run_totals: {request_id: 'run-1', total_fetched: 42, sent: 20, added: 5, platforms: {LinkedIn: 42}},
+    progress: {completed_searches: 10, total_searches: 100, has_more: true, can_continue: false,
+      next_run_at: Date.now() / 1000 + 300, boards: {LinkedIn: {next_at: Date.now() / 1000 + 300}}},
+    telemetry: {LinkedIn: {status: 'cooldown', error: 'HTTP 403', count: 0}}});
+  assert.match(elements.get('telemetry-sync-state').textContent, /Waiting for retry.*Resumes automatically/);
+  assert.match(elements.get('telemetry-sync-state').textContent, /42 fetched.*20 uploaded.*5 new/);
+  assert.doesNotMatch(elements.get('telemetry-sync-state').textContent, /Syncing/);
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /HTTP 403.*Retry at/);
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /42 fetched/);
+  assert.doesNotMatch(elements.get('telemetry-boards-grid').innerHTML, /STANDBY|SYNCED|Ready/);
+  context.renderTelemetry({is_syncing: false, progress: {completed_searches: 10, total_searches: 100, has_more: true}});
+  assert.equal(elements.get('sync-text').textContent, 'Resume sync');
 
   for (const title of ['Software Engineer III', 'Senior Software Engineer, Backend (Identity International)']) {
     assert.equal(context.getSkillsMatch({ title, experience_level: 'Senior / Lead' }).count, 0);

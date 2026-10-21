@@ -151,6 +151,34 @@ class TestLocalWorker(unittest.TestCase):
         self.assertFalse(body["is_syncing"])
         self.assertEqual(body["local_request"]["status"], "interrupted")
 
+    def test_resume_partial_run_keeps_cycle_and_completed_searches(self):
+        req = self.claim()
+        req.update(status="complete", completed_at=time.time(), requested_at=time.time() - 90000,
+                   result={"status": "partial", "progress": {"has_more": True}})
+        set_user_setting(self.db, REQUEST_KEY, json.dumps(req))
+        resumed = request_local_sync(self.db, ["python developer"])["local_request"]
+        self.assertEqual(resumed["id"], req["id"])
+        self.assertEqual(resumed["status"], "queued")
+        self.assertGreater(resumed["requested_at"], req["requested_at"])
+        self.assertNotIn("completed_at", resumed)
+        _, claimed = self.call("/api/local-worker/request?worker_id=test-pc")
+        self.assertEqual(claimed["request"]["id"], req["id"])
+
+    def test_cumulative_counts_survive_empty_batch_and_reach_dashboard(self):
+        req = self.claim()
+        set_user_setting(self.local, "sync_batch_progress", json.dumps({"cycle_id": req["id"]}))
+        set_user_setting(self.local, "local_worker_scrape_totals", json.dumps({
+            "request_id": req["id"], "total_fetched": 42, "platforms": {"Source A": 42}}))
+        set_user_setting(self.local, "local_worker_upload_totals", json.dumps({
+            "request_id": req["id"], "sent": 20, "added": 5, "skipped": 15}))
+        self.call("/api/local-worker/heartbeat", "POST", {
+            "worker_id": "test-pc", "active_request_id": req["id"], "telemetry": worker.local_telemetry()})
+        _, body = self.call("/api/sync/status", admin=True)
+        self.assertEqual(body["run_totals"]["total_fetched"], 42)
+        self.assertEqual(body["run_totals"]["added"], 5)
+        set_user_setting(self.local, "sync_batch_progress", json.dumps({"cycle_id": "different-run"}))
+        self.assertNotIn("run_totals", worker.local_telemetry())
+
     def test_idle_worker_does_not_override_newer_cloud_results(self):
         self.heartbeat()
         set_user_setting(self.db, REQUEST_KEY, json.dumps({"status": "complete", "result": {"added": 1}}))
@@ -203,6 +231,38 @@ class TestLocalWorker(unittest.TestCase):
     def test_cron_header_alone_is_not_authorization(self):
         status, _ = self.call("/api/cron/sync", extra={"HTTP_AUTHORIZATION": "", "HTTP_X_VERCEL_CRON": "1"})
         self.assertEqual(status, 403)
+
+    def test_midnight_cron_queues_cloud_even_when_local_worker_is_online(self):
+        self.heartbeat()
+        with patch("src.cloud_sync.start_run", return_value={"status": "queued", "cloud_run": {"id": "midnight"}}) as queue, patch(
+            "src.local_worker.request_local_sync") as local:
+            status, result = self.call("/api/cron/cloud-sync", admin=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["cloud_run"]["id"], "midnight")
+        queue.assert_called_once_with(self.db, automatic=True)
+        local.assert_not_called()
+
+    def test_midnight_cron_requires_secret_and_honors_pause(self):
+        status, _ = self.call("/api/cron/cloud-sync")
+        self.assertEqual(status, 403)
+        with patch.dict(os.environ, {"CRON_SECRET": "test-cron"}), patch("src.cloud_sync.start_run", return_value={"status": "queued"}) as queue:
+            status, _ = self.call("/api/cron/cloud-sync", extra={"HTTP_AUTHORIZATION": "Bearer test-cron"})
+            self.assertEqual(status, 200)
+            queue.assert_called_once()
+            set_user_setting(self.db, "auto_sync_enabled", "0")
+            _, result = self.call("/api/cron/cloud-sync", extra={"HTTP_AUTHORIZATION": "Bearer test-cron"})
+            self.assertEqual(result["status"], "skipped")
+            self.assertEqual(queue.call_count, 1)
+
+    def test_midnight_schedule_uses_manila_time_and_preserves_existing_schedule(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text())
+        schedules = {job["path"]: job["schedule"] for job in config["crons"]}
+        self.assertEqual(schedules["/api/cron/sync"], "0 1 * * *")
+        self.assertEqual(schedules["/api/cron/cloud-sync"], "0 16 * * *")
+        midnight = datetime(2026, 10, 21, 16, tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Asia/Manila"))
+        self.assertEqual((midnight.hour, midnight.minute), (0, 0))
 
     def test_second_worker_process_cannot_take_same_lock(self):
         with patch.object(worker, "LOCAL_DATA", Path(self.temp.name)):

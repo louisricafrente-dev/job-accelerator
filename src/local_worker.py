@@ -57,6 +57,13 @@ def request_local_sync(db_path, queries=None, automatic=False):
     if current.get("status") in {"queued", "running"}:
         return {"status": "already_syncing", "is_syncing": True, "local_request": current,
                 "local_worker": worker}
+    previous = current.get("result") or {}
+    if (previous.get("progress", {}).get("has_more") and current.get("queries") == queries
+            and current.get("status") in {"complete", "error"}):
+        current.update(status="queued", requested_at=now, updated_at=now, automatic=automatic)
+        current.pop("completed_at", None)
+        set_user_setting(db_path, REQUEST_KEY, json.dumps(current))
+        return {"status": "queued", "is_syncing": True, "local_request": current, "local_worker": worker}
     request = {"id": uuid.uuid4().hex, "queries": queries, "automatic": automatic,
                "status": "queued", "requested_at": now, "updated_at": now}
     set_user_setting(db_path, REQUEST_KEY, json.dumps(request))

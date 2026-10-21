@@ -100,6 +100,36 @@ class TestSyncBatches(unittest.TestCase):
         self.run_batch(["a", "b"], budget=10)
         self.assertEqual(self.board.calls, ["a", "b", "a"])
 
+    def test_cooldown_does_not_advance_last_success_and_survives_restart(self):
+        self.run_batch(["a", "b", "c", "d"])
+        last_success = json.loads(get_user_setting(self.db, "sync_status"))["last_sync_time"]
+        self.board.error = "HTTP 404"
+        self.clock.value += 10
+        failed = self.run_batch(["a", "b", "c", "d"])
+        calls = list(self.board.calls)
+        retry_at = failed["progress"]["next_run_at"]
+        self.assertGreaterEqual(retry_at - self.clock.time(), 6 * 3600 - 1)
+        self.clock.value += 60
+        waiting = self.run_batch(["a", "b", "c", "d"])
+        self.assertEqual(self.board.calls, calls)
+        self.assertEqual(json.loads(get_user_setting(self.db, "sync_status"))["last_sync_time"], last_success)
+        self.assertEqual(waiting["telemetry"][self.board.platform]["error"], "HTTP 404")
+        self.clock.value = retry_at - 2000000000 + 1
+        self.board.error = ""
+        recovered = self.run_batch(["a", "b", "c", "d"], budget=20)
+        self.assertFalse(recovered["progress"]["has_more"])
+        self.assertEqual(self.board.calls, ["a", "b", "c", "d", "c"])
+
+    def test_completed_board_is_reported_complete_after_restart(self):
+        self.run_batch(["a"])
+        result = self.run_batch(["a"])
+        self.assertEqual(result["telemetry"][self.board.platform]["status"], "complete")
+
+    def test_legacy_poll_timestamp_is_not_a_successful_fetch(self):
+        set_user_setting(self.db, "sync_status", json.dumps({"last_sync_time": self.clock.time()}))
+        self.run_batch(["a"], budget=0)
+        self.assertEqual(json.loads(get_user_setting(self.db, "sync_status"))["last_sync_time"], 0)
+
     def test_ingestion_failure_does_not_advance_the_checkpoint(self):
         with patch("src.sync_batches.insert_jobs", side_effect=RuntimeError("offline database")):
             result = self.run_batch(["a", "b"])

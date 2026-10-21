@@ -1,0 +1,14 @@
+# Scraper status, continuation, and midnight cloud sync
+
+- Local telemetry now exposes persisted cumulative fetch and upload counts for the matching request. Empty cooldown polls no longer make earlier uploads disappear from the board cards.
+- Failed boards show their error and retry time even during cooldown. Completed boards show DONE. The overall status distinguishes waiting from fetching, includes worker heartbeat time, and offers Resume sync after an unfinished run ends.
+- Only successful source fetches advance the harvest timestamp. Legacy polling timestamps are not treated as proof of a successful fetch; the display remains unrecorded until a successful fetch occurs under the corrected worker.
+- HTTP 404/410 endpoints use the six-hour source backoff, preventing a broken endpoint from consuming a new keyword every fifteen minutes. Failed searches remain retryable. This does not repair upstream endpoints, remove site access restrictions, or claim that every board works.
+- Local partial runs resume the same request/search cycle with a renewed 24-hour window. Expired cloud runs receive a fresh queue ID while retaining their original search cycle. Completed searches and upload acknowledgments remain saved.
+- Vercel runs `/api/cron/cloud-sync` daily at 16:00 UTC (midnight Asia/Manila). The existing 01:00 UTC (09:00 Asia/Manila) `/api/cron/sync` schedule remains. The midnight route queues cloud execution even when a local worker is online; execution leases prevent simultaneous ingestion. It honors the automatic-sync pause setting and requires the existing CRON_SECRET or an administrator session.
+
+Validation: 183 Python tests passed, including legacy timestamp migration, cooldown recovery across aggregator instances, request resumption, cumulative API telemetry, cloud cycle preservation, cron authentication/pause, cloud selection with an online PC, and timezone configuration. Frontend, workflow, settings, syntax, authentication/isolation, and whitespace checks passed.
+
+Production verification before the final timestamp migration deployment: restarting the actual Windows worker recovered request `772b8ce9c07543159229bbda91121eec`; all saved board cursors remained at or above their pre-restart values. Seven completed query boards retained 295 completed searches each. The live dashboard displayed cumulative counts, visible source errors, and automatic retry times. Vercel CLI confirmed both deployed cron entries. A SQLite backup and the pre-restart checkpoint were retained in the job-hunting workspace output folder.
+
+The scheduled midnight invocation itself has not occurred during verification. Cron configuration and routing tests establish the schedule and dispatch path, not a guarantee that restricted upstream job boards will return jobs. The PC must remain awake for local execution; the cloud schedule runs independently of the PC.
