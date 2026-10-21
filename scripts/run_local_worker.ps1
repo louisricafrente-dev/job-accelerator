@@ -7,5 +7,6 @@ if (-not (Test-Path -LiteralPath $tokenFile)) {
 $dataDir = Join-Path $env:LOCALAPPDATA 'JobAccelerator'
 New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
 Set-Location -LiteralPath $root
-& python (Join-Path $PSScriptRoot 'local_worker.py') *>> (Join-Path $dataDir 'worker.log')
-exit $LASTEXITCODE
+$python = (Get-Command python.exe -ErrorAction Stop).Source
+$process = Start-Process -FilePath $python -ArgumentList @('-u', ('"' + (Join-Path $PSScriptRoot 'local_worker.py') + '"')) -WindowStyle Hidden -Wait -PassThru
+exit $process.ExitCode

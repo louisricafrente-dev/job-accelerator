@@ -949,6 +949,21 @@ def release_sync_lease(db_path: str, lease: str, key: str = "sync_lease") -> Non
     finally:
         conn.close()
 
+
+def renew_sync_lease(db_path: str, owner: str, expires_at: int, now: int, key: str = "sync_lease") -> bool:
+    conn = get_db_connection(db_path)
+    try:
+        cursor = conn.execute(
+            "UPDATE user_settings SET value=? WHERE key=? "
+            "AND substr(value, instr(value, '|') + 1)=? "
+            "AND CAST(substr(value, 1, instr(value, '|') - 1) AS INTEGER)>?",
+            (f"{expires_at}|{owner}", key, owner, now),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
 def get_all_user_settings(db_path: str) -> Dict[str, str]:
     conn = get_db_connection(db_path)
     try:

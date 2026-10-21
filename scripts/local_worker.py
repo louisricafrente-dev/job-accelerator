@@ -7,6 +7,8 @@ import sys
 import threading
 import time
 import uuid
+import hashlib
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -37,45 +39,43 @@ def api_call(path, method="GET", data=None):
         return json.loads(response.read().decode("utf-8"))
 
 
-def local_telemetry():
-    raw = get_user_setting(DB_PATH, "sync_status", "")
-    try:
-        status = json.loads(raw) if raw else {}
-    except (ValueError, TypeError):
-        status = {}
+def local_telemetry(aggregator=None):
+    if aggregator is not None:
+        status = aggregator.get_telemetry()
+    else:
+        raw = get_user_setting(DB_PATH, "sync_status", "")
+        try:
+            status = json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            status = {}
     return {key: status[key] for key in ("progress", "last_result", "last_sync_time", "logs", "telemetry", "total_boards") if key in status}
 
 
-def heartbeat(worker_id, active_request_id=""):
+def heartbeat(worker_id, active_request_id="", aggregator=None):
     return api_call("/api/local-worker/heartbeat", "POST", {
         "worker_id": worker_id,
         "machine": socket.gethostname(),
         "active_request_id": active_request_id,
-        "telemetry": local_telemetry(),
+        "telemetry": local_telemetry(aggregator),
     })
 
 
-def keep_alive(worker_id, active_request, stop):
+def keep_alive(worker_id, active_request, stop, aggregator=None):
     while not stop.wait(HEARTBEAT_SECONDS):
         try:
-            heartbeat(worker_id, active_request[0])
+            heartbeat(worker_id, active_request[0], aggregator)
         except Exception as exc:
             print(f"Local worker heartbeat failed: {exc}", flush=True)
 
 
-def max_job_id():
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        return conn.execute("SELECT COALESCE(MAX(id), 0) FROM jobs").fetchone()[0]
-    finally:
-        conn.close()
-
-
-def pending_jobs(after_id):
+def pending_jobs():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute("SELECT id, title, company, location, platform, tier, job_url, salary, description, role_category, experience_level, date_posted, sources FROM jobs WHERE id > ? ORDER BY id", (after_id,)).fetchall()
+        conn.execute("CREATE TABLE IF NOT EXISTS worker_upload_ack (job_id INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL)")
+        conn.commit()
+        acknowledged = dict(conn.execute("SELECT job_id, fingerprint FROM worker_upload_ack").fetchall())
+        rows = conn.execute("SELECT id, title, company, location, platform, tier, job_url, salary, description, role_category, experience_level, date_posted, sources FROM jobs ORDER BY id").fetchall()
         result = []
         for row in rows:
             item = dict(row)
@@ -83,46 +83,79 @@ def pending_jobs(after_id):
                 item["sources"] = json.loads(item["sources"] or "[]")
             except (ValueError, TypeError):
                 item["sources"] = []
-            result.append(item)
+            fingerprint = hashlib.sha256(json.dumps(item, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+            if acknowledged.get(item["id"]) != fingerprint:
+                item["_fingerprint"] = fingerprint
+                result.append(item)
+                if len(result) >= UPLOAD_BATCH_SIZE:
+                    break
         return result
     finally:
         conn.close()
 
 
-def upload_pending(request_id):
-    cursor = int(get_user_setting(DB_PATH, "local_worker_upload_id", "0") or 0)
-    added = skipped = sent = 0
+def upload_pending(request_id, worker_id):
+    totals = json.loads(get_user_setting(DB_PATH, "local_worker_upload_totals", "{}") or "{}")
+    if totals.get("request_id") != request_id:
+        totals = {"request_id": request_id, "added": 0, "skipped": 0, "sent": 0}
     while True:
-        batch = pending_jobs(cursor)[:UPLOAD_BATCH_SIZE]
+        batch = pending_jobs()
         if not batch:
             break
-        result = api_call("/api/local-worker/jobs", "POST", {"request_id": request_id, "jobs": batch})
-        added += result.get("added", 0)
-        skipped += result.get("skipped", 0)
-        sent += len(batch)
-        cursor = batch[-1]["id"]
-        set_user_setting(DB_PATH, "local_worker_upload_id", str(cursor))
-    return added, skipped, sent
+        payload = [{key: value for key, value in item.items() if key != "_fingerprint"} for item in batch]
+        result = api_call("/api/local-worker/jobs", "POST", {"request_id": request_id, "worker_id": worker_id, "jobs": payload})
+        totals["added"] += result.get("added", 0)
+        totals["skipped"] += result.get("skipped", 0)
+        totals["sent"] += len(batch)
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            conn.executemany("INSERT OR REPLACE INTO worker_upload_ack (job_id, fingerprint) VALUES (?, ?)",
+                             [(item["id"], item["_fingerprint"]) for item in batch])
+            conn.execute("INSERT INTO user_settings (key,value) VALUES ('local_worker_upload_totals',?) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(totals),))
+            conn.commit()
+        finally:
+            conn.close()
+    return totals["added"], totals["skipped"], totals["sent"]
 
 
 def run_request(request, aggregator):
-    started_after = max_job_id()
-    result = aggregator.run_sync(queries=request.get("queries"))
-    added, skipped, uploaded = upload_pending(request["id"])
+    pending = json.loads(get_user_setting(DB_PATH, "local_worker_pending_result", "{}") or "{}")
+    if pending.get("request_id") == request["id"]:
+        result = pending["result"]
+    else:
+        result = aggregator.run_sync(queries=request.get("queries"), budget_seconds=30, cycle_id=request["id"])
+        if result.get("status") == "already_syncing":
+            raise RuntimeError("Local scraper is busy; retaining request for retry")
+        totals = json.loads(get_user_setting(DB_PATH, "local_worker_scrape_totals", "{}") or "{}")
+        if totals.get("request_id") != request["id"]:
+            totals = {"request_id": request["id"], "total_fetched": 0, "platforms": {}}
+        totals["total_fetched"] += result.get("total_fetched", 0)
+        for platform, count in result.get("platforms", {}).items():
+            totals["platforms"][platform] = totals["platforms"].get(platform, 0) + count
+        result = {**result, "total_fetched": totals["total_fetched"], "platforms": totals["platforms"]}
+        set_user_setting(DB_PATH, "local_worker_scrape_totals", json.dumps(totals))
+        set_user_setting(DB_PATH, "local_worker_pending_result", json.dumps({"request_id": request["id"], "result": result}))
+    added, skipped, uploaded = upload_pending(request["id"], request["worker_id"])
+    progress = result.get("progress") or {}
+    if progress.get("has_more") and time.time() - request.get("requested_at", time.time()) < 24 * 3600:
+        set_user_setting(DB_PATH, "local_worker_pending_result", "{}")
+        return progress
     result = {
-        "status": result.get("status", "error"),
+        "status": "partial" if progress.get("has_more") else result.get("status", "error"),
         "added": added,
         "skipped": skipped,
         "total_fetched": result.get("total_fetched", 0),
         "platforms": result.get("platforms", {}),
-        "total_boards": result.get("total_boards", 0),
+        "total_boards": len(aggregator.connectors),
+        "telemetry": result.get("telemetry", {}),
         "logs": result.get("logs", []),
         "progress": result.get("progress"),
-        "error": result.get("error"),
+        "error": result.get("error") or ("24-hour local run limit reached; unfinished searches remain saved" if progress.get("has_more") else None),
         "uploaded": uploaded,
-        "local_new": max_job_id() - started_after,
     }
-    api_call("/api/local-worker/complete", "POST", {"request_id": request["id"], "result": result})
+    api_call("/api/local-worker/complete", "POST", {"request_id": request["id"], "worker_id": request["worker_id"], "result": result})
+    set_user_setting(DB_PATH, "local_worker_pending_result", "{}")
 
 
 def load_token():
@@ -132,27 +165,52 @@ def load_token():
         raise RuntimeError(f"Local worker token is missing: {TOKEN_PATH}")
 
 
-def main():
+@contextmanager
+def worker_lock():
+    LOCAL_DATA.mkdir(parents=True, exist_ok=True)
+    with open(LOCAL_DATA / "worker.lock", "a+b") as handle:
+        handle.seek(0)
+        handle.write(b"0")
+        handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+
+
+def run_worker():
     load_token()
     LOCAL_DATA.mkdir(parents=True, exist_ok=True)
     init_db(DB_PATH)
+    # This database belongs exclusively to the process holding worker.lock.
+    from src.database import release_sync_lease
+    old_lease = get_user_setting(DB_PATH, "sync_lease", "")
+    if old_lease:
+        release_sync_lease(DB_PATH, old_lease)
     worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:12]}"
-    heartbeat(worker_id)
     from src.aggregator import Aggregator
     aggregator = Aggregator(DB_PATH)
     active_request = [""]
     stop = threading.Event()
-    heartbeat_thread = threading.Thread(target=keep_alive, args=(worker_id, active_request, stop), daemon=True)
+    heartbeat_thread = threading.Thread(target=keep_alive, args=(worker_id, active_request, stop, aggregator), daemon=True)
     heartbeat_thread.start()
     try:
         while True:
             try:
+                heartbeat(worker_id, active_request[0])
                 request_data = api_call(f"/api/local-worker/request?worker_id={worker_id}")
                 request = request_data.get("request")
                 if request:
                     active_request[0] = request.get("id", "")
-                    run_request(request, aggregator)
-                    active_request[0] = ""
+                    progress = run_request(request, aggregator)
+                    if progress and progress.get("has_more"):
+                        stop.wait(min(30, max(1, progress.get("next_run_at", time.time()) - time.time())))
+                    else:
+                        active_request[0] = ""
                 else:
                     heartbeat(worker_id)
                     time.sleep(POLL_SECONDS)
@@ -166,6 +224,14 @@ def main():
     finally:
         stop.set()
         heartbeat_thread.join(timeout=HEARTBEAT_SECONDS + 1)
+
+
+def main():
+    LOCAL_DATA.mkdir(parents=True, exist_ok=True)
+    sys.stdout = sys.stderr = open(LOCAL_DATA / "worker.log", "a", encoding="utf-8", buffering=1)
+    with worker_lock():
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} Local worker starting", flush=True)
+        run_worker()
 
 
 if __name__ == "__main__":

@@ -454,15 +454,14 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         cron_secret = os.environ.get("CRON_SECRET", "").strip()
         auth_hdr = bottle.request.headers.get("Authorization", "")
         is_cron = bool(cron_secret) and hmac.compare_digest(auth_hdr, f"Bearer {cron_secret}")
-        is_vercel_cron = bottle.request.headers.get("x-vercel-cron") == "1"
         is_admin = session and session.get("role") == "admin"
 
-        if not (is_cron or is_vercel_cron or is_admin):
+        if not (is_cron or is_admin):
             bottle.response.status = 403
             bottle.response.content_type = "application/json"
             return json.dumps({
                 "status": "forbidden",
-                "error": "Forbidden: Requires valid CRON_SECRET, Vercel Cron header, or Admin session."
+                "error": "Forbidden: Requires valid CRON_SECRET or Admin session."
             })
 
         if get_user_setting(db_path, "auto_sync_enabled", "1").strip().lower() in ("0", "false"):
@@ -536,22 +535,30 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         bottle.response.content_type = "application/json"
         telemetry = aggregator.get_telemetry()
         telemetry.setdefault("last_result", aggregator.last_sync_result)
-        from src.cloud_sync import read_run, public_run
+        from src.cloud_sync import read_run, public_run, ACTIVE
         cloud_run = read_run(db_path)
         telemetry["cloud_run"] = public_run(cloud_run)
-        from src.local_worker import read_json_setting, worker_status, REQUEST_KEY
+        cloud_pending = telemetry["cloud_run"].get("status") in ACTIVE
+        from src.local_worker import read_json_setting, worker_status, public_request, owns_execution, REQUEST_KEY
         telemetry["local_worker"] = worker_status(db_path)
-        telemetry["local_request"] = read_json_setting(db_path, REQUEST_KEY)
+        request = read_json_setting(db_path, REQUEST_KEY)
+        telemetry["local_request"] = public_request(db_path, request, telemetry["local_worker"])
         worker_telem = read_json_setting(db_path, "local_worker_telemetry")
-        if telemetry["local_worker"]["online"] and worker_telem:
+        local_active = (telemetry["local_worker"]["online"] and request.get("status") == "running"
+                        and owns_execution(db_path, request))
+        if local_active and worker_telem:
             telemetry.update({key: value for key, value in worker_telem.items()
                               if key in {"progress", "last_result", "last_sync_time", "logs", "telemetry", "platforms", "total_boards"}})
-        if telemetry["local_request"].get("status") in {"queued", "running"}:
+        if local_active or (request.get("status") == "queued" and telemetry["local_worker"]["online"]):
             telemetry["is_syncing"] = True
-        elif telemetry["local_request"].get("status") == "error":
-            telemetry["last_result"] = {"status": "error", "error": telemetry["local_request"].get("error", "Local worker failed")}
-        elif telemetry["local_request"].get("result"):
-            telemetry["last_result"] = telemetry["local_request"]["result"]
+        elif telemetry["local_request"].get("status") == "interrupted":
+            lease = get_user_setting(db_path, "sync_lease", "0|") or "0|"
+            if not cloud_pending and (lease.partition("|")[2] == request.get("lease_owner")
+                                      or (not telemetry["local_worker"]["online"] and not lease.partition("|")[2])):
+                telemetry["is_syncing"] = False
+                telemetry["last_result"] = {"status": "error", "error": telemetry["local_request"]["error"]}
+        if cloud_pending:
+            telemetry["is_syncing"] = True
         return json.dumps(telemetry)
 
     def require_local_worker():
@@ -570,17 +577,19 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         auth_err = require_local_worker()
         if auth_err:
             return auth_err
-        from src.local_worker import REQUEST_KEY, worker_status, read_json_setting
+        from src.local_worker import REQUEST_KEY, worker_status, read_json_setting, public_request
         bottle.response.content_type = "application/json"
-        return json.dumps({"worker": worker_status(db_path),
-                           "request": read_json_setting(db_path, REQUEST_KEY)})
+        worker = worker_status(db_path)
+        return json.dumps({"worker": worker,
+                           "request": public_request(db_path, read_json_setting(db_path, REQUEST_KEY), worker)})
 
     @app.route("/api/local-worker/heartbeat", method="POST")
     def api_local_worker_heartbeat():
         auth_err = require_local_worker()
         if auth_err:
             return auth_err
-        from src.local_worker import WORKER_KEY, read_json_setting
+        from src.local_worker import WORKER_KEY, REQUEST_KEY, LEASE_SECONDS, read_json_setting
+        from src.database import renew_sync_lease
         data = bottle.request.json or {}
         worker_id = str(data.get("worker_id", ""))[:100]
         if not worker_id:
@@ -595,28 +604,37 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                   "heartbeat_at": now, "version": 1,
                   "active_request_id": str(data.get("active_request_id", ""))[:100], "online": True}
         set_user_setting(db_path, WORKER_KEY, json.dumps(status))
+        request = read_json_setting(db_path, REQUEST_KEY)
+        lease_valid = None
+        if status["active_request_id"] and request.get("id") == status["active_request_id"] and request.get("worker_id") == worker_id and request.get("status") == "running":
+            lease_valid = renew_sync_lease(db_path, request.get("lease_owner", ""), int(now) + LEASE_SECONDS, int(now))
         local_telem = data.get("telemetry")
-        if isinstance(local_telem, dict):
+        if isinstance(local_telem, dict) and lease_valid:
             set_user_setting(db_path, "local_worker_telemetry", json.dumps(local_telem))
         bottle.response.content_type = "application/json"
-        return json.dumps({"status": "ok", "heartbeat_at": now})
+        return json.dumps({"status": "ok", "heartbeat_at": now, "lease_valid": lease_valid})
 
     @app.route("/api/local-worker/request", method="GET")
     def api_local_worker_request():
         auth_err = require_local_worker()
         if auth_err:
             return auth_err
-        from src.local_worker import REQUEST_KEY, WORKER_KEY, read_json_setting
+        from src.local_worker import REQUEST_KEY, LEASE_SECONDS, read_json_setting, worker_status, owns_execution
+        from src.database import acquire_sync_lease
         worker_id = bottle.request.query.get("worker_id", "")
-        worker = read_json_setting(db_path, WORKER_KEY)
+        worker = worker_status(db_path)
         if not worker.get("online") or worker.get("worker_id") != worker_id:
             bottle.response.status = 409
             return {"status": "error", "error": "Worker heartbeat is missing or belongs to another process"}
         request = read_json_setting(db_path, REQUEST_KEY)
-        if request.get("status") == "running" and request.get("worker_id") != worker_id:
-            request.update(status="queued", recovered_at=time.time())
-        if request.get("status") == "queued":
-            request.update(status="running", worker_id=worker_id, started_at=time.time(), updated_at=time.time())
+        if request.get("status") in {"queued", "running"}:
+            owner = f"local:{request['id']}:{worker_id}"
+            if not (request.get("lease_owner") == owner and owns_execution(db_path, request)):
+                lease = f"{int(time.time()) + LEASE_SECONDS}|{owner}"
+                if not acquire_sync_lease(db_path, lease, int(time.time())):
+                    return {"status": "waiting", "request": None}
+            request.update(status="running", worker_id=worker_id, lease_owner=owner,
+                           started_at=request.get("started_at", time.time()), updated_at=time.time())
             set_user_setting(db_path, REQUEST_KEY, json.dumps(request))
         bottle.response.content_type = "application/json"
         return json.dumps({"status": "ok", "request": request if request.get("status") == "running" and request.get("worker_id") == worker_id else None})
@@ -626,10 +644,11 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         auth_err = require_local_worker()
         if auth_err:
             return auth_err
-        from src.local_worker import REQUEST_KEY, read_json_setting
+        from src.local_worker import REQUEST_KEY, read_json_setting, owns_execution
         data = bottle.request.json or {}
         request = read_json_setting(db_path, REQUEST_KEY)
-        if request.get("id") != data.get("request_id") or request.get("status") != "running":
+        if (request.get("id") != data.get("request_id") or request.get("status") != "running"
+                or request.get("worker_id") != data.get("worker_id") or not owns_execution(db_path, request)):
             bottle.response.status = 409
             return {"status": "error", "error": "No matching sync request is active"}
         rows = data.get("jobs")
@@ -649,6 +668,15 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                                 experience_level=row.get("experience_level", "Unspecified"),
                                 date_posted=row.get("date_posted", ""), status="new",
                                 description=row.get("description", ""), sources=row.get("sources", [])))
+                from dataclasses import replace
+                primary = jobs[-1]
+                for source in (row.get("sources") or [])[:50]:
+                    if not isinstance(source, dict):
+                        continue
+                    platform, url = source.get("platform"), source.get("url")
+                    if (isinstance(platform, str) and isinstance(url, str) and url.startswith(("https://", "http://"))
+                            and (platform, url) != (primary.platform, primary.job_url)):
+                        jobs.append(replace(primary, platform=platform, job_url=url, dedup_hash=None))
         except (TypeError, ValueError) as exc:
             bottle.response.status = 400
             return {"status": "error", "error": f"Invalid job batch: {exc}"}
@@ -661,10 +689,12 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         auth_err = require_local_worker()
         if auth_err:
             return auth_err
-        from src.local_worker import REQUEST_KEY, read_json_setting
+        from src.local_worker import REQUEST_KEY, read_json_setting, owns_execution
+        from src.database import release_sync_lease
         data = bottle.request.json or {}
         request = read_json_setting(db_path, REQUEST_KEY)
-        if request.get("id") != data.get("request_id") or request.get("status") != "running":
+        if (request.get("id") != data.get("request_id") or request.get("status") != "running"
+                or request.get("worker_id") != data.get("worker_id") or not owns_execution(db_path, request)):
             bottle.response.status = 409
             return {"status": "error", "error": "No matching sync request is active"}
         result = data.get("result") if isinstance(data.get("result"), dict) else {}
@@ -687,6 +717,9 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                          "last_sync_time": time.time(), "last_result": result,
                          "total_boards": result.get("total_boards", 0),
                          "logs": result.get("logs", []), "telemetry": result.get("telemetry", {})}))
+        lease = get_user_setting(db_path, "sync_lease", "0|") or "0|"
+        if lease.partition("|")[2] == request.get("lease_owner"):
+            release_sync_lease(db_path, lease)
         bottle.response.content_type = "application/json"
         return json.dumps({"status": request["status"], "email_notification": email_result})
 
@@ -731,7 +764,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
 
         if os.environ.get("VERCEL"):
             from src.cloud_sync import ACTIVE, RUN_KEY, public_run, read_run, start_run
-            from src.local_worker import request_local_sync, worker_status
+            from src.local_worker import request_local_sync, worker_status, cancel_queued_local_sync
             try:
                 worker = worker_status(db_path)
                 if worker["online"]:
@@ -759,6 +792,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                     if local:
                         return local
 
+                cancel_queued_local_sync(db_path)
                 return start_run(db_path, queries=keywords if keywords else None)
             except Exception as exc:
                 bottle.response.status = 503
