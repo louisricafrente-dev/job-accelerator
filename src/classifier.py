@@ -1,5 +1,123 @@
 import re
 
+REMOTE_PATTERNS = [
+
+    r"\bremote\b", r"\bwfh\b", r"\bwork from home\b", r"\banywhere\b",
+    r"\bworldwide\b", r"\btelecommute\b", r"\bvirtual\b", r"\bhome-based\b",
+    r"\bwork from anywhere\b", r"\bremoto\b", r"\bdistributed\b"
+]
+
+REMOTE_KEYWORDS = REMOTE_PATTERNS
+
+DEDICATED_REMOTE_PLATFORMS = {
+    "remote ok", "we work remotely", "remotive", "himalayas", "jobicy", "arc"
+}
+
+DEDICATED_PH_PLATFORMS = {
+    "jobstreet", "onlinejobs.ph", "bossjob", "kalibrr"
+}
+
+FOREIGN_BOARDS = {
+    "naukri", "bdjobs", "bayt", "hellowork"
+}
+
+FOREIGN_LOCATION_PATTERNS = [
+    # India
+    r"\bindia\b", r"\bmumbai\b", r"\bpune\b", r"\bpalampur\b", r"\bkochi\b", r"\bhyderabad\b",
+    r"\bdelhi\b", r"\bnew delhi\b", r"\bbengaluru\b", r"\bbangalore\b", r"\bchennai\b", r"\bkolkata\b",
+    r"\bnoida\b", r"\bgurugram\b", r"\bgurgaon\b", r"\bahmedabad\b", r"\bjaipur\b",
+    r"\bhimachal\b", r"\bkarnataka\b", r"\bmaharashtra\b", r"\btamil nadu\b", r"\btelangana\b",
+    r"\bkerala\b", r"\bharyana\b", r"\buttar pradesh\b", r"\bwest bengal\b", r"\bgujarat\b",
+    # Bangladesh
+    r"\bbangladesh\b", r"\bdhaka\b", r"\bchittagong\b", r"\bgulshan\b", r"\buttara\b",
+    r"\bsylhet\b", r"\brajshahi\b", r"\bkhulna\b", r"\bbarisal\b", r"\brangpur\b",
+    r"\bcomilla\b", r"\bgazipur\b", r"\bnarayanganj\b",
+    # South Asia / Middle East
+    r"\bpakistan\b", r"\bkarachi\b", r"\blahore\b", r"\bislamabad\b", r"\bnepal\b",
+    r"\bkathmandu\b", r"\bsri lanka\b", r"\bcolombo\b", r"\buae\b", r"\bdubai\b",
+    r"\babu dhabi\b", r"\bsaudi arabia\b", r"\briyadh\b", r"\bjeddah\b", r"\bqatar\b",
+    r"\bdoha\b", r"\bkuwait\b", r"\bbahrain\b", r"\boman\b",
+    # Americas / Europe / Others
+    r"\bunited states\b", r"\busa\b", r"\bcanada\b", r"\bunited kingdom\b", r"\buk\b",
+    r"\blondon\b", r"\baustralia\b", r"\bsydney\b", r"\bmelbourne\b", r"\bsingapore\b",
+    r"\bmalaysia\b", r"\bkuala lumpur\b", r"\bgermany\b", r"\bberlin\b", r"\bmunich\b",
+    r"\bfrance\b", r"\bparis\b", r"\bnetherlands\b", r"\bamsterdam\b", r"\bjapan\b",
+    r"\btokyo\b"
+]
+
+PH_LOCATION_PATTERNS = [
+    r"\bphilippines\b", r"\bph\b", r"\bpilipinas\b",
+    # Metro Manila & NCR
+    r"\bmetro manila\b", r"(?<!delhi[\s\/\-])\bncr\b", r"\bnational capital region\b",
+    r"\bmanila\b", r"\bquezon\b", r"\btaguig\b", r"\bmakati\b", r"\bpasig\b",
+    r"\bmandaluyong\b", r"\bpasay\b", r"\bparanaque\b", r"\bparañaque\b",
+    r"\blas pinas\b", r"\blas piñas\b", r"\bmuntinlupa\b", r"\bmarikina\b",
+    r"\bcaloocan\b", r"\bmalabon\b", r"\bnavotas\b", r"\bvalenzuela\b",
+    r"\bsan juan\b", r"\bpateros\b", r"\bbgc\b", r"\bbonifacio\b", r"\bortigas\b",
+    r"\bayala\b", r"\balabang\b", r"\bfilinvest\b", r"\brockwell\b",
+    r"\beastwood\b", r"\baraneta\b", r"\bcubao\b", r"\bdiliman\b", r"\bpaco\b",
+    r"\bintramuros\b", r"\bermita\b", r"\bmalate\b", r"\bbinondo\b", r"\bsampaloc\b",
+    # Provinces & Regions
+    r"\bcebu\b", r"\bmandaue\b", r"\blapu-lapu\b", r"\bdavao\b", r"\bclark\b",
+    r"\bangeles\b", r"\bpampanga\b", r"\bsan fernando\b", r"\bcavite\b",
+    r"\bbacoor\b", r"\bimus\b", r"\bdasmarinas\b", r"\bdasmariñas\b",
+    r"\bgeneral trias\b", r"\bsilang\b", r"\blaguna\b", r"\bsanta rosa\b",
+    r"\bsta\. rosa\b", r"\bbinan\b", r"\bbiñan\b", r"\bcalamba\b",
+    r"\blos banos\b", r"\blos baños\b", r"\bsan pedro\b", r"\bcabuyao\b",
+    r"\bbatangas\b", r"\blipa\b", r"\btanauan\b", r"\bsto\. tomas\b",
+    r"\bsanto tomas\b", r"\brizal\b", r"\bantipolo\b", r"\bcainta\b",
+    r"\btaytay\b", r"\bangono\b", r"\bsan mateo\b", r"\bbulacan\b",
+    r"\bmalolos\b", r"\bmeycauayan\b", r"\bmarilao\b", r"\bsan jose del monte\b",
+    r"\bbaguio\b", r"\bbenguet\b", r"\bbataan\b", r"\bmariveles\b",
+    r"\bbalanga\b", r"\biloilo\b", r"\bbacolod\b", r"\bnegros\b",
+    r"\bcagayan de oro\b", r"\bcdo\b", r"\bmisamis\b", r"\bzamboanga\b",
+    r"\bgeneral santos\b", r"\bgensan\b", r"\bcamarines\b", r"\bdaet\b",
+    r"\bnaga\b", r"\bbicol\b", r"\blegazpi\b", r"\balbay\b", r"\btarlac\b",
+    r"\bnueva ecija\b", r"\bla union\b", r"\bpangasinan\b", r"\bsubic\b",
+    r"\bzambales\b", r"\blucena\b", r"\bmimaropa\b", r"\bcalabarzon\b",
+    # Indeed PH codes
+    r"\bp00\b", r"\bp01\b", r"\bp02\b", r"\bp03\b", r"\bp04\b", r"\bp05\b",
+    r"\bp06\b", r"\bp07\b", r"\bp08\b", r"\bp09\b", r"\bp10\b", r"\b04a\b", r"\b04b\b"
+]
+
+def is_work_authorized_location(location: str, title: str = "", platform: str = "", description: str = "") -> bool:
+    loc = (location or "").strip().lower()
+    t = (title or "").strip().lower()
+    plat = (platform or "").strip().lower()
+    desc = (description or "")[:500].lower()
+
+    # 1. Dedicated remote platforms
+    if plat in DEDICATED_REMOTE_PLATFORMS:
+        return True
+
+    # 2. Remote check (in location, title, or description)
+    text_to_check = f"{loc} {t}"
+    if any(re.search(pat, text_to_check) for pat in REMOTE_PATTERNS):
+        return True
+    if any(re.search(pat, desc) for pat in [r"\b100%\s*remote\b", r"\bfully\s*remote\b", r"\bwork\s*from\s*home\b"]):
+        return True
+
+    # 3. Foreign board check (Naukri, BDJobs, Bayt, HelloWork are inherently non-PH)
+    # Since step 2 passed without being remote, any listing from these boards is foreign onsite!
+    if plat in FOREIGN_BOARDS:
+        return False
+
+    # 4. Foreign location check
+    if any(re.search(pat, loc) for pat in FOREIGN_LOCATION_PATTERNS):
+        return False
+
+    # 5. Dedicated Philippine platforms
+    if plat in DEDICATED_PH_PLATFORMS:
+        return True
+
+    # 6. Philippine location check
+    if any(re.search(pat, loc) for pat in PH_LOCATION_PATTERNS):
+        return True
+
+    # Default: if neither verified remote nor verified Philippine location, reject.
+    return False
+
+
 JUNIOR_PATTERNS = [
     r"\bjunior\b",
     r"\bjr\.?(?!\s*-\s*\d+)\b",
@@ -270,9 +388,11 @@ def classify_experience_level(title: str, description: str = "") -> str:
     matches_tech = any(re.search(pat, title_lower) for pat in WEB_PATTERNS + DATA_AI_PATTERNS + TECH_WHITELIST_OVERRIDE)
     return "Mid-Level" if matches_tech else "Unspecified"
 
-def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True, matrix: list = None) -> bool:
+def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True, matrix: list = None, location: str = "", platform: str = "") -> bool:
     t_str = str(title or "")
     d_str = str(description or "")
+    if location and not is_work_authorized_location(location, t_str, platform, d_str):
+        return False
     if is_non_tech(t_str, d_str):
         return False
 

@@ -6,6 +6,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 from src.models import Job, normalize_date, clean_url
+from src.classifier import is_work_authorized_location
 
 VALID_STATUSES = {"new", "saved", "applied", "ignored"}
 VALID_STAGES = {"applied", "hr_screening", "tech_exam", "final_interview", "offer", "rejected", "screening", "interview", "technical", "withdrawn"}
@@ -364,6 +365,9 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                 cursor.execute(sql, params)
 
         for job in jobs:
+            if not is_work_authorized_location(job.location, job.title, job.platform, job.description):
+                skipped += 1
+                continue
             norm_date = normalize_date(job.date_posted) if job.date_posted else ""
             canonical_co = normalize_company(job.company) or job.company.strip().lower()
             canonical_title = normalize_title(job.title) or job.title.strip().lower()
