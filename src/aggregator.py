@@ -41,9 +41,9 @@ DEFAULT_QUERIES = [
     # Priority 6 & 7: AI/Data & Systems Specialization
     "ai engineer", "data engineer", "systems developer",
 
-    # Priority 8: Virtual Assistant & Remote Matrix (Picture 2)
-    "virtual assistant", "executive assistant", "administrative assistant",
-    "remote assistant", "cyberbacker", "athena", "virtudesk", "pineapple staffing"
+    # Priority 8: Virtual Assistant & Remote Matrix (Entry Level / Training Only)
+    "virtual assistant trainee", "entry level virtual assistant",
+    "virtual assistant", "cyberbacker", "athena", "virtudesk", "pineapple staffing"
 ]
 
 def get_default_connectors() -> List[BaseConnector]:

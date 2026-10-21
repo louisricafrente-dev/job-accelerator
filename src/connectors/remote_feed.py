@@ -65,7 +65,6 @@ class WeWorkRemotelyConnector(BaseConnector):
             "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss",
             "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
             "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
-            "https://weworkremotely.com/categories/remote-customer-support-jobs.rss"
         ]
         jobs: List[Job] = []
         seen_links = set()

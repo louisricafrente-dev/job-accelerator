@@ -2218,6 +2218,11 @@ async function triggerSync() {
         throw new Error(data.error || `Sync failed (${res.status})`);
       }
       if (syncToken !== currentSessionToken || currentUserRole !== 'admin') return;
+      if (data.local_request && ['queued', 'running'].includes(data.local_request.status)) {
+        showToast('Sync accepted by the local worker on this PC. Keep the PC awake while it runs.');
+        startSyncPoller();
+        return;
+      }
       if (data.cloud_run && ['queued', 'running', 'waiting'].includes(data.cloud_run.status)) {
         showToast('Cloud sync accepted. You can close this tab or laptop.');
         startSyncPoller();
@@ -2671,6 +2676,11 @@ function renderTelemetry(data) {
   if (syncStateEl) {
     const progress = data.progress || data.last_result?.progress;
     syncStateEl.textContent = progress ? `${progress.completed_searches}/${progress.total_searches} searches saved${data.is_syncing ? ' · Syncing' : ''}` : data.is_syncing ? 'Scanning...' : 'Idle / Standby';
+    if (['queued', 'running'].includes(data.local_request?.status)) {
+      syncStateEl.textContent += data.local_request.status === 'running' ? ' · Running on this PC' : ' · Queued on this PC';
+    } else if (data.local_worker) {
+      syncStateEl.textContent += data.local_worker.online ? ' · Local worker online' : ' · Local worker offline';
+    }
     if (data.cloud_run?.status === 'waiting') {
       syncStateEl.textContent += ` · Cloud retry ${new Date(data.cloud_run.next_at * 1000).toLocaleTimeString()}`;
     } else if (data.cloud_run?.status === 'queued') {

@@ -6,10 +6,11 @@ import hashlib
 import hmac
 import bottle
 from src.database import (
-    get_jobs, update_job_status, get_stats, export_jobs_csv,
+    get_jobs, update_job_status, get_stats, export_jobs_csv, insert_jobs,
     get_user_setting, set_user_setting, get_all_user_settings
 )
 from src.aggregator import Aggregator
+from src.models import Job
 from src.auth import (
     get_or_create_admin_totp_secret, verify_totp, get_otpauth_uri,
     create_session_token, verify_session_token,
@@ -468,6 +469,13 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             return {"status": "skipped", "reason": "Automatic sync is paused", "email_notification": None}
 
         try:
+            if os.environ.get("VERCEL"):
+                from src.local_worker import request_local_sync
+                local = request_local_sync(db_path, automatic=True)
+                if local:
+                    return json.dumps({"status": "queued_local", "local_request": local.get("local_request"),
+                                       "local_worker": local.get("local_worker"), "email_notification": None})
+
             stats = aggregator.run_sync(force=True, budget_seconds=150)
             if os.environ.get("VERCEL"):
                 from src.cloud_sync import start_run
@@ -531,7 +539,146 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         from src.cloud_sync import read_run, public_run
         cloud_run = read_run(db_path)
         telemetry["cloud_run"] = public_run(cloud_run)
+        from src.local_worker import read_json_setting, worker_status, REQUEST_KEY
+        telemetry["local_worker"] = worker_status(db_path)
+        telemetry["local_request"] = read_json_setting(db_path, REQUEST_KEY)
+        worker_telem = read_json_setting(db_path, "local_worker_telemetry")
+        if telemetry["local_worker"]["online"] and worker_telem:
+            telemetry.update({key: value for key, value in worker_telem.items()
+                              if key in {"progress", "last_result", "last_sync_time", "logs", "telemetry", "platforms", "total_boards"}})
+        if telemetry["local_request"].get("status") in {"queued", "running"}:
+            telemetry["is_syncing"] = True
+        elif telemetry["local_request"].get("status") == "error":
+            telemetry["last_result"] = {"status": "error", "error": telemetry["local_request"].get("error", "Local worker failed")}
+        elif telemetry["local_request"].get("result"):
+            telemetry["last_result"] = telemetry["local_request"]["result"]
         return json.dumps(telemetry)
+
+    def require_local_worker():
+        token = os.environ.get("LOCAL_WORKER_TOKEN", "").strip()
+        supplied = bottle.request.headers.get("Authorization", "")
+        if not token:
+            bottle.response.status = 503
+            return {"status": "error", "error": "Local worker is not configured"}
+        if not hmac.compare_digest(supplied, f"Bearer {token}"):
+            bottle.response.status = 401
+            return {"status": "error", "error": "Unauthorized local worker"}
+        return None
+
+    @app.route("/api/local-worker/heartbeat", method="POST")
+    def api_local_worker_heartbeat():
+        auth_err = require_local_worker()
+        if auth_err:
+            return auth_err
+        from src.local_worker import WORKER_KEY, read_json_setting
+        data = bottle.request.json or {}
+        worker_id = str(data.get("worker_id", ""))[:100]
+        if not worker_id:
+            bottle.response.status = 400
+            return {"status": "error", "error": "worker_id is required"}
+        current = read_json_setting(db_path, WORKER_KEY)
+        if current.get("online") and current.get("worker_id") not in (None, worker_id) and current.get("heartbeat_at", 0) > time.time() - 45:
+            bottle.response.status = 409
+            return {"status": "error", "error": "Another local worker is already online"}
+        now = time.time()
+        status = {"worker_id": worker_id, "machine": str(data.get("machine", ""))[:100],
+                  "heartbeat_at": now, "version": 1,
+                  "active_request_id": str(data.get("active_request_id", ""))[:100], "online": True}
+        set_user_setting(db_path, WORKER_KEY, json.dumps(status))
+        local_telem = data.get("telemetry")
+        if isinstance(local_telem, dict):
+            set_user_setting(db_path, "local_worker_telemetry", json.dumps(local_telem))
+        bottle.response.content_type = "application/json"
+        return json.dumps({"status": "ok", "heartbeat_at": now})
+
+    @app.route("/api/local-worker/request", method="GET")
+    def api_local_worker_request():
+        auth_err = require_local_worker()
+        if auth_err:
+            return auth_err
+        from src.local_worker import REQUEST_KEY, WORKER_KEY, read_json_setting
+        worker_id = bottle.request.query.get("worker_id", "")
+        worker = read_json_setting(db_path, WORKER_KEY)
+        if not worker.get("online") or worker.get("worker_id") != worker_id:
+            bottle.response.status = 409
+            return {"status": "error", "error": "Worker heartbeat is missing or belongs to another process"}
+        request = read_json_setting(db_path, REQUEST_KEY)
+        if request.get("status") == "running" and request.get("worker_id") != worker_id:
+            request.update(status="queued", recovered_at=time.time())
+        if request.get("status") == "queued":
+            request.update(status="running", worker_id=worker_id, started_at=time.time(), updated_at=time.time())
+            set_user_setting(db_path, REQUEST_KEY, json.dumps(request))
+        bottle.response.content_type = "application/json"
+        return json.dumps({"status": "ok", "request": request if request.get("status") == "running" and request.get("worker_id") == worker_id else None})
+
+    @app.route("/api/local-worker/jobs", method="POST")
+    def api_local_worker_jobs():
+        auth_err = require_local_worker()
+        if auth_err:
+            return auth_err
+        from src.local_worker import REQUEST_KEY, read_json_setting
+        data = bottle.request.json or {}
+        request = read_json_setting(db_path, REQUEST_KEY)
+        if request.get("id") != data.get("request_id") or request.get("status") != "running":
+            bottle.response.status = 409
+            return {"status": "error", "error": "No matching sync request is active"}
+        rows = data.get("jobs")
+        if not isinstance(rows, list) or len(rows) > 100:
+            bottle.response.status = 400
+            return {"status": "error", "error": "A batch must contain at most 100 jobs"}
+        jobs = []
+        try:
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError("Invalid job record")
+                jobs.append(Job(title=row.get("title", ""), company=row.get("company", ""),
+                                location=row.get("location", "Philippines / Remote"),
+                                platform=row.get("platform", ""), tier=int(row.get("tier", 3)),
+                                job_url=row.get("job_url", ""), salary=row.get("salary", ""),
+                                role_category=row.get("role_category", "Web/Software Dev"),
+                                experience_level=row.get("experience_level", "Unspecified"),
+                                date_posted=row.get("date_posted", ""), status="new",
+                                description=row.get("description", ""), sources=row.get("sources", [])))
+        except (TypeError, ValueError) as exc:
+            bottle.response.status = 400
+            return {"status": "error", "error": f"Invalid job batch: {exc}"}
+        added, skipped = insert_jobs(db_path, jobs)
+        bottle.response.content_type = "application/json"
+        return json.dumps({"status": "ok", "added": added, "skipped": skipped})
+
+    @app.route("/api/local-worker/complete", method="POST")
+    def api_local_worker_complete():
+        auth_err = require_local_worker()
+        if auth_err:
+            return auth_err
+        from src.local_worker import REQUEST_KEY, read_json_setting
+        data = bottle.request.json or {}
+        request = read_json_setting(db_path, REQUEST_KEY)
+        if request.get("id") != data.get("request_id") or request.get("status") != "running":
+            bottle.response.status = 409
+            return {"status": "error", "error": "No matching sync request is active"}
+        result = data.get("result") if isinstance(data.get("result"), dict) else {}
+        email_result = None
+        if request.get("automatic") and result.get("added", 0) > 0:
+            try:
+                from scripts.daily_notifier import send_daily_email
+                dashboard_url = os.environ.get("VERCEL_URL", "https://job-accelerator-rhettrina.vercel.app")
+                if not dashboard_url.startswith("http"):
+                    dashboard_url = "https://" + dashboard_url
+                email_result = send_daily_email(db_path=db_path, dashboard_url=dashboard_url,
+                                                new_jobs_count=result.get("added", 0))
+            except Exception as mail_err:
+                email_result = {"status": "error", "error": str(mail_err)}
+        request.update(status="complete" if result.get("status") in {"ok", "partial"} else "error",
+                       completed_at=time.time(), updated_at=time.time(), result=result,
+                       email_notification=email_result)
+        set_user_setting(db_path, REQUEST_KEY, json.dumps(request))
+        set_user_setting(db_path, "sync_status", json.dumps({"is_syncing": False,
+                         "last_sync_time": time.time(), "last_result": result,
+                         "total_boards": result.get("total_boards", 0),
+                         "logs": result.get("logs", []), "telemetry": result.get("telemetry", {})}))
+        bottle.response.content_type = "application/json"
+        return json.dumps({"status": request["status"], "email_notification": email_result})
 
     @app.route("/api/sync", method=["GET", "POST", "OPTIONS"])
     def api_sync():
@@ -573,8 +720,35 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             keywords = list(dict.fromkeys(k.strip() for k in keywords))
 
         if os.environ.get("VERCEL"):
-            from src.cloud_sync import start_run
+            from src.cloud_sync import ACTIVE, RUN_KEY, public_run, read_run, start_run
+            from src.local_worker import request_local_sync, worker_status
             try:
+                worker = worker_status(db_path)
+                if worker["online"]:
+                    now = int(time.time())
+                    active_lease = False
+                    for key in ("sync_lease", "cloud_sync_worker_lease", "cloud_sync_start_lease"):
+                        lease = get_user_setting(db_path, key, "0|") or "0|"
+                        try:
+                            active_lease = active_lease or int(lease.split("|", 1)[0]) > now
+                        except (ValueError, IndexError):
+                            continue
+
+                    current_cloud_run = read_run(db_path)
+                    if active_lease and current_cloud_run.get("status") in ACTIVE:
+                        return {"status": "already_syncing", "is_syncing": True,
+                                "cloud_run": public_run(current_cloud_run),
+                                "local_worker": worker}
+
+                    if current_cloud_run.get("status") in ACTIVE:
+                        current_cloud_run.update(status="paused", updated_at=time.time(),
+                                                 pause_reason="local_worker_selected")
+                        set_user_setting(db_path, RUN_KEY, json.dumps(current_cloud_run))
+
+                    local = request_local_sync(db_path, queries=keywords if keywords else None)
+                    if local:
+                        return local
+
                 return start_run(db_path, queries=keywords if keywords else None)
             except Exception as exc:
                 bottle.response.status = 503
