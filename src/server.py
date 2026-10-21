@@ -565,6 +565,16 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             return {"status": "error", "error": "Unauthorized local worker"}
         return None
 
+    @app.route("/api/local-worker/status", method="GET")
+    def api_local_worker_status():
+        auth_err = require_local_worker()
+        if auth_err:
+            return auth_err
+        from src.local_worker import REQUEST_KEY, worker_status, read_json_setting
+        bottle.response.content_type = "application/json"
+        return json.dumps({"worker": worker_status(db_path),
+                           "request": read_json_setting(db_path, REQUEST_KEY)})
+
     @app.route("/api/local-worker/heartbeat", method="POST")
     def api_local_worker_heartbeat():
         auth_err = require_local_worker()
