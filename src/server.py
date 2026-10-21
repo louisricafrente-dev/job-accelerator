@@ -445,6 +445,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
 
     # Cloud Cron & automated daily digest runs against master database (Admin or internal Vercel Cron only)
     @app.route("/api/cron/sync", method=["GET", "POST"])
+    @app.route("/api/cron/cloud-sync", method=["GET", "POST"])
     @app.route("/api/sync/cron", method=["GET", "POST"])
     def api_cron_sync():
         """Cloud Cron endpoint for Vercel Cron or external scheduled runners.
@@ -468,6 +469,10 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             return {"status": "skipped", "reason": "Automatic sync is paused", "email_notification": None}
 
         try:
+            if bottle.request.path == "/api/cron/cloud-sync":
+                from src.cloud_sync import start_run
+                bottle.response.content_type = "application/json"
+                return json.dumps(start_run(db_path, automatic=True))
             if os.environ.get("VERCEL"):
                 from src.local_worker import request_local_sync
                 local = request_local_sync(db_path, automatic=True)
@@ -548,7 +553,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                         and owns_execution(db_path, request))
         if local_active and worker_telem:
             telemetry.update({key: value for key, value in worker_telem.items()
-                              if key in {"progress", "last_result", "last_sync_time", "logs", "telemetry", "platforms", "total_boards"}})
+                              if key in {"progress", "last_result", "last_sync_time", "logs", "telemetry", "platforms", "total_boards", "run_totals"}})
         if local_active or (request.get("status") == "queued" and telemetry["local_worker"]["online"]):
             telemetry["is_syncing"] = True
         elif telemetry["local_request"].get("status") == "interrupted":
@@ -714,7 +719,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                        email_notification=email_result)
         set_user_setting(db_path, REQUEST_KEY, json.dumps(request))
         set_user_setting(db_path, "sync_status", json.dumps({"is_syncing": False,
-                         "last_sync_time": time.time(), "last_result": result,
+                         "last_sync_time": result.get("last_sync_time", 0), "last_result": result,
                          "total_boards": result.get("total_boards", 0),
                          "logs": result.get("logs", []), "telemetry": result.get("telemetry", {})}))
         lease = get_user_setting(db_path, "sync_lease", "0|") or "0|"

@@ -55,6 +55,16 @@ class TestCloudQueue(unittest.TestCase):
         self.assertEqual(self.aggregator.run_sync.call_count, 2)
         self.assertEqual(read_run(self.db)["step"], 2)
 
+    def test_expired_run_resumes_original_search_cycle(self):
+        original = self.begin()
+        run = read_run(self.db)
+        run.update(status="partial", expires_at=time.time() - 1)
+        set_user_setting(self.db, RUN_KEY, json.dumps(run))
+        resumed = self.begin()
+        self.assertNotEqual(resumed, original)
+        immediate(process_message(self.db, {"run_id": resumed, "step": 0}, self.aggregator))
+        self.assertEqual(self.aggregator.run_sync.call_args.kwargs["cycle_id"], original)
+
     def test_duplicate_or_stale_message_cannot_fork_continuation(self):
         run_id = self.begin()
         payload = {"run_id": run_id, "step": 0}

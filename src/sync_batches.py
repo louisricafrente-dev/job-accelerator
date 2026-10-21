@@ -37,6 +37,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         signature = hashlib.sha256(json.dumps(queries).encode()).hexdigest()
         raw = get_user_setting(aggregator.db_path, PROGRESS_KEY, "")
         checkpoint = json.loads(raw) if raw else {}
+        saved_status = json.loads(get_user_setting(aggregator.db_path, "sync_status", "{}") or "{}")
+        aggregator.last_sync_time = saved_status.get("last_successful_fetch", 0)
         if checkpoint.get("signature") != signature:
             previous = checkpoint.get("boards", {})
             checkpoint = {"signature": signature, "boards": {}, "next_board": 0}
@@ -64,7 +66,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 state.update(cursor=0, retry=[])
         result = {"status": "ok", "added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}, "is_syncing": True}
         telemetry = {connector.platform: {
-            "status": "cooldown" if boards[connector.platform].get("next_at", 0) > now else "ready",
+            "status": ("complete" if boards[connector.platform]["cursor"] >= (1 if getattr(connector, "is_feed", False) else len(queries)) and not boards[connector.platform]["retry"]
+                       else "cooldown" if boards[connector.platform].get("next_at", 0) > now else "ready"),
             "count": 0, "tier": connector.tier, "error": boards[connector.platform].get("last_error", "")
         } for connector in aggregator.connectors}
 
@@ -86,6 +89,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             aggregator.platform_telemetry = telemetry
             set_sync_checkpoint(aggregator.db_path, json.dumps(checkpoint), json.dumps({
                 "is_syncing": result["is_syncing"], "last_sync_time": aggregator.last_sync_time,
+                "last_successful_fetch": aggregator.last_sync_time,
                 "total_boards": len(aggregator.connectors), "last_result": {**result, "status": "running"} if result["is_syncing"] else result,
                 "telemetry": telemetry, "logs": result["logs"], "progress": result["progress"]}))
 
@@ -188,13 +192,14 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         state["last_error"] = error
                         if index not in state["retry"]:
                             state["retry"].append(index)
-                        blocked = any(code in error.lower() for code in ("429", "403", "captcha", "rate limit", "forbidden"))
+                        blocked = any(code in error.lower() for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden"))
                         cooldown_secs = BLOCK_COOLDOWN_SECONDS if blocked else ERROR_COOLDOWN_SECONDS
                         state["next_at"] = time.time() + cooldown_secs
                         state["blocked_until"] = state["next_at"]
                         result["status"] = "partial"
                     else:
                         state["last_error"] = ""
+                        aggregator.last_sync_time = time.time()
                         if index in state["retry"]:
                             state["retry"].remove(index)
                         total = 1 if getattr(connector, "is_feed", False) else len(queries)
@@ -210,8 +215,6 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             result["status"] = "partial"
         result["is_syncing"] = False
         result["timestamp"] = time.time()
-        if not ingestion_failed:
-            aggregator.last_sync_time = time.time()
         aggregator.last_sync_result = result
         aggregator.platform_telemetry = telemetry
         persist()

@@ -22,6 +22,10 @@
     {
       "path": "/api/cron/sync",
       "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/cloud-sync",
+      "schedule": "0 16 * * *"
     }
   ],
   "routes": [

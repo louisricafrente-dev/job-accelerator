@@ -2251,7 +2251,7 @@ a {
 
 .telemetry-overview-bar {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   padding: 14px 24px;
   background-color: var(--bg-canvas);
@@ -2262,6 +2262,10 @@ a {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.telemetry-stat-tile:first-child {
+  grid-column: 1 / -1;
 }
 
 .telemetry-stat-label {
@@ -2384,6 +2388,12 @@ a {
   align-items: center;
   font-size: 0.7rem;
   color: var(--text-tertiary);
+}
+
+.board-error {
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 .board-count-pill {

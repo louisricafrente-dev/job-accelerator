@@ -91,6 +91,8 @@ def _start_run(db_path, queries, automatic):
            "status": "queued", "automatic": automatic, "started_at": now,
            "expires_at": now + RUN_SECONDS, "step": 0, "updated_at": now,
            "deployment_id": os.environ.get("VERCEL_DEPLOYMENT_ID")}
+    if current.get("status") != "complete" and current.get("queries") == run["queries"]:
+        run["cycle_id"] = current.get("cycle_id", current.get("id", run["id"]))
     set_user_setting(db_path, RUN_KEY, json.dumps(run))
     try:
         asyncio.run(publish(run["id"], 0))
@@ -133,7 +135,7 @@ async def _process_message(db_path, payload, aggregator):
     else:
         run.update(status="running", updated_at=now, deployment_id=os.environ.get("VERCEL_DEPLOYMENT_ID"))
         await asyncio.to_thread(set_user_setting, db_path, RUN_KEY, json.dumps(run))
-        result = await asyncio.to_thread(aggregator.run_sync, queries=run["queries"], budget_seconds=120, cycle_id=run["id"])
+        result = await asyncio.to_thread(aggregator.run_sync, queries=run["queries"], budget_seconds=120, cycle_id=run.get("cycle_id", run["id"]))
         progress = result.get("progress", {})
         if result.get("status") == "already_syncing":
             delay = 30

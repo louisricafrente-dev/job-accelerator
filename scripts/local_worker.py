@@ -48,7 +48,15 @@ def local_telemetry(aggregator=None):
             status = json.loads(raw) if raw else {}
         except (ValueError, TypeError):
             status = {}
-    return {key: status[key] for key in ("progress", "last_result", "last_sync_time", "logs", "telemetry", "total_boards") if key in status}
+    telemetry = {key: status[key] for key in ("progress", "last_result", "last_sync_time", "logs", "telemetry", "total_boards") if key in status}
+    checkpoint = json.loads(get_user_setting(DB_PATH, "sync_batch_progress", "{}") or "{}")
+    scrape = json.loads(get_user_setting(DB_PATH, "local_worker_scrape_totals", "{}") or "{}")
+    uploads = json.loads(get_user_setting(DB_PATH, "local_worker_upload_totals", "{}") or "{}")
+    if scrape.get("request_id") and scrape.get("request_id") == checkpoint.get("cycle_id"):
+        telemetry["run_totals"] = dict(scrape)
+        if uploads.get("request_id") == scrape["request_id"]:
+            telemetry["run_totals"].update({key: uploads.get(key, 0) for key in ("added", "skipped", "sent")})
+    return telemetry
 
 
 def heartbeat(worker_id, active_request_id="", aggregator=None):
@@ -153,6 +161,7 @@ def run_request(request, aggregator):
         "progress": result.get("progress"),
         "error": result.get("error") or ("24-hour local run limit reached; unfinished searches remain saved" if progress.get("has_more") else None),
         "uploaded": uploaded,
+        "last_sync_time": local_telemetry().get("last_sync_time", 0),
     }
     api_call("/api/local-worker/complete", "POST", {"request_id": request["id"], "worker_id": request["worker_id"], "result": result})
     set_user_setting(DB_PATH, "local_worker_pending_result", "{}")

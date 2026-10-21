@@ -2671,12 +2671,27 @@ async function fetchSyncTelemetry() {
 
 function renderTelemetry(data) {
   if (!data) return;
+  const progress = data.progress || data.last_result?.progress;
+  const runTotals = data.run_totals?.request_id === data.local_request?.id ? data.run_totals : null;
+  const waiting = data.is_syncing && progress?.has_more && progress.can_continue === false && progress.next_run_at > Date.now() / 1000;
+  const retryTime = timestamp => new Date(timestamp * 1000).toLocaleTimeString();
 
   // 1. Status overview bar
   const syncStateEl = document.getElementById('telemetry-sync-state');
   if (syncStateEl) {
-    const progress = data.progress || data.last_result?.progress;
-    syncStateEl.textContent = progress ? `${progress.completed_searches}/${progress.total_searches} searches saved${data.is_syncing ? ' · Syncing' : ''}` : data.is_syncing ? 'Scanning...' : 'Idle / Standby';
+    syncStateEl.textContent = progress ? `${progress.completed_searches}/${progress.total_searches} searches saved` : 'No saved search progress';
+    if (waiting) {
+      const seconds = Math.max(1, Math.ceil(progress.next_run_at - Date.now() / 1000));
+      syncStateEl.textContent += ` · Waiting for retry at ${retryTime(progress.next_run_at)} (in ${Math.ceil(seconds / 60)} min) · Resumes automatically`;
+    } else if (data.is_syncing) {
+      syncStateEl.textContent += ' · Syncing';
+    } else if (data.local_request?.status === 'interrupted') {
+      syncStateEl.textContent += ' · Interrupted · Saved progress will resume when the worker reconnects';
+    } else if (progress?.has_more) {
+      syncStateEl.textContent += ' · Unfinished · Click Resume sync to continue saved progress';
+    } else {
+      syncStateEl.textContent += ' · Idle';
+    }
     if (['queued', 'running'].includes(data.local_request?.status)) {
       syncStateEl.textContent += data.local_request.status === 'running' ? ' · Running on this PC' : ' · Queued on this PC';
     } else if (data.local_worker) {
@@ -2691,8 +2706,12 @@ function renderTelemetry(data) {
     } else if (data.cloud_run?.status === 'partial') {
       syncStateEl.textContent += ' · Cloud run ended - click Sync to resume';
     }
+    if (runTotals) syncStateEl.textContent += ` · ${runTotals.total_fetched || 0} fetched · ${runTotals.sent || 0} uploaded · ${runTotals.added || 0} new`;
+    if (data.local_worker?.online && data.local_worker.heartbeat_at) syncStateEl.textContent += ` · Worker heartbeat ${retryTime(data.local_worker.heartbeat_at)}`;
     syncStateEl.style.color = data.is_syncing ? 'var(--accent-blue)' : '#3fb950';
   }
+  const syncText = document.getElementById('sync-text');
+  if (syncText) syncText.textContent = waiting ? 'Waiting for retry...' : data.is_syncing ? 'Syncing...' : progress?.has_more ? 'Resume sync' : 'Sync Job Sites';
 
   const dbJobsEl = document.getElementById('telemetry-total-db-jobs');
   if (dbJobsEl) {
@@ -2711,7 +2730,7 @@ function renderTelemetry(data) {
       const d = new Date(data.last_sync_time * 1000);
       lastRunEl.textContent = d.toLocaleTimeString();
     } else {
-      lastRunEl.textContent = 'Ready';
+      lastRunEl.textContent = 'Not recorded yet';
     }
   }
 
@@ -2719,21 +2738,26 @@ function renderTelemetry(data) {
   const grid = document.getElementById('telemetry-boards-grid');
   if (grid) {
     const telem = data.telemetry || {};
-    const platformCounts = (data.last_result && data.last_result.platforms) || data.platforms || {};
+    const platformCounts = runTotals?.platforms || (data.last_result && data.last_result.platforms) || data.platforms || {};
 
     grid.innerHTML = MONITORED_BOARDS.map(b => {
       const boardInfo = telem[b.key] || telem[b.label] || {};
+      const boardProgress = progress?.boards?.[b.key] || progress?.boards?.[b.label] || {};
+      const boardError = boardInfo.error || boardProgress.last_error || '';
       const count = platformCounts[b.key] !== undefined ? platformCounts[b.key] : (boardInfo.count || 0);
       const isRunning = data.is_syncing;
 
       let badgeClass = 'status-idle';
       let badgeLabel = 'READY';
-      if (boardInfo.status === 'error') {
+      if (boardError || boardInfo.status === 'error') {
         badgeClass = 'status-error';
         badgeLabel = 'RETRY';
       } else if (isRunning && boardInfo.status === 'fetching') {
         badgeClass = 'status-running';
         badgeLabel = 'SCANNING';
+      } else if (boardInfo.status === 'complete') {
+        badgeClass = 'status-success';
+        badgeLabel = 'DONE';
       } else if (count > 0 || boardInfo.status === 'active') {
         badgeClass = 'status-success';
         badgeLabel = `${count} JOBS`;
@@ -2742,18 +2766,19 @@ function renderTelemetry(data) {
         badgeClass = isFeed ? 'status-synced' : 'status-idle';
         badgeLabel = isFeed ? 'SYNCED' : 'STANDBY';
       }
-
+      const nextRetry = boardError && boardProgress.next_at > Date.now() / 1000 ? `Retry at ${retryTime(boardProgress.next_at)}` : boardError ? 'Retry pending' : '';
 
       return `
         <div class="telemetry-board-card">
           <div class="board-header-row">
             <span class="board-name" title="${escapeHtml(b.domain)}">${escapeHtml(b.label)}</span>
-            <span class="board-status-badge ${badgeClass}" title="${escapeHtml(boardInfo.error || '')}">${badgeLabel}</span>
+            <span class="board-status-badge ${badgeClass}" title="${escapeHtml(boardError)}">${badgeLabel}</span>
           </div>
           <div class="board-meta-row">
             <span>${escapeHtml(b.type)}</span>
-            <span class="board-count-pill">${count > 0 ? `${count} captured` : 'Ready'}</span>
+            <span class="board-count-pill">${count} fetched</span>
           </div>
+          ${boardError ? `<div class="board-error" role="status">${escapeHtml(boardError)} · ${escapeHtml(nextRetry)}</div>` : ''}
         </div>
       `;
     }).join('');
