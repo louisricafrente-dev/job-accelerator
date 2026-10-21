@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 from typing import List
 from src.connectors.base import BaseConnector, logger
 from src.models import Job, is_within_15_days, is_within_14_days
-from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity
+from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
@@ -413,3 +413,224 @@ class UpworkConnector(BaseConnector):
             logger.warning(f"[{self.platform}] fetch notice: {e}")
         return jobs
 
+
+
+class WellfoundConnector(BaseConnector):
+    platform = "Wellfound"
+    tier = 2
+    is_feed = True
+    _cached_jobs = None
+    _last_fetch = 0
+
+    ROLES = ["software-engineer", "full-stack-engineer", "android-developer", "web-developer"]
+
+    def fetch(self, query: str = "", location: str = "") -> List[Job]:
+        self.last_error = ""
+        import time
+        import datetime
+        from bs4 import BeautifulSoup
+
+        now = time.time()
+        if WellfoundConnector._cached_jobs is None or (now - WellfoundConnector._last_fetch > 120):
+            all_jobs: List[Job] = []
+            seen_ids = set()
+
+            for role in self.ROLES:
+                url = f"https://wellfound.com/role/{role}"
+                try:
+                    req = urllib.request.Request(url, headers=HEADERS)
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        soup = BeautifulSoup(resp.read().decode("utf-8"), "html.parser")
+                        script = soup.find("script", {"id": "__NEXT_DATA__"})
+                        if not script or not script.string:
+                            continue
+                        data = json.loads(script.string)
+                        apollo_data = data.get("props", {}).get("pageProps", {}).get("apolloState", {}).get("data", {})
+
+                        # Map startup names
+                        startup_map = {}
+                        for k, v in apollo_data.items():
+                            if k.startswith("StartupResult:"):
+                                name = v.get("name") or "Tech Startup"
+                                for job_ref in v.get("highlightedJobListings", []):
+                                    ref_id = job_ref.get("__ref")
+                                    if ref_id:
+                                        startup_map[ref_id] = name
+
+                        for k, v in apollo_data.items():
+                            if not k.startswith("JobListingSearchResult:"):
+                                continue
+                            job_id = v.get("id")
+                            if not job_id or job_id in seen_ids:
+                                continue
+                            seen_ids.add(job_id)
+
+                            title = v.get("title", "")
+                            desc = v.get("description", "")
+                            if not title or not is_relevant_opportunity(title, desc):
+                                continue
+
+                            ts = v.get("liveStartAt")
+                            pub_date = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else ""
+                            if pub_date and not is_within_15_days(pub_date):
+                                continue
+
+                            comp = startup_map.get(k, "Tech Startup")
+                            slug = v.get("slug", "")
+                            salary = v.get("compensation", "") or ""
+                            is_remote = v.get("remote", False)
+                            locs = v.get("locationNames", [])
+                            loc_str = "Remote Worldwide" if is_remote else (", ".join(locs) if locs else "Remote Worldwide")
+
+                            # Work authorization filter: only remote or Philippine locations allowed
+                            if not is_work_authorized_location(loc_str, title, self.platform, desc):
+                                continue
+
+                            link = f"https://wellfound.com/jobs/{job_id}-{slug}" if slug else f"https://wellfound.com/jobs/{job_id}"
+
+                            all_jobs.append(Job(
+                                title=title,
+                                company=comp,
+                                location=loc_str,
+                                platform=self.platform,
+                                tier=self.tier,
+                                job_url=link,
+                                salary=salary,
+                                role_category=classify_role(title, desc),
+                                experience_level=classify_experience_level(title, desc),
+                                description=desc,
+                                date_posted=pub_date
+                            ))
+                except Exception as e:
+                    self.last_error = str(e) or type(e).__name__
+                    logger.warning(f"[{self.platform}] fetch notice for role '{role}': {e}")
+
+            WellfoundConnector._cached_jobs = all_jobs
+            WellfoundConnector._last_fetch = now
+
+        cached = WellfoundConnector._cached_jobs or []
+        if not query:
+            return cached
+
+        q_lower = query.strip().lower()
+        return [
+            j for j in cached
+            if q_lower in j.title.lower() or q_lower in (j.description or "").lower() or q_lower in j.company.lower()
+        ]
+
+
+class ContraConnector(BaseConnector):
+    platform = "Contra"
+    tier = 2
+    is_feed = True
+    _cached_jobs = None
+    _last_fetch = 0
+
+    def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
+        self.last_error = ""
+        import time
+        from bs4 import BeautifulSoup
+
+        now = time.time()
+        if ContraConnector._cached_jobs is not None and (now - ContraConnector._last_fetch < 120):
+            return ContraConnector._cached_jobs
+
+        jobs: List[Job] = []
+        try:
+            req = urllib.request.Request("https://contra.com/opportunities", headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                soup = BeautifulSoup(resp.read().decode("utf-8"), "html.parser")
+                script = soup.find("script", {"id": "vike_pageContext"})
+                if script and script.string:
+                    data = json.loads(script.string)
+                    records = data.get("publicAppConfiguration", {}).get("relayRecordMap", {})
+                    for k, v in records.items():
+                        typename = v.get("__typename", "")
+                        if typename in ["Opportunity", "Project", "Job"]:
+                            title = v.get("title") or v.get("name") or ""
+                            if not title or not is_relevant_opportunity(title, ""):
+                                continue
+                            slug = v.get("slug") or ""
+                            link = f"https://contra.com/opportunity/{slug}" if slug else "https://contra.com/opportunities"
+                            jobs.append(Job(
+                                title=title,
+                                company="Direct Client (Contra)",
+                                location="Remote Worldwide / Freelance",
+                                platform=self.platform,
+                                tier=self.tier,
+                                job_url=link,
+                                salary="",
+                                role_category=classify_role(title),
+                                experience_level=classify_experience_level(title),
+                                date_posted=""
+                            ))
+        except Exception as e:
+            self.last_error = str(e) or type(e).__name__
+            logger.warning(f"[{self.platform}] fetch notice: {e}")
+
+        ContraConnector._cached_jobs = jobs
+        ContraConnector._last_fetch = now
+        return jobs
+
+
+class FlexJobsConnector(BaseConnector):
+    platform = "FlexJobs"
+    tier = 2
+    is_feed = True
+    _cached_jobs = None
+    _last_fetch = 0
+
+    def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
+        self.last_error = ""
+        import os
+        import time
+
+        now = time.time()
+        if FlexJobsConnector._cached_jobs is not None and (now - FlexJobsConnector._last_fetch < 120):
+            return FlexJobsConnector._cached_jobs
+
+        jobs: List[Job] = []
+        feed_url = os.environ.get("FLEXJOBS_FEED_URL", "").strip()
+        if not feed_url:
+            feed_url = "https://www.flexjobs.com/search?search=software"
+
+        try:
+            from curl_cffi import requests as cffi_requests
+            from bs4 import BeautifulSoup
+            resp = cffi_requests.get(feed_url, impersonate="chrome120", timeout=12)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for item in soup.select("li.job, div.job-tile, .job-item"):
+                    title_elem = item.select_one("a.job-title, .job-title a, h5 a")
+                    if not title_elem:
+                        continue
+                    title = title_elem.get_text(strip=True)
+                    if not title or not is_relevant_opportunity(title, ""):
+                        continue
+                    link = title_elem.get("href", "")
+                    if link and not link.startswith("http"):
+                        link = f"https://www.flexjobs.com{link}"
+                    comp_elem = item.select_one(".job-company, .company")
+                    comp = comp_elem.get_text(strip=True) if comp_elem else "Screened Tech Client"
+                    jobs.append(Job(
+                        title=title,
+                        company=comp,
+                        location="Remote Worldwide",
+                        platform=self.platform,
+                        tier=self.tier,
+                        job_url=link or "https://www.flexjobs.com",
+                        salary="",
+                        role_category=classify_role(title),
+                        experience_level=classify_experience_level(title),
+                        date_posted=""
+                    ))
+            elif resp.status_code == 403:
+                self.last_error = "Cloudflare Protected (HTTP 403)"
+                logger.warning(f"[{self.platform}] requires authenticated session or FLEXJOBS_FEED_URL")
+        except Exception as e:
+            self.last_error = str(e) or type(e).__name__
+            logger.warning(f"[{self.platform}] fetch notice: {e}")
+
+        FlexJobsConnector._cached_jobs = jobs
+        FlexJobsConnector._last_fetch = now
+        return jobs

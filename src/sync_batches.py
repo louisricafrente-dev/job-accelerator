@@ -53,6 +53,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         refresh_completed = cycle_id is None or checkpoint.get("cycle_id") != cycle_id
         if cycle_id is not None:
             checkpoint["cycle_id"] = cycle_id
+        valid_platforms = {c.platform for c in aggregator.connectors}
+        checkpoint["boards"] = {p: s for p, s in checkpoint.get("boards", {}).items() if p in valid_platforms}
         boards = checkpoint["boards"]
         now = time.time()
         for connector in aggregator.connectors:

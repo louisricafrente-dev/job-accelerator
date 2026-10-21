@@ -10,7 +10,8 @@ REMOTE_PATTERNS = [
 REMOTE_KEYWORDS = REMOTE_PATTERNS
 
 DEDICATED_REMOTE_PLATFORMS = {
-    "remote ok", "we work remotely", "remotive", "himalayas", "jobicy", "arc"
+    "remote ok", "we work remotely", "remotive", "himalayas", "jobicy", "arc",
+    "contra", "flexjobs", "upwork", "freelancer"
 }
 
 DEDICATED_PH_PLATFORMS = {
@@ -362,6 +363,38 @@ def is_non_tech(title: str, description: str = "") -> bool:
         return False
     return any(re.search(pat, text) for pat in NON_TECH_BLACKLIST)
 
+def description_accepts_entry(description: str) -> bool:
+    text = re.sub(r"[*_\u200b\ufeff]", "", description.lower())
+    text = re.sub(r"[^.\n]*\b(?:fresh|new|recent)\s*[- ]?grad(?:uate)?s?\b[^.\n]*\b(?:not welcome|not accepted|not eligible|do not apply|should not apply)\b[^.\n]*", "", text)
+    graduate_invitation = (
+        r"\b(?:fresh|new|recent)\s*[- ]?grad(?:uate)?s?\b[^.\n]{0,240}\b(?:welcome|encouraged|accepted|considered|apply)\b",
+        r"\b(?:open|welcomes?|accepts?)\b[^.\n]{0,160}\b(?:fresh|new|recent)\s*[- ]?grad(?:uate)?s?\b",
+        r"\bfresh\s*[- ]?grad(?:uate)?s?\s*/\s*\d+",
+        r"\b(?:college\s+graduates?|graduates?|graduating students?)\s+(?:are\s+|also\s+|very\s+|more than\s+)*welcome\s+to\s+apply\b",
+        r"\b(?:accepting|open to|open for)\s+(?:applications from\s+)?(?:graduates?|graduating students?|career starters?|first[- ]time job\s*seekers?)\b",
+    )
+    if any(re.search(pattern, text) for pattern in graduate_invitation):
+        return True
+    # Do not mistake education, employee training, or contract length for eligibility.
+    years = r"(?:years?|yrs?)"
+    positive = (
+        r"\b(?:no|zero)\s+(?:prior\s+|previous\s+)?(?:work\s+|professional\s+)?experience\s+(?:is\s+)?(?:required|needed|necessary)\b",
+        r"\b(?:this\s+(?:is\s+an?\s+|is\s+|role\s+is\s+|position\s+is\s+)|an?\s+)entry[- ]level\s+(?:role|position|opportunity|job)\b",
+        r"\b(?:suitable|ideal|designed)\s+for\s+(?:entry[- ]level\s+(?:applicants|candidates)|career starters|those\s+(?:starting|beginning)\s+their\s+careers)\b",
+        r"\b(?:start|begin|launch)\s+your\s+(?:first\s+)?career\s+in\s+(?:software|web|mobile|development|programming)\b",
+        rf"\b[01]\s*[-–]\s*2\s*{years}\s+(?:of\s+)?(?:\w+\s+){{0,4}}experience\b",
+        rf"\b0\s*[-–]\s*1\s*{years}\s+(?:of\s+)?(?:\w+\s+){{0,4}}experience\b",
+        r"\b(?:6|six)\s+months?\s+(?:of\s+)?(?:\w+\s+){0,4}experience\b",
+        rf"\b(?:at least\s+|minimum(?: of)?\s+)?(?:1|one(?:\s*\(1\))?)\s*{years}\s+(?:of\s+)?(?:\w+\s+){{0,4}}experience\b",
+        r"\b(?:less than|under)\s+(?:1|one)\s+year\s+(?:of\s+)?experience\b",
+        r"\b(?:internship(?: experience)?|personal projects?|academic projects?|capstone projects?|project experience)\b[^.\n]{0,65}\b(?:accepted|considered|equivalent|counts? toward)\b",
+        r"\b(?:accepts?|consider(?:s|ing)?)\s+(?:relevant\s+)?(?:internship|academic|personal|capstone)\s+(?:experience|projects?)\b",
+        r"\bor\s+equivalent\s+project\s+background\b",
+        r"\bearly[- ]career\s+(?:developers?|professionals?|candidates?)\b",
+    )
+    return any(re.search(pattern, text) for pattern in positive)
+
+
 def classify_experience_level(title: str, description: str = "") -> str:
     t_str = str(title or "")
     d_str = str(description or "")
@@ -373,6 +406,8 @@ def classify_experience_level(title: str, description: str = "") -> str:
     is_senior = any(re.search(pat, title_lower) for pat in SENIOR_PATTERNS)
     is_mid = any(re.search(pat, title_lower) for pat in MID_PATTERNS)
 
+    if description_accepts_entry(desc_lower):
+        return "Junior / Entry"
     if is_junior and not is_senior:
         return "Junior / Entry"
     if is_senior and not is_junior:
@@ -383,8 +418,6 @@ def classify_experience_level(title: str, description: str = "") -> str:
         return "Senior / Lead"
     if is_mid:
         return "Mid-Level"
-    if any(re.search(pat, desc_lower) for pat in JUNIOR_PATTERNS):
-        return "Junior / Entry"
     matches_tech = any(re.search(pat, title_lower) for pat in WEB_PATTERNS + DATA_AI_PATTERNS + TECH_WHITELIST_OVERRIDE)
     return "Mid-Level" if matches_tech else "Unspecified"
 

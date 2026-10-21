@@ -2,6 +2,40 @@ import unittest
 from src.classifier import classify_experience_level, classify_role
 
 class TestClassifier(unittest.TestCase):
+    def test_description_entry_eligibility(self):
+        for title, description in [
+            ("Front-End Developer", "At least 1 year of web development experience, or equivalent project background."),
+            ("Software Engineer", "0 - 2 years of experience in software development."),
+            ("Developer II", "Fresh graduates are welcome to apply. Python: 3 years (Required)"),
+            ("Senior Developer", "Minimum 5 years of experience. Fresh graduates are welcome to apply."),
+            ("Web Developer", "Fresh graduates with relevant internships are encouraged to apply."),
+            ("AI Developer", "Years of Experience: Fresh Graduates / 1-3 years experience."),
+            ("Full Stack Developer", "Open to recent graduates with strong projects."),
+            ("Web Developer", "1-2 years of web development experience preferred."),
+            ("Web Developer", "6 months of development experience required."),
+            ("Software Developer", "Graduating students are welcome to apply."),
+            ("Software Developer", "College graduates are also welcome to apply. Minimum 3 years of experience."),
+            ("Software Developer", "This is an entry-level position on the web team."),
+            ("Software Developer", "No previous professional experience is required."),
+            ("Software Developer", "Ideal for career starters."),
+            ("Software Developer", "Open to first-time job seekers."),
+            ("Software Developer", "Relevant academic projects are accepted."),
+            ("Software Developer", "Minimum 3 years of experience. Internship experience accepted."),
+        ]:
+            with self.subTest(description=description):
+                self.assertEqual(classify_experience_level(title, description), "Junior / Entry")
+
+    def test_description_does_not_confuse_training_with_eligibility(self):
+        for description in [
+            "Bachelor's degree required. Provide training to junior developers.",
+            "Minimum of 3 years of professional software development experience. AI coding tools: 1 year (Preferred)",
+            "One year contract. Mentor graduate developers.",
+            "Graduate of Computer Science. 3 years experience required.",
+            "Fresh graduates are not welcome to apply.",
+        ]:
+            with self.subTest(description=description):
+                self.assertEqual(classify_experience_level("Software Developer", description), "Mid-Level")
+
     def test_experience_level_junior(self):
         self.assertEqual(classify_experience_level("Junior Full Stack Developer"), "Junior / Entry")
         self.assertEqual(classify_experience_level("Jr. Software Engineer - Python"), "Junior / Entry")

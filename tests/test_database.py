@@ -5,6 +5,22 @@ from src.models import Job, hash_job, clean_url
 from src.database import init_db, insert_jobs, get_jobs, update_job_status, get_stats
 
 class TestDatabase(unittest.TestCase):
+    def test_description_classification_and_legacy_backfill_preserve_tracking(self):
+        job = Job(title="Developer II", company="Example", location="Philippines", platform="Indeed", tier=1,
+                  job_url="https://example.com/jobs/entry", experience_level="Mid-Level",
+                  description="Fresh graduates are welcome. Python: 3 years (Required)")
+        insert_jobs(self.db_path, [job])
+        row = get_jobs(self.db_path, status="new")[0]
+        self.assertEqual(row["experience_level"], "Junior / Entry")
+        update_job_status(self.db_path, row["id"], "saved", notes="Keep my note")
+        import sqlite3
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE jobs SET experience_level = 'Mid-Level'")
+        init_db(self.db_path)
+        row = get_jobs(self.db_path, status="saved")[0]
+        self.assertEqual(row["experience_level"], "Junior / Entry")
+        self.assertEqual(row["notes"], "Keep my note")
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.temp_dir.name, "test_jobs.db")
