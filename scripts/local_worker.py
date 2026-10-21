@@ -4,10 +4,10 @@ import os
 import socket
 import sqlite3
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +53,14 @@ def heartbeat(worker_id, active_request_id=""):
         "active_request_id": active_request_id,
         "telemetry": local_telemetry(),
     })
+
+
+def keep_alive(worker_id, active_request, stop):
+    while not stop.wait(HEARTBEAT_SECONDS):
+        try:
+            heartbeat(worker_id, active_request[0])
+        except Exception as exc:
+            print(f"Local worker heartbeat failed: {exc}", flush=True)
 
 
 def max_job_id():
@@ -132,28 +140,32 @@ def main():
     heartbeat(worker_id)
     from src.aggregator import Aggregator
     aggregator = Aggregator(DB_PATH)
-    while True:
-        try:
-            request_data = api_call(f"/api/local-worker/request?worker_id={worker_id}")
-            request = request_data.get("request")
-            if request:
-                heartbeat(worker_id, request.get("id", ""))
-                run_request(request, aggregator)
-                heartbeat(worker_id)
-            else:
-                heartbeat(worker_id)
-                time.sleep(POLL_SECONDS)
-        except KeyboardInterrupt:
-            return
-        except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
-            if isinstance(exc, HTTPError) and exc.code == 409:
-                time.sleep(HEARTBEAT_SECONDS)
-                continue
-            print(f"Local worker connection error: {exc}", flush=True)
-            time.sleep(HEARTBEAT_SECONDS)
-        except Exception as exc:
-            print(f"Local worker error: {exc}", flush=True)
-            time.sleep(HEARTBEAT_SECONDS)
+    active_request = [""]
+    stop = threading.Event()
+    heartbeat_thread = threading.Thread(target=keep_alive, args=(worker_id, active_request, stop), daemon=True)
+    heartbeat_thread.start()
+    try:
+        while True:
+            try:
+                request_data = api_call(f"/api/local-worker/request?worker_id={worker_id}")
+                request = request_data.get("request")
+                if request:
+                    active_request[0] = request.get("id", "")
+                    run_request(request, aggregator)
+                    active_request[0] = ""
+                else:
+                    heartbeat(worker_id)
+                    time.sleep(POLL_SECONDS)
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                print(f"Local worker error: {exc}", flush=True)
+                stop.wait(HEARTBEAT_SECONDS)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop.set()
+        heartbeat_thread.join(timeout=HEARTBEAT_SECONDS + 1)
 
 
 if __name__ == "__main__":
