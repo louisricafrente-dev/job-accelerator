@@ -1,7 +1,7 @@
 from typing import List
 from src.connectors.base import BaseConnector, logger
 from src.models import Job, is_within_15_days
-from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity
+from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 class JobSpyAdapter(BaseConnector):
     def __init__(self, platform_name: str, site_name: str, tier: int):
@@ -45,12 +45,14 @@ class JobSpyAdapter(BaseConnector):
                     continue
                 raw_description = row.get("description")
                 description = "" if pd.isna(raw_description) else str(raw_description).strip()
-                if not is_relevant_opportunity(title, description, allow_va_training=True):
+                raw_loc = row.get("location")
+                loc = location if pd.isna(raw_loc) or str(raw_loc).lower() in ("nan", "none", "") else str(raw_loc).strip()
+                if not is_work_authorized_location(loc, title, self.platform, description):
+                    continue
+                if not is_relevant_opportunity(title, description, allow_va_training=True, location=loc, platform=self.platform):
                     continue
                 if company.lower() in ("nan", "none", "null", ""):
                     company = "Direct Employer"
-                raw_loc = row.get("location")
-                loc = location if pd.isna(raw_loc) or str(raw_loc).lower() in ("nan", "none", "") else str(raw_loc).strip()
                 raw_sal = row.get("min_amount")
                 salary = "" if pd.isna(raw_sal) or str(raw_sal).lower() in ("nan", "none", "") else str(raw_sal).strip()
                 raw_date = row.get("date_posted")
