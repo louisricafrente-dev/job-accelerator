@@ -18,7 +18,7 @@ from src.database import get_user_setting, init_db, set_user_setting
 
 LOCAL_DATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))) / "JobAccelerator"
 DB_PATH = str(LOCAL_DATA / "jobs.db")
-BASE_URL = os.environ.get("JOB_ACCELERATOR_URL", "https://job-accelerator-rhettrina.vercel.app").rstrip("/")
+BASE_URL = os.environ.get("JOB_ACCELERATOR_URL", "https://job-accelerator.vercel.app").rstrip("/")
 TOKEN_PATH = ROOT / ".vercel" / "local-worker.token"
 POLL_SECONDS = 5
 HEARTBEAT_SECONDS = 15
