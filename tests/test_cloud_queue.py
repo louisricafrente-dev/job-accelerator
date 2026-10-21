@@ -198,6 +198,7 @@ class TestCloudQueue(unittest.TestCase):
         run.update(status="waiting", next_at=time.time() + 3600)
         set_user_setting(self.db, RUN_KEY, json.dumps(run))
         with patch.dict(os.environ, {"VERCEL_DEPLOYMENT_ID": "deployment-new"}):
+            self.assertEqual(public_run(run)["status"], "waiting")
             start_run(self.db)
         recovered = read_run(self.db)
         self.assertEqual(recovered["id"], run_id)

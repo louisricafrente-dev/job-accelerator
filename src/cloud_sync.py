@@ -19,9 +19,9 @@ def read_run(db_path):
     return json.loads(raw) if raw else {}
 
 
-def is_stale(run):
+def is_stale(run, check_deployment=True):
     deployment = os.environ.get("VERCEL_DEPLOYMENT_ID")
-    moved = deployment and run.get("deployment_id") != deployment
+    moved = check_deployment and deployment and run.get("deployment_id") != deployment
     return (run.get("status") in ACTIVE and
             (moved or time.time() > max(run.get("updated_at", 0), run.get("next_at", 0)) + STALE_SECONDS))
 
@@ -31,7 +31,7 @@ def public_run(run):
     if public.get("status") in ACTIVE:
         if public.get("expires_at", 0) <= time.time():
             public.update(status="partial", error="Cloud run expired; sync again to resume saved searches")
-        elif is_stale(run):
+        elif is_stale(run, check_deployment=False):
             public.update(status="stalled", error="Cloud worker has not continued; sync again to recover")
     return public
 
