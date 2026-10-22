@@ -24,7 +24,7 @@ class KalibrrConnector(BaseConnector):
             url = f"https://www.kalibrr.com/api/job_board/search?{params}"
             req = urllib.request.Request(url, headers=HEADERS)
             try:
-                with urllib.request.urlopen(req, timeout=12) as resp:
+                with self.open_url(req, timeout=12) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     items = data.get("jobs", [])
                     if not items:
@@ -78,7 +78,7 @@ class BossjobConnector(BaseConnector):
             params = urllib.parse.urlencode({"query": query, "size": 20})
             url = f"https://bossjob.ph/api/job/search?{params}"
             req = urllib.request.Request(url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with self.open_url(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for item in data.get("data", {}).get("jobs", []):
                     title = item.get("job_title", "")
@@ -115,7 +115,6 @@ class JobStreetConnector(BaseConnector):
         self.last_error = ""
         jobs: List[Job] = []
         try:
-            from curl_cffi import requests as cffi_requests
             from bs4 import BeautifulSoup
 
             queries = [query]
@@ -129,16 +128,7 @@ class JobStreetConnector(BaseConnector):
                     url = f"https://www.jobstreet.com.ph/{clean_q}-jobs?page={page}"
                     try:
                         req_kwargs = {"impersonate": "chrome120", "timeout": 12}
-                        try:
-                            from src.proxy_manager import is_proxy_active, get_next_proxy
-                            if is_proxy_active():
-                                proxy_url = get_next_proxy()
-                                if proxy_url:
-                                    req_kwargs["proxy"] = proxy_url
-                        except Exception:
-                            pass
-                        resp = cffi_requests.get(url, **req_kwargs)
-                        resp.raise_for_status()
+                        resp = self.get_url(url, **req_kwargs)
                         if resp.status_code == 200:
                             soup = BeautifulSoup(resp.text, "html.parser")
                             articles = soup.find_all("article")
@@ -207,7 +197,7 @@ class OnlineJobsConnector(BaseConnector):
                 url = f"https://www.onlinejobs.ph/jobseekers/jobsearch?jobkeyword={clean_q}&fullTime=on&partTime=on&freelance=on&page={page}"
                 req = urllib.request.Request(url, headers=HEADERS)
                 try:
-                    with urllib.request.urlopen(req, timeout=12) as resp:
+                    with self.open_url(req, timeout=12) as resp:
                         html = resp.read().decode("utf-8")
                         soup = BeautifulSoup(html, "html.parser")
                         cards = soup.select(".jobpost-cat-box")

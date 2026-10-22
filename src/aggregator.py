@@ -83,6 +83,8 @@ class Aggregator:
     def __init__(self, db_path: str = "data/jobs.db", connectors: Optional[List[BaseConnector]] = None):
         self.db_path = db_path
         self.connectors = connectors if connectors is not None else get_default_connectors()
+        for connector in self.connectors:
+            connector.db_path = db_path
         self._sync_lock = threading.Lock()
         self._cache_lock = threading.Lock()
         self.is_syncing = False
@@ -164,11 +166,6 @@ class Aggregator:
         return True
 
     def run_sync(self, queries: Optional[List[str]] = None, force: bool = False, budget_seconds: Optional[float] = None, cycle_id=None) -> Dict[str, Any]:
-        try:
-            from src.proxy_manager import apply_proxy_environment
-            apply_proxy_environment(self.db_path)
-        except Exception:
-            pass
         if queries is None:
             saved_stack = get_user_setting(self.db_path, "target_stack", "")
             saved_queries = list(dict.fromkeys(q.strip() for q in saved_stack.split(",") if q.strip()))

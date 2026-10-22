@@ -212,6 +212,9 @@ def run_worker():
             try:
                 heartbeat(worker_id, active_request[0])
                 request_data = api_call(f"/api/local-worker/request?worker_id={worker_id}")
+                for key, value in request_data.get("proxy_settings", {}).items():
+                    if key in {"proxy_mode", "proxy_list"} and isinstance(value, str) and get_user_setting(DB_PATH, key, "") != value:
+                        set_user_setting(DB_PATH, key, value)
                 request = request_data.get("request")
                 if request:
                     active_request[0] = request.get("id", "")

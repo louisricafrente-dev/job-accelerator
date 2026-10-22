@@ -35,12 +35,13 @@ async function main() {
     run_totals: {request_id: 'run-1', total_fetched: 42, sent: 20, added: 5, platforms: {LinkedIn: 42}},
     progress: {completed_searches: 10, total_searches: 100, has_more: true, can_continue: false,
       next_run_at: Date.now() / 1000 + 300, boards: {LinkedIn: {next_at: Date.now() / 1000 + 300}}},
-    telemetry: {LinkedIn: {status: 'cooldown', error: 'HTTP 403', count: 0}}});
+    telemetry: {LinkedIn: {status: 'cooldown', error: 'HTTP 403', count: 0, route: 'WEBSHARE', connection_retries: 1}}});
   assert.match(elements.get('telemetry-sync-state').textContent, /Waiting for retry.*Resumes automatically/);
   assert.match(elements.get('telemetry-sync-state').textContent, /42 fetched.*20 uploaded.*5 new/);
   assert.doesNotMatch(elements.get('telemetry-sync-state').textContent, /Syncing/);
   assert.match(elements.get('telemetry-boards-grid').innerHTML, /HTTP 403.*Retry at/);
   assert.match(elements.get('telemetry-boards-grid').innerHTML, /42 fetched/);
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /WEBSHARE \(fallback\)/);
   assert.doesNotMatch(elements.get('telemetry-boards-grid').innerHTML, /STANDBY|SYNCED|Ready/);
   context.renderTelemetry({is_syncing: false, progress: {completed_searches: 10, total_searches: 100, has_more: true}});
   assert.equal(elements.get('sync-text').textContent, 'Resume sync');

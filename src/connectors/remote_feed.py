@@ -19,7 +19,7 @@ class RemoteOKConnector(BaseConnector):
         req = urllib.request.Request(url, headers=HEADERS)
         jobs: List[Job] = []
         try:
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with self.open_url(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for item in data:
                     if not isinstance(item, dict) or "position" not in item:
@@ -72,7 +72,7 @@ class WeWorkRemotelyConnector(BaseConnector):
         for rss_url in feed_urls:
             try:
                 req = urllib.request.Request(rss_url, headers=HEADERS)
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                with self.open_url(req, timeout=10) as resp:
                     tree = ET.fromstring(resp.read().decode("utf-8"))
                     for item in tree.findall(".//item"):
                         link_elem = item.find("link")
@@ -124,10 +124,8 @@ class ArcConnector(BaseConnector):
         self.last_error = ""
         jobs: List[Job] = []
         try:
-            from curl_cffi import requests as cffi_requests
             from bs4 import BeautifulSoup
-            r = cffi_requests.get("https://arc.dev/remote-jobs", impersonate="chrome120", timeout=12)
-            r.raise_for_status()
+            r = self.get_url("https://arc.dev/remote-jobs", impersonate="chrome120", timeout=12)
             if r.status_code == 200:
                 soup = BeautifulSoup(r.text, "html.parser")
                 next_data = soup.find("script", {"id": "__NEXT_DATA__"})
@@ -181,7 +179,7 @@ class RemotiveConnector(BaseConnector):
             try:
                 url = "https://remotive.com/api/remote-jobs"
                 req = urllib.request.Request(url, headers=HEADERS)
-                with urllib.request.urlopen(req, timeout=12) as resp:
+                with self.open_url(req, timeout=12) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     for item in data.get("jobs", []):
                         title = item.get("title", "")
@@ -227,7 +225,7 @@ class HimalayasConnector(BaseConnector):
         try:
             url = "https://himalayas.app/jobs/api?limit=100"
             req = urllib.request.Request(url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=12) as resp:
+            with self.open_url(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for item in data.get("jobs", []):
                     title = item.get("title", "")
@@ -276,7 +274,7 @@ class JobicyConnector(BaseConnector):
             try:
                 url = "https://jobicy.com/api/v2/remote-jobs?count=50&tag=dev"
                 req = urllib.request.Request(url, headers=HEADERS)
-                with urllib.request.urlopen(req, timeout=8) as resp:
+                with self.open_url(req, timeout=8) as resp:
                     JobicyConnector._cached_data = json.loads(resp.read().decode("utf-8")).get("jobs", [])
                     JobicyConnector._last_fetch = now
             except urllib.error.HTTPError as e:
@@ -328,7 +326,7 @@ class FreelancerConnector(BaseConnector):
             q_enc = urllib.parse.quote(query.strip())
             url = f"https://www.freelancer.com/api/projects/0.1/projects/active?query={q_enc}&compact=true&limit=25"
             req = urllib.request.Request(url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with self.open_url(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for p in data.get("result", {}).get("projects", []):
                     title = p.get("title", "")
@@ -376,10 +374,8 @@ class UpworkConnector(BaseConnector):
             feed_url = f"https://www.upwork.com/ab/feed/jobs/rss?q={q_enc}&sort=recency"
 
         try:
-            from curl_cffi import requests as cffi_requests
             import xml.etree.ElementTree as ET
-            resp = cffi_requests.get(feed_url, impersonate="chrome120", timeout=12)
-            resp.raise_for_status()
+            resp = self.get_url(feed_url, impersonate="chrome120", timeout=12)
             if resp.status_code == 200 and resp.content:
                 tree = ET.fromstring(resp.content)
                 for item in tree.findall(".//item"):
@@ -439,7 +435,7 @@ class WellfoundConnector(BaseConnector):
                 url = f"https://wellfound.com/role/{role}"
                 try:
                     req = urllib.request.Request(url, headers=HEADERS)
-                    with urllib.request.urlopen(req, timeout=10) as resp:
+                    with self.open_url(req, timeout=10) as resp:
                         soup = BeautifulSoup(resp.read().decode("utf-8"), "html.parser")
                         script = soup.find("script", {"id": "__NEXT_DATA__"})
                         if not script or not script.string:
@@ -506,7 +502,7 @@ class WellfoundConnector(BaseConnector):
                     logger.warning(f"[{self.platform}] fetch notice for role '{role}': {e}")
 
             WellfoundConnector._cached_jobs = all_jobs
-            WellfoundConnector._last_fetch = now
+            WellfoundConnector._last_fetch = now if not self.last_error else 0
 
         cached = WellfoundConnector._cached_jobs or []
         if not query:
@@ -538,7 +534,7 @@ class ContraConnector(BaseConnector):
         jobs: List[Job] = []
         try:
             req = urllib.request.Request("https://contra.com/opportunities", headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with self.open_url(req, timeout=10) as resp:
                 soup = BeautifulSoup(resp.read().decode("utf-8"), "html.parser")
                 script = soup.find("script", {"id": "vike_pageContext"})
                 if script and script.string:
@@ -569,7 +565,7 @@ class ContraConnector(BaseConnector):
             logger.warning(f"[{self.platform}] fetch notice: {e}")
 
         ContraConnector._cached_jobs = jobs
-        ContraConnector._last_fetch = now
+        ContraConnector._last_fetch = now if not self.last_error else 0
         return jobs
 
 
@@ -595,9 +591,8 @@ class FlexJobsConnector(BaseConnector):
             feed_url = "https://www.flexjobs.com/search?search=software"
 
         try:
-            from curl_cffi import requests as cffi_requests
             from bs4 import BeautifulSoup
-            resp = cffi_requests.get(feed_url, impersonate="chrome120", timeout=12)
+            resp = self.get_url(feed_url, impersonate="chrome120", timeout=12)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, "html.parser")
                 for item in soup.select("li.job, div.job-tile, .job-item"):
@@ -632,5 +627,5 @@ class FlexJobsConnector(BaseConnector):
             logger.warning(f"[{self.platform}] fetch notice: {e}")
 
         FlexJobsConnector._cached_jobs = jobs
-        FlexJobsConnector._last_fetch = now
+        FlexJobsConnector._last_fetch = now if not self.last_error else 0
         return jobs

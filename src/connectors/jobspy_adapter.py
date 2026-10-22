@@ -17,23 +17,26 @@ class JobSpyAdapter(BaseConnector):
             import importlib
             jobspy = importlib.import_module("jobspy")
             scrape_jobs = getattr(jobspy, "scrape_jobs")
-            try:
-                from src.proxy_manager import get_proxy_pool
-                active_proxies = get_proxy_pool()
-            except Exception:
-                active_proxies = []
-            df = scrape_jobs(
-                site_name=[self.site_name],
-                search_term=query,
-                location=location,
-                results_wanted=35,
-                country_indeed="philippines" if self.site_name in ("indeed", "glassdoor") else None,
-                hours_old=360,  # Strict 15 days (15 * 24 hours)
-                proxies=active_proxies if active_proxies else None
-            )
+            def send(proxy):
+                frame = scrape_jobs(
+                    site_name=[self.site_name],
+                    search_term=query,
+                    location=location,
+                    results_wanted=35,
+                    country_indeed="philippines" if self.site_name in ("indeed", "glassdoor") else None,
+                    hours_old=360,
+                    proxies=[proxy] if proxy else None
+                )
+                from src.proxy_manager import is_connection_error
+                errors = getattr(frame, "attrs", {}).get("errors")
+                if errors and frame.empty and is_connection_error(errors):
+                    raise RuntimeError(str(errors))
+                return frame
+            df = self.request_with_fallback(send)
             errors = getattr(df, "attrs", {}).get("errors")
             if errors:
-                self.last_error = str(errors)
+                from src.proxy_manager import redact_proxy_error
+                self.last_error = redact_proxy_error(errors, self.db_path)
             import pandas as pd
             for _, row in df.iterrows():
                 title = str(row.get("title", "")).strip()

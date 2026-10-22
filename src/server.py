@@ -642,7 +642,10 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                            started_at=request.get("started_at", time.time()), updated_at=time.time())
             set_user_setting(db_path, REQUEST_KEY, json.dumps(request))
         bottle.response.content_type = "application/json"
-        return json.dumps({"status": "ok", "request": request if request.get("status") == "running" and request.get("worker_id") == worker_id else None})
+        from src.proxy_manager import get_proxy_settings
+        proxy_settings = get_proxy_settings(db_path)
+        return json.dumps({"status": "ok", "request": request if request.get("status") == "running" and request.get("worker_id") == worker_id else None,
+                           "proxy_settings": {"proxy_mode": proxy_settings["mode"], "proxy_list": proxy_settings["raw"]}})
 
     @app.route("/api/local-worker/jobs", method="POST")
     def api_local_worker_jobs():

@@ -242,6 +242,17 @@ class TestLocalWorker(unittest.TestCase):
         queue.assert_called_once_with(self.db, automatic=True)
         local.assert_not_called()
 
+    def test_paired_worker_receives_saved_proxy_settings_without_public_exposure(self):
+        self.heartbeat()
+        set_user_setting(self.db, "proxy_mode", "hybrid")
+        set_user_setting(self.db, "proxy_list", "http://example-user:example-password@proxy.example:80")
+        status, body = self.call("/api/local-worker/request?worker_id=test-pc")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["proxy_settings"]["proxy_mode"], "hybrid")
+        self.assertIn("proxy.example", body["proxy_settings"]["proxy_list"])
+        _, public = self.call("/api/sync/status", admin=True)
+        self.assertNotIn("example-password", json.dumps(public))
+
     def test_midnight_cron_requires_secret_and_honors_pause(self):
         status, _ = self.call("/api/cron/cloud-sync")
         self.assertEqual(status, 403)

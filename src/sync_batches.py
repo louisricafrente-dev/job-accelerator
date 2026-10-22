@@ -17,11 +17,6 @@ BLOCK_COOLDOWN_SECONDS = 6 * 3600
 
 
 def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None):
-    try:
-        from src.proxy_manager import apply_proxy_environment
-        apply_proxy_environment(aggregator.db_path)
-    except Exception:
-        pass
     queries = list(dict.fromkeys(q.strip() for q in queries if q.strip()))
     if not queries:
         return {"status": "error", "error": "No search keywords", "added": 0}
@@ -68,7 +63,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         telemetry = {connector.platform: {
             "status": ("complete" if boards[connector.platform]["cursor"] >= (1 if getattr(connector, "is_feed", False) else len(queries)) and not boards[connector.platform]["retry"]
                        else "cooldown" if boards[connector.platform].get("next_at", 0) > now else "ready"),
-            "count": 0, "tier": connector.tier, "error": boards[connector.platform].get("last_error", "")
+            "count": 0, "tier": connector.tier, "error": boards[connector.platform].get("last_error", ""),
+            "route": boards[connector.platform].get("route", ""), "connection_retries": boards[connector.platform].get("connection_retries", 0)
         } for connector in aggregator.connectors}
 
         def progress():
@@ -96,6 +92,9 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         def fetch(connector, index):
             started_at = time.monotonic()
             connector.last_error = ""
+            connector.last_route = "CACHE"
+            connector.connection_retries = 0
+            connector.retry_after = 0
             try:
                 jobs = connector.fetch() if getattr(connector, "is_feed", False) else connector.fetch(query=queries[index])
                 error = getattr(connector, "last_error", "")
@@ -179,6 +178,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 for connector, index, jobs, error, fetch_seconds, relevant in completed:
                     active.remove(connector.platform)
                     state = boards[connector.platform]
+                    state["route"] = getattr(connector, "last_route", "")
+                    state["connection_retries"] = getattr(connector, "connection_retries", 0)
                     result["total_fetched"] += len(jobs)
                     result["platforms"][connector.platform] = result["platforms"].get(connector.platform, 0) + len(jobs)
                     if save_error:
@@ -194,7 +195,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                             state["retry"].append(index)
                         blocked = any(code in error.lower() for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden"))
                         cooldown_secs = BLOCK_COOLDOWN_SECONDS if blocked else ERROR_COOLDOWN_SECONDS
-                        state["next_at"] = time.time() + cooldown_secs
+                        state["next_at"] = time.time() + max(cooldown_secs, getattr(connector, "retry_after", 0))
                         state["blocked_until"] = state["next_at"]
                         result["status"] = "partial"
                     else:
@@ -205,8 +206,9 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         total = 1 if getattr(connector, "is_feed", False) else len(queries)
                         state["next_at"] = time.time() + (REFRESH_SECONDS if state["cursor"] >= total and not state["retry"] else QUERY_DELAY_SECONDS)
                     telemetry[connector.platform] = {"status": "error" if error else "active", "count": len(jobs), "tier": connector.tier, "error": error,
-                                                     "fetch_seconds": round(fetch_seconds, 3), "save_seconds": round(save_seconds, 3)}
-                    aggregator.log_event(f"[{connector.platform}] Saved search {index + 1}: {len(relevant)} relevant jobs (fetch {fetch_seconds:.2f}s, save {save_seconds:.2f}s)" + (f"; {error}" if error else ""))
+                                                     "fetch_seconds": round(fetch_seconds, 3), "save_seconds": round(save_seconds, 3),
+                                                     "route": getattr(connector, "last_route", ""), "connection_retries": getattr(connector, "connection_retries", 0)}
+                    aggregator.log_event(f"[{connector.platform}] Saved search {index + 1}: {len(relevant)} relevant jobs (fetch {fetch_seconds:.2f}s, save {save_seconds:.2f}s; {getattr(connector, 'last_route', 'DIRECT')}; {getattr(connector, 'connection_retries', 0)} connection retries)" + (f"; {error}" if error else ""))
                 if done:
                     persist()
         if ingestion_failed:
