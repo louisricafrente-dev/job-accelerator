@@ -60,7 +60,7 @@ class TestCloudQueue(unittest.TestCase):
         run = read_run(self.db)
         run.update(status="partial", expires_at=time.time() - 1)
         set_user_setting(self.db, RUN_KEY, json.dumps(run))
-        resumed = self.begin()
+        resumed = start_run(self.db, resume=True)["cloud_run"]["id"]
         self.assertNotEqual(resumed, original)
         immediate(process_message(self.db, {"run_id": resumed, "step": 0}, self.aggregator))
         self.assertEqual(self.aggregator.run_sync.call_args.kwargs["cycle_id"], original)
@@ -80,12 +80,32 @@ class TestCloudQueue(unittest.TestCase):
         self.assertEqual(read_run(self.db)["status"], "complete")
         self.publisher.assert_awaited_once()
 
+    def test_partial_is_terminal_and_fresh_sync_uses_a_new_cycle(self):
+        original = self.begin()
+        self.aggregator.run_sync.return_value = {"status": "partial", "added": 3, "progress": {"has_more": False, "unfinished": True}}
+        immediate(process_message(self.db, {"run_id": original, "step": 0}, self.aggregator))
+        self.assertEqual(read_run(self.db)["status"], "partial")
+        fresh = self.begin()
+        immediate(process_message(self.db, {"run_id": fresh, "step": 0}, self.aggregator))
+        self.assertNotEqual(original, fresh)
+        self.assertEqual(self.aggregator.run_sync.call_args.kwargs["cycle_id"], fresh)
+
+    def test_run_totals_survive_multiple_batches(self):
+        run_id = self.begin()
+        self.aggregator.run_sync.side_effect = [
+            {"status": "ok", "added": 3, "platforms": {"Example": 4}, "progress": {"has_more": True, "can_continue": True}},
+            {"status": "ok", "added": 2, "platforms": {"Example": 2}, "progress": {"has_more": False}}]
+        immediate(process_message(self.db, {"run_id": run_id, "step": 0}, self.aggregator))
+        immediate(process_message(self.db, {"run_id": run_id, "step": 1}, self.aggregator))
+        self.assertEqual(read_run(self.db)["result"]["added"], 5)
+        self.assertEqual(read_run(self.db)["result"]["platforms"]["Example"], 6)
+
     def test_cooldown_schedules_delayed_delivery_without_sleeping_worker(self):
         run_id = self.begin()
         self.aggregator.run_sync.return_value = {"status": "partial", "progress": {"has_more": True, "can_continue": False, "next_run_at": time.time() + 21600}}
         immediate(process_message(self.db, {"run_id": run_id, "step": 0}, self.aggregator))
-        self.assertEqual(read_run(self.db)["status"], "waiting")
-        self.assertGreaterEqual(self.publisher.await_args.args[2], 21599)
+        self.assertEqual(read_run(self.db)["status"], "partial")
+        self.publisher.assert_awaited_once()
 
     def test_failed_send_is_not_reported_as_accepted(self):
         self.publisher.side_effect = RuntimeError("queue quota")
@@ -96,8 +116,8 @@ class TestCloudQueue(unittest.TestCase):
     def test_ingestion_failure_redelivers_same_step(self):
         run_id = self.begin()
         self.aggregator.run_sync.return_value = {"status": "error", "error": "database offline"}
-        with self.assertRaisesRegex(RuntimeError, "database offline"):
-            immediate(process_message(self.db, {"run_id": run_id, "step": 0}, self.aggregator))
+        immediate(process_message(self.db, {"run_id": run_id, "step": 0}, self.aggregator))
+        self.assertEqual(read_run(self.db)["status"], "error")
         self.assertEqual(read_run(self.db)["step"], 0)
         self.publisher.assert_awaited_once()
 
@@ -162,9 +182,9 @@ class TestCloudQueue(unittest.TestCase):
         run = read_run(self.db)
         run.update(status="waiting", next_at=time.time() + 21600)
         set_user_setting(self.db, RUN_KEY, json.dumps(run))
-        self.assertEqual(public_run(run)["status"], "waiting")
+        self.assertEqual(public_run(run)["status"], "partial")
         start_run(self.db)
-        self.publisher.assert_awaited_once()
+        self.assertEqual(self.publisher.await_count, 2)
 
     def test_stale_and_expired_runs_are_reported_truthfully(self):
         self.stale_run()
@@ -208,10 +228,9 @@ class TestCloudQueue(unittest.TestCase):
         run.update(status="waiting", next_at=time.time() + 3600)
         set_user_setting(self.db, RUN_KEY, json.dumps(run))
         with patch.dict(os.environ, {"VERCEL_DEPLOYMENT_ID": "deployment-new"}):
-            self.assertEqual(public_run(run)["status"], "waiting")
+            self.assertEqual(public_run(run)["status"], "partial")
             start_run(self.db)
         recovered = read_run(self.db)
-        self.assertEqual(recovered["id"], run_id)
+        self.assertNotEqual(recovered["id"], run_id)
         self.assertEqual(recovered["deployment_id"], "deployment-new")
-        self.assertEqual(recovered["status"], "waiting")
-        self.assertGreaterEqual(self.publisher.await_args.args[2], 3599)
+        self.assertEqual(recovered["status"], "queued")

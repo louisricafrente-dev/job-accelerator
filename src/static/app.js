@@ -2177,7 +2177,7 @@ async function retryNoteSave(jobId) {
 let syncPollTimer = null;
 
 // Trigger Sync (Non-blocking Background Execution with Live Polling)
-async function triggerSync() {
+async function triggerSync(action = 'fresh') {
   if (currentUserRole !== 'admin') {
     showToast('🔒 Only Admin can harvest and add new opportunities to the system. As a guest, you can explore, filter, and save opportunities!');
     return;
@@ -2205,7 +2205,7 @@ async function triggerSync() {
       const res = await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keywords, background: true })
+        body: JSON.stringify({ keywords, background: true, action })
       });
       let data;
       try {
@@ -2310,7 +2310,7 @@ function startSyncPoller() {
 function batchSyncMessage(result) {
   const progress = result.progress;
   const coverage = `${progress.completed_searches}/${progress.total_searches} keyword-board searches saved`;
-  const next = !progress.has_more ? 'Current search cycle complete.' : progress.can_continue === false ? 'Remaining boards are paused by cooldowns; sync again after they clear.' : 'Next run continues; board cooldowns still apply.';
+  const next = !progress.has_more ? progress.unfinished ? 'Cycle finished (Partial). Unavailable sources are deferred; Sync now starts fresh.' : 'Cycle complete.' : 'Continuing available searches.';
   return `Batch saved: +${result.added || 0} jobs. ${coverage}. ${next}${result.status === 'partial' ? ' Some searches need retry; check Logs.' : ''}`;
 }
 
@@ -2320,7 +2320,7 @@ function stopSyncIndicator() {
   const txt = document.getElementById('sync-text');
   if (btn) btn.classList.remove('is-running');
   if (spinner) spinner.classList.remove('is-spinning');
-  if (txt) txt.textContent = 'Sync Job Sites';
+  if (txt) txt.textContent = 'Sync now';
 }
 
 // Keyboard navigation
@@ -2687,8 +2687,10 @@ function renderTelemetry(data) {
       syncStateEl.textContent += ' · Syncing';
     } else if (data.local_request?.status === 'interrupted') {
       syncStateEl.textContent += ' · Interrupted · Saved progress will resume when the worker reconnects';
-    } else if (progress?.has_more) {
-      syncStateEl.textContent += ' · Unfinished · Click Resume sync to continue saved progress';
+    } else if (progress?.unfinished || progress?.has_more || data.last_result?.status === 'partial') {
+      syncStateEl.textContent += ' · Finished (Partial) · Sync now starts a fresh cycle';
+    } else if (data.last_result?.status === 'ok') {
+      syncStateEl.textContent += ' · Complete';
     } else {
       syncStateEl.textContent += ' · Idle';
     }
@@ -2703,15 +2705,24 @@ function renderTelemetry(data) {
       syncStateEl.textContent += ' · Queued in cloud';
     } else if (data.cloud_run?.status === 'stalled') {
       syncStateEl.textContent += ' · Cloud stalled - click Sync to resume';
-    } else if (data.cloud_run?.status === 'partial') {
-      syncStateEl.textContent += ' · Cloud run ended - click Sync to resume';
+    } else if (data.cloud_run?.status === 'partial' && !data.is_syncing) {
+      syncStateEl.textContent += ' · Cloud cycle finished (Partial)';
     }
     if (runTotals) syncStateEl.textContent += ` · ${runTotals.total_fetched || 0} fetched · ${runTotals.sent || 0} uploaded · ${runTotals.added || 0} new`;
     if (data.local_worker?.online && data.local_worker.heartbeat_at) syncStateEl.textContent += ` · Worker heartbeat ${retryTime(data.local_worker.heartbeat_at)}`;
     syncStateEl.style.color = data.is_syncing ? 'var(--accent-blue)' : '#3fb950';
   }
   const syncText = document.getElementById('sync-text');
-  if (syncText) syncText.textContent = waiting ? 'Waiting for retry...' : data.is_syncing ? 'Syncing...' : progress?.has_more ? 'Resume sync' : 'Sync Job Sites';
+  if (syncText) syncText.textContent = data.is_syncing ? 'Syncing...' : 'Sync now';
+  const resumeButton = document.getElementById('resume-sync-btn');
+  if (resumeButton) {
+    resumeButton.hidden = data.is_syncing || !(progress?.unfinished || progress?.has_more);
+    const deferred = progress?.deferred_boards || [];
+    resumeButton.disabled = !progress?.has_more && deferred.length > 0 && deferred.every(board => board.retry_at > Date.now() / 1000);
+    resumeButton.title = resumeButton.disabled ? `Deferred sources become eligible after ${retryTime(Math.min(...deferred.map(board => board.retry_at)))}` : 'Continue unfinished searches without restarting completed sources';
+  }
+  const syncButton = document.getElementById('sync-btn');
+  if (syncButton?.classList) syncButton.classList.toggle('is-running', Boolean(data.is_syncing));
 
   const dbJobsEl = document.getElementById('telemetry-total-db-jobs');
   if (dbJobsEl) {
@@ -2751,7 +2762,7 @@ function renderTelemetry(data) {
       let badgeLabel = 'READY';
       if (boardError || boardInfo.status === 'error') {
         badgeClass = 'status-error';
-        badgeLabel = 'RETRY';
+        badgeLabel = boardError.startsWith('Configuration required:') ? 'SETUP REQUIRED' : 'DEFERRED';
       } else if (isRunning && boardInfo.status === 'fetching') {
         badgeClass = 'status-running';
         badgeLabel = 'SCANNING';
@@ -2766,7 +2777,7 @@ function renderTelemetry(data) {
         badgeClass = isFeed ? 'status-synced' : 'status-idle';
         badgeLabel = isFeed ? 'SYNCED' : 'STANDBY';
       }
-      const nextRetry = boardError && boardProgress.next_at > Date.now() / 1000 ? `Retry at ${retryTime(boardProgress.next_at)}` : boardError ? 'Retry pending' : '';
+      const nextRetry = boardError.startsWith('Configuration required:') ? 'Configure this source before syncing' : boardError && boardProgress.next_at > Date.now() / 1000 ? `Eligible after ${retryTime(boardProgress.next_at)}` : boardError ? 'Eligible next cycle' : '';
 
       return `
         <div class="telemetry-board-card">

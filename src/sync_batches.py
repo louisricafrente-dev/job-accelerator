@@ -14,9 +14,10 @@ QUERY_DELAY_SECONDS = 2
 REFRESH_SECONDS = 6 * 3600
 ERROR_COOLDOWN_SECONDS = 15 * 60
 BLOCK_COOLDOWN_SECONDS = 6 * 3600
+CYCLE_SECONDS = 3600
 
 
-def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None):
+def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None, resume=False):
     queries = list(dict.fromkeys(q.strip() for q in queries if q.strip()))
     if not queries:
         return {"status": "error", "error": "No search keywords", "added": 0}
@@ -34,18 +35,20 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         checkpoint = json.loads(raw) if raw else {}
         saved_status = json.loads(get_user_setting(aggregator.db_path, "sync_status", "{}") or "{}")
         aggregator.last_sync_time = saved_status.get("last_successful_fetch", 0)
-        if checkpoint.get("signature") != signature:
+        new_cycle = cycle_id is not None and checkpoint.get("cycle_id") != cycle_id
+        if checkpoint.get("signature") != signature or new_cycle:
             previous = checkpoint.get("boards", {})
             checkpoint = {"signature": signature, "boards": {}, "next_board": 0}
             for connector in aggregator.connectors:
                 old = previous.get(connector.platform, {})
-                is_feed = getattr(connector, "is_feed", False)
+                is_feed = getattr(connector, "is_feed", False) and old.get("next_at", 0) > time.time() and not old.get("last_error")
                 checkpoint["boards"][connector.platform] = {
                     "cursor": old.get("cursor", 0) if is_feed else 0,
                     "retry": old.get("retry", []) if is_feed else [],
                     "next_at": old.get("next_at", 0) if is_feed else old.get("blocked_until", 0),
                     "blocked_until": old.get("blocked_until", 0),
                     "last_error": old.get("last_error", ""),
+                    "revision": old.get("revision", 1),
                 }
         refresh_completed = cycle_id is None or checkpoint.get("cycle_id") != cycle_id
         if cycle_id is not None:
@@ -57,11 +60,20 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         for connector in aggregator.connectors:
             state = boards.setdefault(connector.platform, {"cursor": 0, "retry": [], "next_at": 0})
             total = 1 if getattr(connector, "is_feed", False) else len(queries)
+            revision = getattr(connector, "revision", 1)
+            if state.get("revision", 1) != revision:
+                if "404" in state.get("last_error", ""):
+                    state.update(blocked_until=0, next_at=0, last_error="", deferred=False)
+                state["revision"] = revision
+            if state.get("blocked_until", 0) > now and state.get("last_error"):
+                state["deferred"] = True
+            elif resume or cycle_id is None:
+                state["deferred"] = False
             if refresh_completed and state["cursor"] >= total and not state["retry"] and state.get("next_at", 0) <= now:
                 state.update(cursor=0, retry=[])
         result = {"status": "ok", "added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}, "is_syncing": True}
         telemetry = {connector.platform: {
-            "status": ("complete" if boards[connector.platform]["cursor"] >= (1 if getattr(connector, "is_feed", False) else len(queries)) and not boards[connector.platform]["retry"]
+            "status": ("deferred" if boards[connector.platform].get("deferred") else "complete" if boards[connector.platform]["cursor"] >= (1 if getattr(connector, "is_feed", False) else len(queries)) and not boards[connector.platform]["retry"]
                        else "cooldown" if boards[connector.platform].get("next_at", 0) > now else "ready"),
             "count": 0, "tier": connector.tier, "error": boards[connector.platform].get("last_error", ""),
             "route": boards[connector.platform].get("route", ""), "connection_retries": boards[connector.platform].get("connection_retries", 0)
@@ -71,11 +83,14 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             query_boards = [c for c in aggregator.connectors if not getattr(c, "is_feed", False)]
             completed = sum(max(0, boards[c.platform]["cursor"] - len(boards[c.platform]["retry"])) for c in query_boards)
             total = len(queries) * len(query_boards)
-            remaining = [boards[c.platform] for c in aggregator.connectors
-                         if boards[c.platform]["cursor"] < (1 if getattr(c, "is_feed", False) else len(queries)) or boards[c.platform]["retry"]]
+            unfinished = [c for c in aggregator.connectors if boards[c.platform]["cursor"] < (1 if getattr(c, "is_feed", False) else len(queries)) or boards[c.platform]["retry"]]
+            remaining = [boards[c.platform] for c in unfinished if not boards[c.platform].get("deferred")]
+            deferred = [{"platform": c.platform, "error": boards[c.platform].get("last_error", ""),
+                         "retry_at": boards[c.platform].get("blocked_until", 0)} for c in unfinished if boards[c.platform].get("deferred")]
             return {"next_run_at": min((state.get("next_at", 0) for state in remaining), default=0), "keywords": len(queries), "completed_searches": completed, "total_searches": total,
                     "can_continue": any(state.get("next_at", 0) <= time.time() + QUERY_DELAY_SECONDS + 0.1 for state in remaining),
-                    "has_more": any(boards[c.platform]["cursor"] < (1 if getattr(c, "is_feed", False) else len(queries)) or boards[c.platform]["retry"] for c in aggregator.connectors), "boards": {c.platform: dict(boards[c.platform]) for c in aggregator.connectors}}
+                    "has_more": bool(remaining), "unfinished": bool(unfinished), "deferred_boards": deferred,
+                    "boards": {c.platform: dict(boards[c.platform]) for c in aggregator.connectors}}
 
         def persist():
             result["progress"] = progress()
@@ -123,7 +138,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         connector = connectors[position]
                         state = boards[connector.platform]
                         total = 1 if getattr(connector, "is_feed", False) else len(queries)
-                        if connector.platform in active or state.get("next_at", 0) > now:
+                        if connector.platform in active or state.get("deferred") or state.get("next_at", 0) > now:
                             continue
                         if state["cursor"] >= total and not state["retry"]:
                             continue
@@ -143,7 +158,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         state = boards[connector.platform]
                         total = 1 if getattr(connector, "is_feed", False) else len(queries)
                         index = state["cursor"] if state["cursor"] < total else (state["retry"][0] if state["retry"] else None)
-                        if index is not None and (connector.platform, index) not in started:
+                        if not state.get("deferred") and index is not None and (connector.platform, index) not in started:
                             soon.append(state.get("next_at", 0) - time.time())
                     if can_start and soon and min(soon) <= QUERY_DELAY_SECONDS + 0.1:
                         time.sleep(min(0.25, max(0.01, min(soon))))
@@ -190,6 +205,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                     if index == state["cursor"]:
                         state["cursor"] += 1
                     if error:
+                        state["deferred"] = True
                         state["last_error"] = error
                         if index not in state["retry"]:
                             state["retry"].append(index)
@@ -213,7 +229,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                     persist()
         if ingestion_failed:
             result["status"] = "error"
-        elif any(state["retry"] for state in boards.values()):
+        elif any(state["retry"] or state.get("deferred") for state in boards.values()):
             result["status"] = "partial"
         result["is_syncing"] = False
         result["timestamp"] = time.time()

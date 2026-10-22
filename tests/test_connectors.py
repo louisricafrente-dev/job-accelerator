@@ -203,7 +203,7 @@ class TestConnectors(unittest.TestCase):
         self.assertEqual(jobs[0].platform, "Contra")
         self.assertEqual(jobs[0].job_url, "https://contra.com/opportunity/react-dev-project-123")
 
-    @patch("curl_cffi.requests.get")
+    @patch("curl_cffi.requests.Session.get")
     def test_flexjobs_parsing(self, mock_cffi_get):
         from src.connectors.remote_feed import FlexJobsConnector
 

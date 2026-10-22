@@ -107,7 +107,7 @@ class TestSyncBatches(unittest.TestCase):
         self.clock.value += 10
         failed = self.run_batch(["a", "b", "c", "d"])
         calls = list(self.board.calls)
-        retry_at = failed["progress"]["next_run_at"]
+        retry_at = failed["progress"]["boards"][self.board.platform]["blocked_until"]
         self.assertGreaterEqual(retry_at - self.clock.time(), 6 * 3600 - 1)
         self.clock.value += 60
         waiting = self.run_batch(["a", "b", "c", "d"])
@@ -124,6 +124,48 @@ class TestSyncBatches(unittest.TestCase):
         self.run_batch(["a"])
         result = self.run_batch(["a"])
         self.assertEqual(result["telemetry"][self.board.platform]["status"], "complete")
+
+    def test_fresh_cycle_restarts_healthy_queries_while_respecting_blocked_source(self):
+        from src.sync_batches import run_batch
+        blocked = Board(self.clock)
+        blocked.platform = "Blocked"
+        blocked.error = "HTTP 403"
+        first = run_batch(Aggregator(self.db, [self.board, blocked]), ["a", "b"], budget_seconds=30, workers=1, cycle_id="first")
+        self.assertFalse(first["progress"]["has_more"])
+        self.assertTrue(first["progress"]["unfinished"])
+        self.assertEqual(first["progress"]["deferred_boards"][0]["platform"], "Blocked")
+        second = run_batch(Aggregator(self.db, [self.board, blocked]), ["a", "b"], budget_seconds=30, workers=1, cycle_id="second")
+        self.assertEqual(self.board.calls, ["a", "b", "a", "b"])
+        self.assertEqual(blocked.calls, ["a"])
+        self.assertFalse(second["progress"]["has_more"])
+
+    def test_resume_retries_recovered_source_without_restarting_completed_source(self):
+        from src.sync_batches import run_batch
+        blocked = Board(self.clock)
+        blocked.platform = "Blocked"
+        blocked.error = "HTTP 403"
+        run_batch(Aggregator(self.db, [self.board, blocked]), ["a"], budget_seconds=30, workers=1, cycle_id="same")
+        self.clock.value += 21601
+        blocked.error = ""
+        result = run_batch(Aggregator(self.db, [self.board, blocked]), ["a"], budget_seconds=30, workers=1, cycle_id="same", resume=True)
+        self.assertEqual(self.board.calls, ["a"])
+        self.assertEqual(blocked.calls, ["a", "a"])
+        self.assertFalse(result["progress"]["unfinished"])
+
+    def test_endpoint_revision_clears_stale_404_but_not_an_access_block(self):
+        from src.sync_batches import run_batch
+        self.board.error = "HTTP 404"
+        run_batch(Aggregator(self.db, [self.board]), ["a"], cycle_id="old", workers=1)
+        self.board.revision = 2
+        self.board.error = ""
+        result = run_batch(Aggregator(self.db, [self.board]), ["a"], cycle_id="new", workers=1)
+        self.assertFalse(result["progress"]["unfinished"])
+        self.board.error = "HTTP 403"
+        run_batch(Aggregator(self.db, [self.board]), ["a"], cycle_id="blocked", workers=1)
+        self.board.revision = 3
+        calls = len(self.board.calls)
+        run_batch(Aggregator(self.db, [self.board]), ["a"], cycle_id="still-blocked", workers=1)
+        self.assertEqual(len(self.board.calls), calls)
 
     def test_legacy_poll_timestamp_is_not_a_successful_fetch(self):
         set_user_setting(self.db, "sync_status", json.dumps({"last_sync_time": self.clock.time()}))
@@ -196,7 +238,8 @@ class TestSyncBatches(unittest.TestCase):
         self.run_batch(["b"])
         result = self.run_batch(["c"])
         self.assertEqual(self.board.calls, ["a"])
-        self.assertTrue(result["progress"]["has_more"])
+        self.assertFalse(result["progress"]["has_more"])
+        self.assertTrue(result["progress"]["unfinished"])
         self.assertFalse(result["progress"]["can_continue"])
         self.clock.value += 6 * 3600 + 1
         self.board.error = ""

@@ -4,7 +4,7 @@ import urllib.parse
 from typing import List
 from src.connectors.base import BaseConnector, logger
 from src.models import Job, is_within_15_days, is_within_14_days
-from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity
+from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 import time
 import random
@@ -70,30 +70,40 @@ class KalibrrConnector(BaseConnector):
 class BossjobConnector(BaseConnector):
     platform = "Bossjob"
     tier = 2
+    revision = 2
 
     def fetch(self, query: str = "developer", location: str = "Philippines") -> List[Job]:
         self.last_error = ""
         jobs: List[Job] = []
         try:
-            params = urllib.parse.urlencode({"query": query, "size": 20})
-            url = f"https://bossjob.ph/api/job/search?{params}"
-            req = urllib.request.Request(url, headers=HEADERS)
+            params = urllib.parse.urlencode({"query": query, "size": 20, "country_id": 167})
+            url = f"https://bossjob.ph/bossjob-api-server/jobs/search?{params}"
+            req = urllib.request.Request(url, headers={**HEADERS, "Accept": "application/json", "Role-Id": "1"})
             with self.open_url(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
+                if data.get("code") != 0:
+                    raise RuntimeError("Bossjob search failed: " + str(data.get("message", "Unknown error")))
                 for item in data.get("data", {}).get("jobs", []):
                     title = item.get("job_title", "")
                     if not is_relevant_opportunity(title, ""):
                         continue
-                    pub_date = item.get("updated_at", "")[:10]
+                    pub_date = (item.get("published_at") or "")[:10]
                     if not is_within_15_days(pub_date):
                         continue
                     company = item.get("company_name", "")
-                    link = f"https://bossjob.ph/job/{item.get('id', '')}"
-                    salary = item.get("salary_range", "")
+                    link = urllib.parse.urljoin("https://bossjob.ph", ("/en" + item["job_url"]) if item.get("job_url", "").startswith("/job/") else item.get("job_url", ""))
+                    if not item.get("job_url"):
+                        continue
+                    salary = "" if item.get("is_salary_hidden") else item.get("salary_range_value", "")
+                    job_location = ", ".join(filter(None, [item.get("job_location"), item.get("job_country")]))
+                    if item.get("is_remote_worldwide"):
+                        job_location = "Remote Worldwide"
+                    if not is_work_authorized_location(job_location, title, self.platform, ""):
+                        continue
                     jobs.append(Job(
                         title=title,
                         company=company,
-                        location=item.get("location_name", "Philippines"),
+                        location=job_location,
                         platform=self.platform,
                         tier=self.tier,
                         job_url=link,
@@ -110,6 +120,7 @@ class BossjobConnector(BaseConnector):
 class JobStreetConnector(BaseConnector):
     platform = "JobStreet"
     tier = 1
+    revision = 2
 
     def fetch(self, query: str = "developer", location: str = "philippines") -> List[Job]:
         self.last_error = ""
@@ -123,9 +134,9 @@ class JobStreetConnector(BaseConnector):
 
             seen_urls = set()
             for q_term in queries:
-                clean_q = urllib.parse.quote(q_term.lower().strip().replace(" ", "-"))
+                clean_q = urllib.parse.quote("-".join(q_term.lower().replace("/", " ").split()), safe="")
                 for page in (1, 2):
-                    url = f"https://www.jobstreet.com.ph/{clean_q}-jobs?page={page}"
+                    url = f"https://ph.jobstreet.com/{clean_q}-jobs?page={page}"
                     try:
                         req_kwargs = {"impersonate": "chrome120", "timeout": 12}
                         resp = self.get_url(url, **req_kwargs)
@@ -143,7 +154,7 @@ class JobStreetConnector(BaseConnector):
                                     continue
                                 href = title_a.get("href", "")
                                 if href and not href.startswith("http"):
-                                    href = "https://www.jobstreet.com.ph" + href
+                                    href = "https://ph.jobstreet.com" + href
                                 if href in seen_urls:
                                     continue
                                 seen_urls.add(href)

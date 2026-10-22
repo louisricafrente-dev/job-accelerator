@@ -78,7 +78,7 @@ class TestSyncErrors(unittest.TestCase):
     def test_http_failures_are_reported_by_scrapers(self):
         from src.connectors.ph_jobs import JobStreetConnector
         for connector in (ArcConnector(), UpworkConnector(), JobStreetConnector()):
-            with self.subTest(platform=connector.platform), patch("curl_cffi.requests.get") as fetch:
+            with self.subTest(platform=connector.platform), patch.dict(os.environ, {"UPWORK_FEED_URL": "https://example.com/authorized-feed"}), patch("curl_cffi.requests.Session.get") as fetch:
                 fetch.return_value.raise_for_status.side_effect = RuntimeError("HTTP 429")
                 self.assertEqual(connector.fetch(), [])
                 self.assertEqual(connector.last_error, "HTTP 429")

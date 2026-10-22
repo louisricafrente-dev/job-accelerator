@@ -41,7 +41,7 @@ def public_request(db_path, request, worker=None):
     return result
 
 
-def request_local_sync(db_path, queries=None, automatic=False):
+def request_local_sync(db_path, queries=None, automatic=False, resume=False):
     now = time.time()
     worker = worker_status(db_path, now)
     if not worker["online"]:
@@ -58,9 +58,9 @@ def request_local_sync(db_path, queries=None, automatic=False):
         return {"status": "already_syncing", "is_syncing": True, "local_request": current,
                 "local_worker": worker}
     previous = current.get("result") or {}
-    if (previous.get("progress", {}).get("has_more") and current.get("queries") == queries
-            and current.get("status") in {"complete", "error"}):
-        current.update(status="queued", requested_at=now, updated_at=now, automatic=automatic)
+    if (resume and (previous.get("progress", {}).get("unfinished") or previous.get("progress", {}).get("has_more")) and current.get("queries") == queries
+            and current.get("status") in {"complete", "partial", "error"}):
+        current.update(status="queued", requested_at=now, updated_at=now, automatic=automatic, resume=True)
         current.pop("completed_at", None)
         set_user_setting(db_path, REQUEST_KEY, json.dumps(current))
         return {"status": "queued", "is_syncing": True, "local_request": current, "local_worker": worker}

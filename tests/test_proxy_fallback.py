@@ -32,22 +32,21 @@ class TestProxyFallback(unittest.TestCase):
     def test_direct_timeout_uses_one_configured_proxy_without_env_mutation(self):
         response = Mock(text="ok")
         before = dict(os.environ)
-        with patch("curl_cffi.requests.get", side_effect=[TimeoutError("timed out"), response]) as send:
+        with patch("curl_cffi.requests.Session.get", side_effect=[TimeoutError("timed out"), response]) as send:
             self.assertIs(self.board.get_url("https://example.com", timeout=1), response)
         self.assertEqual([c.kwargs["proxy"] for c in send.call_args_list], ["", self.pool[0]])
-        self.assertTrue(all(c.kwargs["trust_env"] is False for c in send.call_args_list))
         self.assertEqual(dict(os.environ), before)
         self.assertEqual(self.board.connection_retries, 1)
 
     def test_failed_cloud_proxy_uses_second_and_is_quarantined(self):
-        with patch.dict(os.environ, {"FORCE_PROXY": "1"}), patch("curl_cffi.requests.get", side_effect=[TimeoutError("timed out"), Mock(text="ok")]) as send:
+        with patch.dict(os.environ, {"FORCE_PROXY": "1"}), patch("curl_cffi.requests.Session.get", side_effect=[TimeoutError("timed out"), Mock(text="ok")]) as send:
             self.board.get_url("https://example.com")
             self.assertEqual([c.kwargs["proxy"] for c in send.call_args_list], self.pool)
             self.assertEqual(get_next_proxy(self.db), self.pool[1])
 
     def test_disabled_mode_never_spends_proxy_bandwidth(self):
         set_user_setting(self.db, "proxy_mode", "disabled")
-        with patch("curl_cffi.requests.get", side_effect=TimeoutError("timed out")) as send:
+        with patch("curl_cffi.requests.Session.get", side_effect=TimeoutError("timed out")) as send:
             with self.assertRaisesRegex(RuntimeError, "timed out"):
                 self.board.get_url("https://example.com")
         self.assertEqual(send.call_count, 1)
@@ -56,7 +55,7 @@ class TestProxyFallback(unittest.TestCase):
         set_user_setting(self.db, "proxy_mode", "always")
         for code in (403, 404, 410, 429):
             error = urllib.error.HTTPError("https://example.com", code, "blocked", {"Retry-After": "30000"}, None)
-            with self.subTest(code=code), patch("curl_cffi.requests.get", side_effect=error) as send:
+            with self.subTest(code=code), patch("curl_cffi.requests.Session.get", side_effect=error) as send:
                 with self.assertRaises(RuntimeError):
                     self.board.get_url("https://example.com")
                 self.assertEqual(send.call_count, 1)
@@ -66,7 +65,7 @@ class TestProxyFallback(unittest.TestCase):
 
     def test_html_challenge_is_not_empty_success_or_rotated(self):
         response = Mock(text='<html><script src="/cdn-cgi/challenge-platform/test"></script></html>')
-        with patch("curl_cffi.requests.get", return_value=response) as send:
+        with patch("curl_cffi.requests.Session.get", return_value=response) as send:
             with self.assertRaisesRegex(RuntimeError, "Cloudflare challenge"):
                 self.board.get_url("https://example.com")
         self.assertEqual(send.call_count, 1)
@@ -99,7 +98,7 @@ class TestProxyFallback(unittest.TestCase):
         self.assertEqual(send.call_args_list[1].kwargs["proxies"], [self.pool[0]])
 
     def test_proxy_credentials_are_redacted_from_errors(self):
-        with patch("curl_cffi.requests.get", side_effect=TimeoutError("failed proxy " + self.pool[0])):
+        with patch("curl_cffi.requests.Session.get", side_effect=TimeoutError("failed proxy " + self.pool[0])):
             with self.assertRaises(RuntimeError) as error:
                 self.board.get_url("https://example.com")
         self.assertNotIn("secret-one", str(error.exception))

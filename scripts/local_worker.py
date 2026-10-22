@@ -132,7 +132,7 @@ def run_request(request, aggregator):
     if pending.get("request_id") == request["id"]:
         result = pending["result"]
     else:
-        result = aggregator.run_sync(queries=request.get("queries"), budget_seconds=30, cycle_id=request["id"])
+        result = aggregator.run_sync(queries=request.get("queries"), budget_seconds=30, cycle_id=request["id"], resume=request.get("resume", False))
         if result.get("status") == "already_syncing":
             raise RuntimeError("Local scraper is busy; retaining request for retry")
         totals = json.loads(get_user_setting(DB_PATH, "local_worker_scrape_totals", "{}") or "{}")
@@ -146,11 +146,14 @@ def run_request(request, aggregator):
         set_user_setting(DB_PATH, "local_worker_pending_result", json.dumps({"request_id": request["id"], "result": result}))
     added, skipped, uploaded = upload_pending(request["id"], request["worker_id"])
     progress = result.get("progress") or {}
-    if progress.get("has_more") and time.time() - request.get("requested_at", time.time()) < 24 * 3600:
+    from src.sync_batches import CYCLE_SECONDS
+    if (result.get("status") != "error" and progress.get("has_more")
+            and (progress.get("can_continue") is not False or progress.get("next_run_at", time.time()) <= time.time() + 30)
+            and time.time() - request.get("requested_at", time.time()) < CYCLE_SECONDS):
         set_user_setting(DB_PATH, "local_worker_pending_result", "{}")
         return progress
     result = {
-        "status": "partial" if progress.get("has_more") else result.get("status", "error"),
+        "status": "error" if result.get("status") == "error" else "partial" if progress.get("has_more") else result.get("status", "error"),
         "added": added,
         "skipped": skipped,
         "total_fetched": result.get("total_fetched", 0),
@@ -159,7 +162,7 @@ def run_request(request, aggregator):
         "telemetry": result.get("telemetry", {}),
         "logs": result.get("logs", []),
         "progress": result.get("progress"),
-        "error": result.get("error") or ("24-hour local run limit reached; unfinished searches remain saved" if progress.get("has_more") else None),
+        "error": result.get("error") or ("Cycle finished with deferred searches; saved progress is available via Resume unfinished" if progress.get("unfinished") or progress.get("has_more") else None),
         "uploaded": uploaded,
         "last_sync_time": local_telemetry().get("last_sync_time", 0),
     }

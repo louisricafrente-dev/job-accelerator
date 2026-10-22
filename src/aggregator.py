@@ -165,7 +165,7 @@ class Aggregator:
         thread.start()
         return True
 
-    def run_sync(self, queries: Optional[List[str]] = None, force: bool = False, budget_seconds: Optional[float] = None, cycle_id=None) -> Dict[str, Any]:
+    def run_sync(self, queries: Optional[List[str]] = None, force: bool = False, budget_seconds: Optional[float] = None, cycle_id=None, resume=False) -> Dict[str, Any]:
         if queries is None:
             saved_stack = get_user_setting(self.db_path, "target_stack", "")
             saved_queries = list(dict.fromkeys(q.strip() for q in saved_stack.split(",") if q.strip()))
@@ -173,7 +173,7 @@ class Aggregator:
                 queries = saved_queries
         if budget_seconds is not None:
             from src.sync_batches import run_batch
-            return run_batch(self, queries if queries is not None else DEFAULT_QUERIES, budget_seconds=budget_seconds, cycle_id=cycle_id)
+            return run_batch(self, queries if queries is not None else DEFAULT_QUERIES, budget_seconds=budget_seconds, cycle_id=cycle_id, resume=resume)
         # Guard against concurrent duplicate runs / spamming
         acquired = self._sync_lock.acquire(blocking=False)
         if not acquired:

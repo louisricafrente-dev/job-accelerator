@@ -370,8 +370,8 @@ class UpworkConnector(BaseConnector):
         jobs: List[Job] = []
         feed_url = os.environ.get("UPWORK_FEED_URL", "").strip()
         if not feed_url:
-            q_enc = urllib.parse.quote(query.strip())
-            feed_url = f"https://www.upwork.com/ab/feed/jobs/rss?q={q_enc}&sort=recency"
+            self.last_error = "Configuration required: Upwork retired public RSS; configure UPWORK_FEED_URL with an authorized feed"
+            return []
 
         try:
             import xml.etree.ElementTree as ET
