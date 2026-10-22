@@ -68,7 +68,8 @@ class BaseConnector(ABC):
     def get_url(self, url, **kwargs):
         from curl_cffi import requests
         def send(proxy):
-            response = requests.get(url, proxy=proxy or "", trust_env=False, **kwargs)
+            with requests.Session(trust_env=False) as session:
+                response = session.get(url, proxy=proxy or "", **kwargs)
             response.raise_for_status()
             self.check_challenge(response.text)
             return response

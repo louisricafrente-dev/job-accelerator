@@ -27,7 +27,7 @@ async function main() {
   context.escapeHtml = value => String(value);
   vm.runInContext(code.slice(code.indexOf('function renderTelemetry(data)'), code.indexOf('function copySyncLogs()')), context);
   context.renderTelemetry({is_syncing: true, progress: {completed_searches: 10, total_searches: 100}, telemetry: {LinkedIn: {status: 'error', error: 'HTTP 429', count: 5}}});
-  assert.match(elements.get('telemetry-boards-grid').innerHTML, /RETRY/);
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /DEFERRED/);
   assert.doesNotMatch(elements.get('telemetry-boards-grid').innerHTML, /SCANNING/);
   assert.match(elements.get('telemetry-sync-state').textContent, /10\/100/);
   context.renderTelemetry({is_syncing: true,
@@ -39,12 +39,13 @@ async function main() {
   assert.match(elements.get('telemetry-sync-state').textContent, /Waiting for retry.*Resumes automatically/);
   assert.match(elements.get('telemetry-sync-state').textContent, /42 fetched.*20 uploaded.*5 new/);
   assert.doesNotMatch(elements.get('telemetry-sync-state').textContent, /Syncing/);
-  assert.match(elements.get('telemetry-boards-grid').innerHTML, /HTTP 403.*Retry at/);
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /HTTP 403.*Eligible after/);
   assert.match(elements.get('telemetry-boards-grid').innerHTML, /42 fetched/);
   assert.match(elements.get('telemetry-boards-grid').innerHTML, /WEBSHARE \(fallback\)/);
   assert.doesNotMatch(elements.get('telemetry-boards-grid').innerHTML, /STANDBY|SYNCED|Ready/);
   context.renderTelemetry({is_syncing: false, progress: {completed_searches: 10, total_searches: 100, has_more: true}});
-  assert.equal(elements.get('sync-text').textContent, 'Resume sync');
+  assert.equal(elements.get('sync-text').textContent, 'Sync now');
+  assert.equal(elements.get('resume-sync-btn').hidden, false);
 
   for (const title of ['Software Engineer III', 'Senior Software Engineer, Backend (Identity International)']) {
     assert.equal(context.getSkillsMatch({ title, experience_level: 'Senior / Lead' }).count, 0);
@@ -84,9 +85,9 @@ async function main() {
   await oldRequest;
   assert.equal(context.jobsList[0].id, 999, 'an old response must not overwrite newer filters');
 
-  vm.runInContext(code.slice(code.indexOf('async function triggerSync()'), code.indexOf('function startSyncPoller()')), context);
+  vm.runInContext(code.slice(code.indexOf('async function triggerSync('), code.indexOf('function startSyncPoller()')), context);
   const matrix = vm.runInNewContext(code.slice(code.indexOf('const PRESET_CATEGORIES ='), code.indexOf('const PRESET_SKILLS =')) + ';PRESET_CATEGORIES.flatMap(c=>c.skills)');
-  const classes = { contains: () => false, add() {}, remove() {} };
+  const classes = { contains: () => false, add() {}, remove() {}, toggle() {} };
   elements.set('sync-btn', { classList: classes });
   elements.set('sync-spinner', { classList: classes });
   elements.set('user-stack-input', { value: matrix.join(', ') });
@@ -146,7 +147,7 @@ async function main() {
   context.fetch = async () => ({ ok: true, json: async () => ({ status: 'ok', added: 12, progress: {completed_searches: 2, total_searches: 295, has_more: true} }) });
   await context.triggerSync();
   assert.ok(toasts.at(-1).includes('2/295'));
-  assert.ok(toasts.at(-1).includes('Next run continues'));
+  assert.ok(toasts.at(-1).includes('Continuing available searches'));
   console.log('Frontend regressions passed: seniority, account isolation, replay, pagination, response ordering, full-matrix sync, API errors');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

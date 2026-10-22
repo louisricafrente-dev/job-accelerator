@@ -479,6 +479,8 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                 if local:
                     return json.dumps({"status": "queued_local", "local_request": local.get("local_request"),
                                        "local_worker": local.get("local_worker"), "email_notification": None})
+                from src.cloud_sync import start_run
+                return json.dumps(start_run(db_path, automatic=True))
 
             stats = aggregator.run_sync(force=True, budget_seconds=150)
             if os.environ.get("VERCEL"):
@@ -551,6 +553,10 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         worker_telem = read_json_setting(db_path, "local_worker_telemetry")
         local_active = (telemetry["local_worker"]["online"] and request.get("status") == "running"
                         and owns_execution(db_path, request))
+        if (not local_active and isinstance(cloud_run.get("result"), dict)
+                and cloud_run.get("updated_at", 0) > request.get("completed_at", request.get("updated_at", 0))):
+            telemetry["last_result"] = cloud_run["result"]
+            telemetry["progress"] = cloud_run["result"].get("progress")
         if local_active and worker_telem:
             telemetry.update({key: value for key, value in worker_telem.items()
                               if key in {"progress", "last_result", "last_sync_time", "logs", "telemetry", "platforms", "total_boards", "run_totals"}})
@@ -717,12 +723,13 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                                                 new_jobs_count=result.get("added", 0))
             except Exception as mail_err:
                 email_result = {"status": "error", "error": str(mail_err)}
-        request.update(status="complete" if result.get("status") in {"ok", "partial"} else "error",
+        request.update(status="complete" if result.get("status") == "ok" else "partial" if result.get("status") == "partial" else "error",
                        completed_at=time.time(), updated_at=time.time(), result=result,
                        email_notification=email_result)
         set_user_setting(db_path, REQUEST_KEY, json.dumps(request))
         set_user_setting(db_path, "sync_status", json.dumps({"is_syncing": False,
                          "last_sync_time": result.get("last_sync_time", 0), "last_result": result,
+                         "last_successful_fetch": result.get("last_sync_time", 0),
                          "total_boards": result.get("total_boards", 0),
                          "logs": result.get("logs", []), "telemetry": result.get("telemetry", {})}))
         lease = get_user_setting(db_path, "sync_lease", "0|") or "0|"
@@ -759,6 +766,9 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         keywords = data.get("keywords")
         is_background = data.get("background", False) or (bottle.request.query.get("background") in ("1", "true"))
         force = data.get("force", False)
+        action = data.get("action", "fresh")
+        if not isinstance(action, str) or action not in {"fresh", "resume"}:
+            bottle.abort(400, "action must be fresh or resume")
 
         if isinstance(keywords, str):
             keywords = [k.strip() for k in keywords.split(",") if k.strip()]
@@ -786,7 +796,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                             continue
 
                     current_cloud_run = read_run(db_path)
-                    if active_lease and current_cloud_run.get("status") in ACTIVE:
+                    if active_lease and public_run(current_cloud_run).get("status") in ACTIVE:
                         return {"status": "already_syncing", "is_syncing": True,
                                 "cloud_run": public_run(current_cloud_run),
                                 "local_worker": worker}
@@ -796,12 +806,12 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                                                  pause_reason="local_worker_selected")
                         set_user_setting(db_path, RUN_KEY, json.dumps(current_cloud_run))
 
-                    local = request_local_sync(db_path, queries=keywords if keywords else None)
+                    local = request_local_sync(db_path, queries=keywords if keywords else None, resume=action == "resume")
                     if local:
                         return local
 
                 cancel_queued_local_sync(db_path)
-                return start_run(db_path, queries=keywords if keywords else None)
+                return start_run(db_path, queries=keywords if keywords else None, resume=action == "resume")
             except Exception as exc:
                 bottle.response.status = 503
                 return {"status": "error", "error": str(exc)}

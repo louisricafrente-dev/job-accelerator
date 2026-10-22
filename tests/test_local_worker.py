@@ -151,12 +151,27 @@ class TestLocalWorker(unittest.TestCase):
         self.assertFalse(body["is_syncing"])
         self.assertEqual(body["local_request"]["status"], "interrupted")
 
+    def test_cooldown_finishes_partial_and_next_click_creates_a_fresh_request(self):
+        req = self.claim()
+        aggregator = Mock(connectors=[])
+        aggregator.run_sync.return_value = {"status": "partial", "progress": {"has_more": False, "unfinished": True,
+            "deferred_boards": [{"platform": "Blocked", "retry_at": time.time() + 21600}]}}
+        with patch.object(worker, "api_call", side_effect=self.bridge):
+            self.assertIsNone(worker.run_request(req, aggregator))
+        completed = json.loads(get_user_setting(self.db, REQUEST_KEY))
+        self.assertEqual(completed["status"], "partial")
+        self.assertFalse(get_user_setting(self.db, "sync_lease", ""))
+        queued = request_local_sync(self.db, ["python developer"])["local_request"]
+        self.assertNotEqual(queued["id"], req["id"])
+        repeated = request_local_sync(self.db, ["python developer"])["local_request"]
+        self.assertEqual(repeated["id"], queued["id"])
+
     def test_resume_partial_run_keeps_cycle_and_completed_searches(self):
         req = self.claim()
         req.update(status="complete", completed_at=time.time(), requested_at=time.time() - 90000,
                    result={"status": "partial", "progress": {"has_more": True}})
         set_user_setting(self.db, REQUEST_KEY, json.dumps(req))
-        resumed = request_local_sync(self.db, ["python developer"])["local_request"]
+        resumed = request_local_sync(self.db, ["python developer"], resume=True)["local_request"]
         self.assertEqual(resumed["id"], req["id"])
         self.assertEqual(resumed["status"], "queued")
         self.assertGreater(resumed["requested_at"], req["requested_at"])

@@ -123,8 +123,9 @@
             <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
             <path d="M16 21h5v-5"/>
           </svg>
-          <span id="sync-text">Sync Job Sites</span>
+          <span id="sync-text">Sync now</span>
         </button>
+        <button id="resume-sync-btn" class="btn-subtle" onclick="triggerSync('resume')" hidden title="Continue unfinished searches without restarting completed sources">Resume unfinished</button>
 
         <!-- User Profile & Explicit Logout Control -->
         <div id="auth-header-cluster" class="auth-header-cluster">
@@ -694,7 +695,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.8"></script>
+  <script src="/static/app.js?v=3.9"></script>
 </body>
 </html>
 
