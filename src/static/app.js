@@ -2775,7 +2775,7 @@ function renderTelemetry(data) {
             <span class="board-status-badge ${badgeClass}" title="${escapeHtml(boardError)}">${badgeLabel}</span>
           </div>
           <div class="board-meta-row">
-            <span>${escapeHtml(b.type)}</span>
+            <span>${escapeHtml(b.type)}${boardInfo.route ? ` · ${escapeHtml(boardInfo.route)}${boardInfo.connection_retries ? ' (fallback)' : ''}` : ''}</span>
             <span class="board-count-pill">${count} fetched</span>
           </div>
           ${boardError ? `<div class="board-error" role="status">${escapeHtml(boardError)} · ${escapeHtml(nextRetry)}</div>` : ''}

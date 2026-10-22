@@ -2,8 +2,8 @@
 
 Supports rotating residential proxy pools, direct endpoints, and hybrid execution:
 - Hybrid Mode (Default & Recommended):
-  Routes scraping requests through proxies when running in the cloud (Vercel)
-  to avoid 403/429 rate-limits, while keeping local laptop runs DIRECT to save proxy bandwidth.
+  Uses proxies in the cloud, and direct requests locally with one proxy fallback
+  for connection failures. Explicit access blocks and rate limits are deferred.
 - Always Active: Uses proxies on both cloud and local runs.
 - Disabled: Direct connection everywhere.
 """
@@ -12,8 +12,11 @@ import random
 import time
 from typing import List, Dict, Any, Optional
 import urllib.request
+import urllib.parse
 import json
 import logging
+import re
+import threading
 
 logger = logging.getLogger("proxy_manager")
 
@@ -130,16 +133,58 @@ def is_proxy_active(db_path: Optional[str] = None) -> bool:
 
 
 _rr_index = 0
+_proxy_lock = threading.Lock()
+_unavailable_until = {}
 
 def get_next_proxy(db_path: Optional[str] = None) -> Optional[str]:
     """Get the next proxy from the pool using round-robin rotation."""
     global _rr_index
+    proxies = get_proxy_settings(db_path).get("proxies", [])
+    with _proxy_lock:
+        for _ in proxies:
+            proxy = proxies[_rr_index % len(proxies)]
+            _rr_index += 1
+            if _unavailable_until.get(proxy, 0) <= time.time():
+                return proxy
+    return None
+
+
+def request_routes(db_path=None):
     config = get_proxy_settings(db_path)
-    proxies = config.get("proxies", [])
-    if not proxies:
-        return None
-    _rr_index = (_rr_index + 1) % len(proxies)
-    return proxies[_rr_index]
+    if config["mode"] == "disabled":
+        return [None]
+    routes = [] if is_proxy_active(db_path) else [None]
+    for _ in range(2 if not routes else 1):
+        proxy = get_next_proxy(db_path)
+        if proxy and proxy not in routes:
+            routes.append(proxy)
+    return routes
+
+
+def mark_proxy_unavailable(proxy):
+    with _proxy_lock:
+        _unavailable_until[proxy] = time.time() + 300
+
+
+def is_connection_error(error):
+    message = str(error).lower()
+    if any(term in message for term in ("403", "404", "407", "410", "429", "captcha", "cloudflare", "forbidden", "rate limit")):
+        return False
+    return isinstance(error, (TimeoutError, ConnectionError)) or any(term in message for term in (
+        "timed out", "timeout", "connection reset", "connection refused", "connection aborted",
+        "could not resolve", "name resolution", "getaddrinfo", "remote end closed", "failed to connect",
+        "curl: (5)", "curl: (6)", "curl: (7)", "curl: (28)", "curl: (52)", "curl: (56)"))
+
+
+def redact_proxy_error(error, db_path=None):
+    message = str(error)
+    for proxy in get_proxy_settings(db_path)["proxies"]:
+        parsed = urllib.parse.urlsplit(proxy)
+        message = message.replace(proxy, "[proxy]")
+        for secret in (parsed.username, parsed.password):
+            if secret:
+                message = message.replace(secret, "[redacted]")
+    return re.sub(r"https?://[^\s/]+@", "http://[redacted]@", message)
 
 
 def get_proxy_pool(db_path: Optional[str] = None) -> List[str]:
