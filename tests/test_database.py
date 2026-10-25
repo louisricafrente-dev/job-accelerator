@@ -20,6 +20,34 @@ class TestDatabase(unittest.TestCase):
         row = get_jobs(self.db_path, status="saved")[0]
         self.assertEqual(row["experience_level"], "Junior / Entry")
         self.assertEqual(row["notes"], "Keep my note")
+        self.assertEqual(get_jobs(self.db_path, status="saved", experience_level="Mid-Level"), [])
+        self.assertEqual(len(get_jobs(self.db_path, status="saved", experience_level="Junior / Entry")), 1)
+
+    def test_application_handling_lifecycle(self):
+        job = Job(title="Junior Developer", company="Example", location="Philippines", platform="Indeed", tier=1, job_url="https://example.com/handling")
+        insert_jobs(self.db_path, [job])
+        row = get_jobs(self.db_path, status="new")[0]
+        jid = row["id"]
+        update_job_status(self.db_path, jid, status="saved")
+        self.assertEqual(get_jobs(self.db_path, status="saved")[0]["application_handling"], "")
+        update_job_status(self.db_path, jid, application_handling="needs_human", notes="Employer login required")
+        init_db(self.db_path)
+        row = get_jobs(self.db_path, status="saved")[0]
+        self.assertEqual(row["application_handling"], "needs_human")
+        self.assertFalse(row["applied_at"])
+        update_job_status(self.db_path, jid, application_handling="applied_ai")
+        row = get_jobs(self.db_path, status="applied")[0]
+        self.assertEqual(row["application_handling"], "applied_ai")
+        self.assertTrue(row["applied_at"])
+        insert_jobs(self.db_path, [job])
+        self.assertEqual(get_jobs(self.db_path, status="applied")[0]["application_handling"], "applied_ai")
+        update_job_status(self.db_path, jid, status="saved")
+        update_job_status(self.db_path, jid, status="applied")
+        self.assertEqual(get_jobs(self.db_path, status="applied")[0]["application_handling"], "applied_human")
+        with self.assertRaises(ValueError):
+            update_job_status(self.db_path, jid, application_handling="banana")
+        with self.assertRaises(ValueError):
+            update_job_status(self.db_path, jid, status="saved", application_handling="applied_ai")
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -282,6 +310,34 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(len(get_jobs(self.db_path, role_category="QA / Testing")), 1)
         self.assertEqual(len(get_jobs(self.db_path, role_category="Data/AI/ML")), 1)
         self.assertEqual(len(get_jobs(self.db_path, role_category="Web/Software Dev")), 6)
+
+    def test_role_filters_do_not_treat_both_as_every_specialty(self):
+        titles = ["React Native Developer", "Frontend JavaScript Developer", "Data Scientist",
+                  "Data Engineer", "Business Analyst", "AI Engineer", "QA Automation Engineer - Java",
+                  "IT Support Analyst", "Security Analyst", "BIOS Engineer", "Claims Analyst",
+                  "Virtual Assistant", "Civil Engineer", "CNC Programmer", "China Mobile Bulk SMS Routing provider"]
+        insert_jobs(self.db_path, [Job(title=t, company="Example", location="Philippines", platform="Indeed",
+                    tier=1, job_url=f"https://example.com/{i}", role_category="Both") for i, t in enumerate(titles)])
+        def titles_for(role):
+            return {j["title"] for j in get_jobs(self.db_path, role_category=role)}
+        self.assertEqual(titles_for("Mobile"), {"React Native Developer"})
+        self.assertEqual(titles_for("Frontend"), {"Frontend JavaScript Developer"})
+        self.assertEqual(titles_for("Backend"), set())
+        self.assertEqual(titles_for("Data Science"), {"Data Scientist"})
+        self.assertEqual(titles_for("AI / ML"), {"AI Engineer"})
+        self.assertEqual(titles_for("IT Support"), {"IT Support Analyst"})
+        self.assertEqual(titles_for("Cybersecurity"), {"Security Analyst"})
+        self.assertEqual(titles_for("Virtual Assistant"), {"Virtual Assistant"})
+        self.assertNotIn("Virtual Assistant", titles_for("Tech & IT"))
+        self.assertNotIn("Civil Engineer", titles_for("Tech & IT"))
+        self.assertNotIn("CNC Programmer", titles_for("Tech & IT"))
+        self.assertNotIn("BIOS Engineer", titles_for("Mobile"))
+        data = titles_for("Data & Analytics")
+        self.assertIn("Business Analyst", data)
+        self.assertNotIn("IT Support Analyst", data)
+        self.assertNotIn("Security Analyst", data)
+        rows = get_jobs(self.db_path, role_category="Data & Analytics", limit=2, with_total=True)
+        self.assertEqual(rows[0]["matching_total"], len(data))
 
     def test_archived_job_revived_on_newer_date_repost(self):
         # 1. Candidate archives an older posting

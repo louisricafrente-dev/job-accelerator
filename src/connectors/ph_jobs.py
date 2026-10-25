@@ -36,9 +36,10 @@ class KalibrrConnector(BaseConnector):
                         if code:
                             seen_codes.add(code)
                         title = item.get("name", "")
-                        if not is_relevant_opportunity(title, ""):
+                        desc = " ".join(filter(None, [item.get("description", ""), item.get("qualifications", "")]))
+                        if not is_relevant_opportunity(title, desc):
                             continue
-                        pub_date = item.get("published", "")[:10]
+                        pub_date = (item.get("published") or item.get("activation_date") or item.get("created_at") or "")[:10]
                         if not is_within_15_days(pub_date):
                             continue
                         company = item.get("company_name", "")
@@ -46,19 +47,24 @@ class KalibrrConnector(BaseConnector):
                         salary = ""
                         if item.get("salary_range"):
                             salary = str(item["salary_range"])
+                        loc_obj = item.get("google_location") or {}
+                        addr_obj = loc_obj.get("address_components") or {}
                         job = Job(
                             title=title,
                             company=company,
-                            location=item.get("google_location", {}).get("address_components", {}).get("city", "Philippines"),
+                            location=addr_obj.get("city") or "Philippines",
                             platform=self.platform,
                             tier=self.tier,
                             job_url=link,
                             salary=salary,
-                            role_category=classify_role(title),
-                            experience_level=classify_experience_level(title),
+                            role_category=classify_role(title, desc),
+                            experience_level=classify_experience_level(title, desc),
+                            description=desc,
                             date_posted=pub_date
                         )
                         jobs.append(job)
+                if len(items) < 100:
+                    break
                 # Polite anti-ban pause between pages
                 time.sleep(random.uniform(0.4, 0.7))
             except Exception as e:
@@ -76,7 +82,7 @@ class BossjobConnector(BaseConnector):
         self.last_error = ""
         jobs: List[Job] = []
         try:
-            params = urllib.parse.urlencode({"query": query, "size": 20, "country_id": 167})
+            params = urllib.parse.urlencode({"query": query, "size": 50, "country_id": 167})
             url = f"https://bossjob.ph/bossjob-api-server/jobs/search?{params}"
             req = urllib.request.Request(url, headers={**HEADERS, "Accept": "application/json", "Role-Id": "1"})
             with self.open_url(req, timeout=12) as resp:
@@ -120,70 +126,67 @@ class BossjobConnector(BaseConnector):
 class JobStreetConnector(BaseConnector):
     platform = "JobStreet"
     tier = 1
-    revision = 2
+    is_feed = False
+    revision = 4
+    MAX_PAGES = 3
 
-    def fetch(self, query: str = "developer", location: str = "philippines") -> List[Job]:
+    def fetch(self, query: str = "", location: str = "philippines") -> List[Job]:
         self.last_error = ""
         jobs: List[Job] = []
         try:
-            from bs4 import BeautifulSoup
-
-            queries = [query]
-            if query.lower() in ("developer", "software developer", "software engineer", "dev"):
-                queries.append("junior-developer")
-
+            kw = query.strip() or "software developer"
             seen_urls = set()
-            for q_term in queries:
-                clean_q = urllib.parse.quote("-".join(q_term.lower().replace("/", " ").split()), safe="")
-                for page in (1, 2):
-                    url = f"https://ph.jobstreet.com/{clean_q}-jobs?page={page}"
-                    try:
-                        req_kwargs = {"impersonate": "chrome120", "timeout": 12}
-                        resp = self.get_url(url, **req_kwargs)
-                        if resp.status_code == 200:
-                            soup = BeautifulSoup(resp.text, "html.parser")
-                            articles = soup.find_all("article")
-                            if not articles:
-                                break
-                            for art in articles:
-                                title_a = art.find("a", {"data-automation": "jobTitle"}) or art.find("a")
-                                if not title_a:
-                                    continue
-                                title = title_a.text.strip()
-                                if not title or not is_relevant_opportunity(title, ""):
-                                    continue
-                                href = title_a.get("href", "")
-                                if href and not href.startswith("http"):
-                                    href = "https://ph.jobstreet.com" + href
-                                if href in seen_urls:
-                                    continue
-                                seen_urls.add(href)
-                                date_elem = art.find(attrs={"data-automation": "jobListingDate"}) or art.find("time")
-                                date_val = date_elem.text.strip() if date_elem else ""
-                                if not is_within_15_days(date_val):
-                                    continue
-                                comp_a = art.find("a", {"data-automation": "jobCompany"})
-                                comp = comp_a.text.strip() if comp_a else "Company Confidential"
-                                loc_a = art.find("a", {"data-automation": "jobLocation"})
-                                loc = loc_a.text.strip() if loc_a else "Philippines"
-                                sal_span = art.find("span", {"data-automation": "jobSalary"})
-                                sal = sal_span.text.strip() if sal_span else ""
-                                jobs.append(Job(
-                                    title=title,
-                                    company=comp,
-                                    location=loc,
-                                    platform=self.platform,
-                                    tier=self.tier,
-                                    job_url=href,
-                                    salary=sal,
-                                    role_category=classify_role(title),
-                                    experience_level=classify_experience_level(title),
-                                    date_posted=date_val
-                                ))
-                        time.sleep(random.uniform(0.6, 1.0))
-                    except Exception as inner_e:
-                        self.last_error = str(inner_e) or type(inner_e).__name__
-                        logger.warning(f"[{self.platform}] sub-query '{q_term}' page {page} notice: {inner_e}")
+            for page in range(1, self.MAX_PAGES + 1):
+                params = urllib.parse.urlencode({
+                    "siteKey": "PH-Main",
+                    "keywords": kw,
+                    "page": page,
+                    "pageSize": 50,
+                    "sortmode": "ListedDate",
+                    "daterange": 14,
+                })
+                url = f"https://ph.jobstreet.com/api/jobsearch/v5/search?{params}"
+                resp = self.get_url(url, impersonate="chrome120", timeout=12)
+                if resp.status_code == 200:
+                    payload = json.loads(resp.text) if resp.text and resp.text.lstrip().startswith("{") else {}
+                    items = payload.get("data", [])
+                    page_urls = set()
+                    for item in items:
+                        job_id = str(item.get("id", "")).strip()
+                        href = f"https://ph.jobstreet.com/job/{job_id}"
+                        if not job_id or href in seen_urls:
+                            continue
+                        seen_urls.add(href)
+                        page_urls.add(href)
+                        title = (item.get("title") or "").strip()
+                        bullets = item.get("bulletPoints") or []
+                        desc = " ".join(filter(None, [item.get("teaser", ""), " ".join(str(b) for b in bullets)]))
+                        if not job_id or not title or not is_relevant_opportunity(title, desc):
+                            continue
+                        date_val = (item.get("listingDate") or "")[:10]
+                        if not is_within_15_days(date_val):
+                            continue
+                        comp = (item.get("advertiser") or {}).get("description") or "Company Confidential"
+                        locs = item.get("locations") or []
+                        loc = (locs[0].get("label") if locs and isinstance(locs[0], dict) else "") or "Philippines"
+                        arr = (item.get("workArrangements") or {}).get("displayText") or ""
+                        if arr and arr.lower() not in loc.lower():
+                            loc = f"{loc} ({arr})"
+                        sal = (item.get("salaryLabel") or "").strip()
+                        jobs.append(Job(
+                            title=title,
+                            company=comp,
+                            location=loc,
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=href,
+                            salary=sal,
+                            role_category=classify_role(title, desc),
+                            experience_level=classify_experience_level(title, desc),
+                            description=desc,
+                            date_posted=date_val
+                        ))
+                    if len(items) < 50 or not page_urls:
                         break
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
@@ -204,7 +207,7 @@ class OnlineJobsConnector(BaseConnector):
             clean_q = urllib.parse.quote(query.strip())
             seen_urls = set()
 
-            for page in range(1, 5):
+            for page in range(1, 3):
                 url = f"https://www.onlinejobs.ph/jobseekers/jobsearch?jobkeyword={clean_q}&fullTime=on&partTime=on&freelance=on&page={page}"
                 req = urllib.request.Request(url, headers=HEADERS)
                 try:

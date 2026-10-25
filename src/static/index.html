@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="shortcut icon" href="/static/favicon.ico">
   <meta name="theme-color" content="#080c14">
-  <link rel="stylesheet" href="/static/style.css?v=3.6">
+  <link rel="stylesheet" href="/static/style.css?v=20261025-ui-filters">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -59,14 +59,6 @@
           </svg>
           <span class="tab-label">Archived</span>
           <span class="tab-count" id="stat-ignored">0</span>
-        </button>
-        <button class="status-tab va-tab" id="va-feed-tab" data-val="va" onclick="switchToVAMode(this)" title="Browse remote Virtual Assistant jobs">
-          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/>
-          </svg>
-          <span class="tab-label">VA</span>
-          <span class="tab-count" id="stat-va">0</span>
         </button>
       </nav>
 
@@ -239,12 +231,6 @@
             <span>Match Stack Only</span>
           </button>
 
-          <label class="toggle-switch-label" title="Show or hide Virtual Assistant jobs in main tech feed">
-            <input type="checkbox" id="va-training-checkbox" onchange="toggleVaTrainingCheckbox(this)">
-            <span class="switch-box"></span>
-            <span class="switch-text">Include VA in Feed</span>
-          </label>
-
           <label class="toggle-switch-label" title="Show only listings with disclosed compensation">
             <input type="checkbox" id="salary-only-checkbox" onchange="toggleSalaryOnly(this)">
             <span class="switch-box"></span>
@@ -299,19 +285,20 @@
       <div class="filter-strip">
         <!-- Role Discipline -->
         <div class="filter-cell">
-          <span class="filter-title">Role Focus</span>
-          <div class="chip-carousel" id="role-group">
-            <button class="filter-chip active" data-val="All" onclick="setRole('All', this)">All Roles</button>
-            <button class="filter-chip" data-val="Frontend" onclick="setRole('Frontend', this)">Frontend</button>
-            <button class="filter-chip" data-val="Backend" onclick="setRole('Backend', this)">Backend</button>
-            <button class="filter-chip" data-val="Full Stack" onclick="setRole('Full Stack', this)">Full Stack</button>
-            <button class="filter-chip" data-val="Mobile" onclick="setRole('Mobile', this)">Mobile</button>
-            <button class="filter-chip" data-val="DevOps / Cloud" onclick="setRole('DevOps / Cloud', this)">DevOps / Cloud</button>
-            <button class="filter-chip" data-val="QA / Testing" onclick="setRole('QA / Testing', this)">QA &amp; Testing</button>
-            <button class="filter-chip" data-val="Data/AI/ML" onclick="setRole('Data/AI/ML', this)">Data &amp; AI</button>
-            <button class="filter-chip" data-val="Virtual Assistant" onclick="setRole('Virtual Assistant', this)">All VA Roles</button>
-            <button class="filter-chip" data-val="Web/Software Dev" onclick="setRole('Web/Software Dev', this)">All Engineering</button>
+          <span class="filter-title" id="role-group-label">Job category</span>
+          <div class="chip-carousel" id="role-group" role="group" aria-labelledby="role-group-label">
+            <button class="filter-chip active" data-val="All" aria-pressed="true" onclick="setRole('All', this)">All jobs</button>
+            <button class="filter-chip" data-val="Web/Software Dev" aria-pressed="false" onclick="setRole('Web/Software Dev', this)">Tech &amp; IT</button>
+            <button class="filter-chip" data-val="Data/AI/ML" aria-pressed="false" onclick="setRole('Data/AI/ML', this)">Data &amp; Analytics</button>
+            <button class="filter-chip" data-val="Virtual Assistant" aria-pressed="false" onclick="setRole('Virtual Assistant', this)">Virtual Assistance</button>
           </div>
+        </div>
+        <div class="filter-cell">
+          <label class="filter-title" for="role-specialty-select">Specific role</label>
+          <select id="role-specialty-select" class="filter-select" onchange="setRole(this.value)" aria-describedby="role-filter-help">
+            <option value="All">All roles in this category</option>
+          </select>
+          <span class="role-filter-help" id="role-filter-help">Optional. Narrow the category to a specific role.</span>
         </div>
 
         <!-- Job Board / Platform Filter -->
@@ -339,6 +326,19 @@
             <option value="Contra">Contra</option>
             <option value="FlexJobs">FlexJobs</option>
           </select>
+        </div>
+
+        <!-- Application Status Filter -->
+        <div class="filter-cell" id="application-filter-row">
+          <label class="filter-title" for="application-filter">Application</label>
+          <select id="application-filter" class="filter-select" onchange="handleApplicationFilterChange(this)">
+            <option value="all">All application statuses</option>
+            <option value="needs_human">Needs human verification</option>
+            <option value="applied_ai">Applied by AI</option>
+            <option value="applied_human">Applied by me / human</option>
+            <option value="unlabeled">No application label</option>
+          </select>
+          <span class="role-filter-help" id="application-filter-help">Filter jobs by application &amp; submission progress</span>
         </div>
 
         <!-- Experience & Recency Multi-Filter -->
@@ -387,7 +387,6 @@
       </div>
     </div>
 
-    <!-- Application Pipeline Tracking Stage Hub (Active when Pipeline tab selected) -->
     <section id="pipeline-hub-header" class="pipeline-hub-header pipeline-hub-container" style="display: none;">
       <div class="pipeline-banner">
         <div class="pipeline-info">
@@ -695,7 +694,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.9"></script>
+  <script src="/static/app.js?v=20261025-ui-filters"></script>
 </body>
 </html>
 

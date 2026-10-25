@@ -317,10 +317,10 @@ def restore_guest_state(guest_id: str, guest_db_path: str, master_db_path: str) 
             _, job_id, field = suffix.split(":", 2)
             if field in ("status", "notes", "pipeline_stage", "follow_up_date"):
                 update_job_status(guest_db_path, int(job_id), **{field: json.loads(raw)})
-            elif field == "applied_at":
+            elif field in ("applied_at", "application_handling"):
                 conn = sqlite3.connect(guest_db_path)
                 try:
-                    conn.execute("UPDATE jobs SET applied_at=? WHERE id=?", (json.loads(raw), int(job_id)))
+                    conn.execute(f"UPDATE jobs SET {field}=? WHERE id=?", (json.loads(raw), int(job_id)))
                     conn.commit()
                 finally:
                     conn.close()
@@ -356,7 +356,7 @@ def reset_guest_db(guest_id: str, master_db_path: str) -> str:
     if os.path.exists(guest_db_path):
         conn = sqlite3.connect(guest_db_path)
         try:
-            conn.execute("UPDATE jobs SET status='new', pipeline_stage='applied', applied_at=NULL, follow_up_date=NULL, notes=NULL")
+            conn.execute("UPDATE jobs SET status='new', pipeline_stage='applied', applied_at=NULL, follow_up_date=NULL, notes=NULL, application_handling=''")
             conn.execute("DELETE FROM user_settings")
             conn.commit()
         finally:

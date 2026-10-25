@@ -18,10 +18,15 @@ const context = vm.createContext({
   jobsList: [], selectedIndex: 0, renderJobs() {}, updateSummaryText() {},
 });
 vm.runInContext(code.slice(code.indexOf('const LOCAL_STATUS_KEY ='), code.indexOf("document.addEventListener('visibilitychange'")), context);
+vm.runInContext(code.slice(code.indexOf('const ROLE_OPTIONS ='), code.indexOf('let currentPlatform =')), context);
 vm.runInContext(code.slice(code.indexOf('function getSkillsMatch(job)'), code.indexOf('// Chip & Stack helpers')), context);
 vm.runInContext(code.slice(code.indexOf('let loadJobsSequence ='), code.indexOf('// Skills matching calculator')), context);
 
 async function main() {
+  context.userStack = 'React';
+  assert.equal(context.getSkillsMatch({title: 'Software Developer', description: 'Build applications using React.'}).count, 1);
+  assert.equal(context.getSkillsMatch({title: 'Software Developer', description: 'Build applications using PHP.'}).count, 0);
+  context.userStack = 'Junior / Entry';
   context.currentStats = {};
   context.MONITORED_BOARDS = [{key: 'LinkedIn', label: 'LinkedIn', domain: 'linkedin.com', type: 'Feed'}];
   context.escapeHtml = value => String(value);
@@ -84,6 +89,20 @@ async function main() {
   release({ ok: true, json: async () => ({ jobs: [{ id: 1, status: 'new' }], has_more: false }) });
   await oldRequest;
   assert.equal(context.jobsList[0].id, 999, 'an old response must not overwrite newer filters');
+
+  context.currentStatus = 'saved';
+  context.currentRole = 'Mobile';
+  context.currentDateFilter = 'all';
+  context.currentLevel = 'All';
+  context.saveLocalStatusOverride(555, { status: 'saved', job: { id: 555, title: 'Data Scientist', status: 'saved' } });
+  context.resilientFetchWithRetry = async () => ({ ok: true, json: async () => ({ jobs: [], has_more: false }) });
+  await context.loadJobs();
+  assert.equal(context.jobsList.length, 0, 'local Saved jobs must not bypass a role filter');
+  context.currentRole = 'All';
+  await context.loadJobs();
+  assert.equal(context.jobsList[0].id, 555, 'unfiltered Saved must retain pending local jobs');
+  context.removeLocalStatusOverride(555);
+  context.currentStatus = 'new';
 
   vm.runInContext(code.slice(code.indexOf('async function triggerSync('), code.indexOf('function startSyncPoller()')), context);
   const matrix = vm.runInNewContext(code.slice(code.indexOf('const PRESET_CATEGORIES ='), code.indexOf('const PRESET_SKILLS =')) + ';PRESET_CATEGORIES.flatMap(c=>c.skills)');

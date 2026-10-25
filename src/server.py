@@ -5,6 +5,7 @@ import uuid
 import hashlib
 import hmac
 import bottle
+bottle.BaseRequest.MEMFILE_MAX = 2 * 1024 * 1024
 from src.database import (
     get_jobs, update_job_status, get_stats, export_jobs_csv, insert_jobs,
     get_user_setting, set_user_setting, get_all_user_settings
@@ -319,7 +320,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         notes = data.get("notes")
         pipeline_stage = data.get("stage") or data.get("pipeline_stage")
         follow_up_date = data.get("follow_up_date")
-        changes = dict(status=new_status, notes=notes, pipeline_stage=pipeline_stage, follow_up_date=follow_up_date)
+        changes = dict(status=new_status, notes=notes, pipeline_stage=pipeline_stage, follow_up_date=follow_up_date, application_handling=data.get("application_handling"))
         try:
             success = update_job_status(target_db, job_id, **changes)
         except (ValueError, TypeError) as exc:
@@ -469,6 +470,10 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             return {"status": "skipped", "reason": "Automatic sync is paused", "email_notification": None}
 
         try:
+            if os.environ.get("VERCEL") and os.environ.get("FLCONSOLE_MCP_TOKEN"):
+                import asyncio
+                from src.upwork_monitor import start
+                asyncio.run(start(db_path))
             if bottle.request.path == "/api/cron/cloud-sync":
                 from src.cloud_sync import start_run
                 bottle.response.content_type = "application/json"
@@ -542,6 +547,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         bottle.response.content_type = "application/json"
         telemetry = aggregator.get_telemetry()
         telemetry.setdefault("last_result", aggregator.last_sync_result)
+        upwork_feed = json.loads(get_user_setting(db_path, "upwork_feed_status", "{}") or "{}")
         from src.cloud_sync import read_run, public_run, ACTIVE
         cloud_run = read_run(db_path)
         telemetry["cloud_run"] = public_run(cloud_run)
@@ -570,6 +576,19 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                 telemetry["last_result"] = {"status": "error", "error": telemetry["local_request"]["error"]}
         if cloud_pending:
             telemetry["is_syncing"] = True
+        if upwork_feed:
+            age = time.time() - upwork_feed.get("checked_at", 0)
+            if isinstance(telemetry.get("progress"), dict):
+                board = telemetry["progress"].setdefault("boards", {}).setdefault("Upwork", {})
+                board.update(last_error="", deferred=False, retry=[], next_at=upwork_feed.get("checked_at", 0) + 600)
+            if isinstance(telemetry.get("last_result"), dict):
+                telemetry["last_result"].setdefault("platforms", {})["Upwork"] = upwork_feed.get("fetched", 0)
+            if isinstance(telemetry.get("run_totals"), dict):
+                telemetry["run_totals"].setdefault("platforms", {})["Upwork"] = upwork_feed.get("fetched", 0)
+            telemetry.setdefault("telemetry", {})["Upwork"] = {
+                "status": "error" if upwork_feed.get("error") else "active" if age < 1800 else "cooldown",
+                "count": upwork_feed.get("fetched", 0), "tier": 2, "route": "FLCONSOLE",
+                "error": upwork_feed.get("error", "") if age < 1800 else "Upwork feed is stale; check local/cloud monitor"}
         return json.dumps(telemetry)
 
     def require_local_worker():
@@ -652,6 +671,56 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         proxy_settings = get_proxy_settings(db_path)
         return json.dumps({"status": "ok", "request": request if request.get("status") == "running" and request.get("worker_id") == worker_id else None,
                            "proxy_settings": {"proxy_mode": proxy_settings["mode"], "proxy_list": proxy_settings["raw"]}})
+
+    @app.route("/api/local-worker/upwork/claim", method="POST")
+    def api_upwork_claim():
+        auth_err = require_local_worker()
+        if auth_err:
+            return auth_err
+        from src.upwork_monitor import claim
+        return {"claimed": claim(db_path, "local")}
+
+    @app.route("/api/local-worker/upwork/start", method="POST")
+    def api_upwork_start():
+        auth_err = require_local_worker()
+        if auth_err:
+            return auth_err
+        import asyncio
+        from src.upwork_monitor import start, poll_cloud
+        result = asyncio.run(start(db_path))
+        if (bottle.request.json or {}).get("check_cloud"):
+            result["cloud_check"] = poll_cloud(db_path, ignore_local=True)
+        return result
+
+    @app.route("/api/local-worker/upwork", method="POST")
+    def api_local_worker_upwork():
+        auth_err = require_local_worker()
+        if auth_err:
+            return auth_err
+        data = bottle.request.json or {}
+        rows = data.get("jobs")
+        if not isinstance(rows, list) or len(rows) > 30:
+            bottle.abort(400, "At most 30 Upwork jobs per batch")
+        jobs = []
+        from urllib.parse import urlsplit
+        for row in rows:
+            if not isinstance(row, dict):
+                bottle.abort(400, "Invalid Upwork job")
+            url = urlsplit(str(row.get("job_url", "")))
+            if (row.get("platform") != "Upwork" or url.scheme != "https"
+                    or url.netloc != "www.upwork.com" or not url.path.startswith("/jobs/~")
+                    or not row.get("title")):
+                bottle.abort(400, "Invalid Upwork job")
+            jobs.append(Job(title=row["title"], company="Direct Client (Upwork)",
+                            location="Remote Worldwide / Freelance", platform="Upwork", tier=2,
+                            job_url=row["job_url"], salary=row.get("salary", ""),
+                            description=row.get("description", ""), date_posted=row.get("date_posted", ""),
+                            role_category=row.get("role_category", "Web/Software Dev"),
+                            experience_level=row.get("experience_level", "Unspecified")))
+        added, skipped = insert_jobs(db_path, jobs)
+        set_user_setting(db_path, "upwork_feed_status", json.dumps({"checked_at": time.time(),
+                         "fetched": len(jobs), "error": str(data.get("error", ""))[:250], "source": "local"}))
+        return {"status": "ok", "added": added, "skipped": skipped}
 
     @app.route("/api/local-worker/jobs", method="POST")
     def api_local_worker_jobs():

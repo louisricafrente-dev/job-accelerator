@@ -26,10 +26,17 @@ class TestSourceRepairs(unittest.TestCase):
         self.assertEqual(jobs[0].salary, "PHP 30-40K")
 
     def test_jobstreet_slash_keyword_does_not_create_nested_url_path(self):
-        response = MagicMock(status_code=200, text="<html></html>")
+        today = datetime.now(timezone.utc).date().isoformat()
+        payload = {"data": [{"id": "95451582", "title": "Junior Frontend Developer", "teaser": "Build React and HTML / CSS web apps",
+                             "listingDate": today, "salaryLabel": "PHP 35,000", "advertiser": {"description": "ePLDT"},
+                             "locations": [{"label": "Makati City, Metro Manila"}]}]}
+        response = MagicMock(status_code=200, text=json.dumps(payload))
         with patch("curl_cffi.requests.Session.get", return_value=response) as fetch:
-            JobStreetConnector().fetch("HTML / CSS")
-        self.assertEqual(fetch.call_args.args[0], "https://ph.jobstreet.com/html-css-jobs?page=1")
+            jobs = JobStreetConnector().fetch("HTML / CSS")
+        self.assertIn("https://ph.jobstreet.com/api/jobsearch/v5/search?", fetch.call_args.args[0])
+        self.assertIn("keywords=HTML+%2F+CSS", fetch.call_args.args[0])
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].job_url, "https://ph.jobstreet.com/job/95451582")
 
     def test_upwork_does_not_retry_retired_rss_without_authorized_feed(self):
         board = UpworkConnector()
@@ -47,3 +54,57 @@ class TestSourceRepairs(unittest.TestCase):
         response = MagicMock(status_code=200, text="ok")
         with patch.object(Session, "get", return_value=response):
             self.assertIs(JobStreetConnector().get_url("https://example.com", timeout=1), response)
+
+
+    def test_jobstreet_paginates_even_when_first_page_is_all_senior(self):
+        from urllib.parse import parse_qs, urlsplit
+        today = datetime.now(timezone.utc).date().isoformat()
+        def response(url, **kwargs):
+            params = parse_qs(urlsplit(url).query)
+            self.assertEqual(params['keywords'], ['QA Automation'])
+            page = int(params['page'][0])
+            rows = ([{'id': str(i), 'title': 'Senior Developer', 'listingDate': today} for i in range(50)]
+                    if page == 1 else [{'id': '100', 'title': 'Junior QA Engineer', 'listingDate': today}])
+            return MagicMock(status_code=200, text=json.dumps({'data': rows}))
+        with patch.object(JobStreetConnector, 'get_url', side_effect=response) as fetch:
+            jobs = JobStreetConnector().fetch('QA Automation')
+        self.assertFalse(JobStreetConnector.is_feed)
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual([j.title for j in jobs], ['Junior QA Engineer'])
+
+    def test_jobstreet_bounds_repeated_pages(self):
+        today = datetime.now(timezone.utc).date().isoformat()
+        rows = [{'id': str(i), 'title': 'Junior Developer', 'listingDate': today} for i in range(50)]
+        with patch.object(JobStreetConnector, 'get_url', return_value=MagicMock(status_code=200, text=json.dumps({'data': rows}))) as fetch:
+            self.assertEqual(len(JobStreetConnector().fetch('developer')), 50)
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_large_keyword_matrix_keeps_qa_and_support_queries(self):
+        from src.aggregator import compact_search_queries
+        queries = [f'keyword {i}' for i in range(13)] + ['QA Automation', 'IT Support']
+        self.assertEqual(compact_search_queries(queries + ['QA Automation']), queries)
+
+    def test_fallbacks_do_not_invent_publication_dates(self):
+        from src.connectors.jobspy_adapter import JobSpyAdapter
+        from src.connectors.remote_feed import FlexJobsConnector, ContraConnector
+        from src.models import is_within_15_days
+        html = '<script type="application/ld+json">' + json.dumps({'itemListElement': [
+            {'name': 'Junior Web Developer', 'url': 'https://www.ziprecruiter.com/c/example/Job/dev'}]}) + '</script>'
+        with patch.object(JobSpyAdapter, 'get_url', return_value=MagicMock(status_code=200, text=html)):
+            jobs = JobSpyAdapter('ZipRecruiter', 'zip_recruiter', 2)._fetch_ziprecruiter_ldjson()
+        self.assertEqual(jobs[0].date_posted, '')
+        self.assertFalse(is_within_15_days(jobs[0].date_posted))
+        xml = b'<urlset><url><loc>https://www.flexjobs.com/gjw/example/junior-web-developer/123</loc><lastmod>2026-10-25</lastmod></url></urlset>'
+        with patch.object(FlexJobsConnector, 'get_url', return_value=MagicMock(status_code=200, content=xml)):
+            jobs = FlexJobsConnector()._fetch_gjw_sitemap()
+        self.assertEqual(jobs[0].date_posted, '', 'Sitemap modification is not a publication date')
+        ContraConnector._cached_jobs = None
+        context = {'publicAppConfiguration': {'relayRecordMap': {'1': {
+            '__typename': 'Opportunity', 'title': 'Junior Web Developer', 'slug': 'dev', 'datePosted': '2020-01-01'}}}}
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = ('<script id="vike_pageContext">' + json.dumps(context) + '</script>').encode()
+        with patch.object(ContraConnector, 'open_url', return_value=response):
+            jobs = ContraConnector().fetch()
+        self.assertEqual(jobs[0].date_posted, '2020-01-01')
+        self.assertFalse(is_within_15_days(jobs[0].date_posted))
+        ContraConnector._cached_jobs = None

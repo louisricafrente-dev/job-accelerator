@@ -62,6 +62,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             total = 1 if getattr(connector, "is_feed", False) else len(queries)
             revision = getattr(connector, "revision", 1)
             if state.get("revision", 1) != revision:
+                state.update(cursor=0, retry=[], next_at=state.get("blocked_until", 0))
                 if "404" in state.get("last_error", ""):
                     state.update(blocked_until=0, next_at=0, last_error="", deferred=False)
                 state["revision"] = revision
@@ -209,7 +210,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         state["last_error"] = error
                         if index not in state["retry"]:
                             state["retry"].append(index)
-                        blocked = any(code in error.lower() for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden"))
+                        blocked = any(code in error.lower() for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden", "cloudflare challenge", "requires verification"))
                         cooldown_secs = BLOCK_COOLDOWN_SECONDS if blocked else ERROR_COOLDOWN_SECONDS
                         state["next_at"] = time.time() + max(cooldown_secs, getattr(connector, "retry_after", 0))
                         state["blocked_until"] = state["next_at"]

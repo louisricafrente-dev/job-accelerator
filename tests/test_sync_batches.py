@@ -167,6 +167,16 @@ class TestSyncBatches(unittest.TestCase):
         run_batch(Aggregator(self.db, [self.board]), ["a"], cycle_id="still-blocked", workers=1)
         self.assertEqual(len(self.board.calls), calls)
 
+    def test_feed_to_query_revision_restarts_at_first_keyword(self):
+        from src.sync_batches import run_batch
+        self.board.is_feed = True
+        run_batch(Aggregator(self.db, [self.board]), ["qa", "support"], cycle_id="same", workers=1)
+        self.board.calls.clear()
+        self.board.is_feed = False
+        self.board.revision = 2
+        run_batch(Aggregator(self.db, [self.board]), ["qa", "support"], cycle_id="same", workers=1)
+        self.assertEqual(self.board.calls, ["qa", "support"])
+
     def test_legacy_poll_timestamp_is_not_a_successful_fetch(self):
         set_user_setting(self.db, "sync_status", json.dumps({"last_sync_time": self.clock.time()}))
         self.run_batch(["a"], budget=0)

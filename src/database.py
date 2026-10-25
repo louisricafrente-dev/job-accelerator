@@ -4,6 +4,7 @@ import json
 import sqlite3
 import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from src.models import Job, normalize_date, clean_url
 from src.classifier import is_work_authorized_location, classify_experience_level
@@ -92,6 +93,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     status TEXT NOT NULL DEFAULT 'new',
     pipeline_stage TEXT DEFAULT 'applied',
     follow_up_date TEXT,
+    application_handling TEXT DEFAULT '',
     notes TEXT,
     sources TEXT DEFAULT '[]',
     applied_at DATETIME,
@@ -280,6 +282,13 @@ def init_db(db_path: str = "data/jobs.db") -> None:
         conn = get_db_connection(db_path)
         try:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "application_handling" not in columns:
+                try:
+                    conn.execute("ALTER TABLE jobs ADD COLUMN application_handling TEXT DEFAULT ''")
+                except Exception:
+                    if "application_handling" not in {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}:
+                        raise
+                conn.execute("UPDATE jobs SET application_handling='applied_human' WHERE status='applied' AND COALESCE(application_handling, '')=''")
             if "description" not in columns:
                 try:
                     conn.execute("ALTER TABLE jobs ADD COLUMN description TEXT DEFAULT ''")
@@ -288,13 +297,20 @@ def init_db(db_path: str = "data/jobs.db") -> None:
                     columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
                     if "description" not in columns:
                         raise
-            migration_key = "entry_description_backfill_20261021_inclusive_v2"
+            migration_key = "entry_description_backfill_20261024_pass4_linkedin_batch2"
             if not conn.execute("SELECT value FROM user_settings WHERE key = ?", (migration_key,)).fetchone():
-                rows = conn.execute("SELECT id, title, description FROM jobs WHERE experience_level != 'Junior / Entry'").fetchall()
+                enrichments = json.loads(Path(__file__).with_name("entry_description_enrichment_20261022.json").read_text(encoding="utf-8"))
+                enrichment_tuples = [(item["description"], item["id"], item["url"]) for item in enrichments]
+                for start in range(0, len(enrichment_tuples), 50):
+                    conn.cursor().executemany(
+                        "UPDATE jobs SET description = ? WHERE id = ? AND job_url = ? AND (description IS NULL OR trim(description) = '')",
+                        enrichment_tuples[start:start + 50],
+                    )
+                rows = conn.execute("SELECT id, title, description FROM jobs WHERE experience_level = 'Mid-Level'").fetchall()
                 changes = [("Junior / Entry", row[0]) for row in rows
                            if classify_experience_level(row[1], row[2] or "") == "Junior / Entry"]
                 for start in range(0, len(changes), 50):
-                    conn.cursor().executemany("UPDATE jobs SET experience_level = ? WHERE id = ?", changes[start:start + 50])
+                    conn.cursor().executemany("UPDATE jobs SET experience_level = ? WHERE id = ? AND experience_level = 'Mid-Level'", changes[start:start + 50])
                 conn.execute("INSERT INTO user_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
                              (migration_key, str(len(changes))))
         finally:
@@ -312,6 +328,9 @@ def init_db(db_path: str = "data/jobs.db") -> None:
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(jobs);")
         existing_cols = {col[1] for col in cursor.fetchall()}
+        if "application_handling" not in existing_cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN application_handling TEXT DEFAULT ''")
+            conn.execute("UPDATE jobs SET application_handling='applied_human' WHERE status='applied'")
         if "description" not in existing_cols:
             conn.execute("ALTER TABLE jobs ADD COLUMN description TEXT DEFAULT ''")
         if "pipeline_stage" not in existing_cols:
@@ -576,77 +595,14 @@ def get_jobs(
                 clauses.append("status = ?")
                 params.append(status)
         if role_category and role_category != "All":
-            rc = role_category.strip()
-            if rc.upper() in ("VIRTUAL ASSISTANT", "VA", "VA (WITH TRAINING)"):
-                va_sub = [
-                    "role_category = 'Virtual Assistant'",
-                    "lower(title) LIKE '%virtual assistant%'",
-                    "lower(title) LIKE '%administrative assistant%'",
-                    "lower(title) LIKE '%executive assistant%'",
-                    "lower(title) LIKE '%remote assistant%'",
-                    "lower(title) LIKE '%cyberbacker%'",
-                    "lower(title) LIKE '%athena%'",
-                    "lower(title) LIKE '%virtudesk%'",
-                    "lower(title) LIKE '%pineapple staffing%'"
-                ]
-                clauses.append(f"({' OR '.join(va_sub)})")
-            elif rc == "Frontend":
-                frontend_pats = ["%frontend%", "%front-end%", "%react%", "%vue%", "%angular%", "%ui dev%", "%web designer%", "%svelte%"]
-                sub_clauses = ["(role_category = 'Frontend' OR role_category = 'Both')"]
-                for pat in frontend_pats:
-                    sub_clauses.append("lower(title) LIKE ?")
-                    params.append(pat)
-                clauses.append(f"({' OR '.join(sub_clauses)})")
-            elif rc == "Backend":
-                backend_pats = ["%backend%", "%back-end%", "%python%", "%node%", "%django%", "%fastapi%", "%golang%", "%go developer%", "%java%", "%.net%", "%c#%", "%php%", "%laravel%", "%ruby%", "%api developer%"]
-                sub_clauses = ["(role_category = 'Backend' OR role_category = 'Both')"]
-                for pat in backend_pats:
-                    sub_clauses.append("lower(title) LIKE ?")
-                    params.append(pat)
-                clauses.append(f"({' OR '.join(sub_clauses)})")
-            elif rc == "Full Stack":
-                fs_pats = ["%full stack%", "%fullstack%", "%full-stack%"]
-                sub_clauses = ["(role_category = 'Full Stack' OR role_category = 'Both')"]
-                for pat in fs_pats:
-                    sub_clauses.append("lower(title) LIKE ?")
-                    params.append(pat)
-                clauses.append(f"({' OR '.join(sub_clauses)})")
-            elif rc == "Mobile":
-                mob_pats = ["%mobile%", "%android%", "%ios%", "%flutter%", "%react native%", "%swift%", "%kotlin%"]
-                sub_clauses = ["(role_category = 'Mobile' OR role_category = 'Both')"]
-                for pat in mob_pats:
-                    sub_clauses.append("lower(title) LIKE ?")
-                    params.append(pat)
-                clauses.append(f"({' OR '.join(sub_clauses)})")
-            elif rc in ("DevOps / Cloud", "DevOps", "Cloud"):
-                devops_pats = ["%devops%", "%cloud%", "%aws%", "%azure%", "%gcp%", "%sre%", "%site reliability%", "%kubernetes%", "%docker%", "%infrastructure%"]
-                sub_clauses = ["(role_category = 'DevOps / Cloud' OR role_category = 'Both')"]
-                for pat in devops_pats:
-                    sub_clauses.append("lower(title) LIKE ?")
-                    params.append(pat)
-                clauses.append(f"({' OR '.join(sub_clauses)})")
-            elif rc in ("QA / Testing", "QA", "Testing"):
-                qa_pats = ["%qa%", "%quality assurance%", "%tester%", "%testing%", "%sdet%", "%automation test%"]
-                sub_clauses = ["(role_category = 'QA / Testing' OR role_category = 'Both')"]
-                for pat in qa_pats:
-                    sub_clauses.append("lower(title) LIKE ?")
-                    params.append(pat)
-                clauses.append(f"({' OR '.join(sub_clauses)})")
-            elif rc in ("Data/AI/ML", "Data & AI"):
-                data_pats = ["%data%", "%ai%", "%machine learning%", "%analytics%", "%nlp%", "%deep learning%", "%bi developer%"]
-                sub_clauses = ["(role_category = 'Data/AI/ML' OR role_category = 'Both')"]
-                for pat in data_pats:
-                    sub_clauses.append("lower(title) LIKE ?")
-                    params.append(pat)
-                clauses.append(f"({' OR '.join(sub_clauses)})")
-            elif rc == "Web/Software Dev":
-                clauses.append("(role_category = 'Web/Software Dev' OR role_category = 'Both' OR (role_category != 'Data/AI/ML' AND role_category != 'Virtual Assistant'))")
-            else:
-                clauses.append("(role_category = ? OR role_category = 'Both' OR lower(title) LIKE ?)")
-                params.extend([rc, f"%{rc.lower()}%"])
+            from src.role_filters import role_predicate
+            role_sql, role_params = role_predicate(role_category.strip())
+            clauses.append(role_sql)
+            params.extend(role_params)
 
         is_explicit_unspecified = experience_level and any(u in experience_level for u in ("Unspecified", "Other", "Others", "Unspecified / Other"))
-        if not include_va and not is_explicit_unspecified and (not role_category or role_category.strip().upper() not in ("VIRTUAL ASSISTANT", "VA", "VA (WITH TRAINING)")):
+        va_roles = ("VIRTUAL ASSISTANT", "VA", "VA (WITH TRAINING)", "ADMINISTRATIVE SUPPORT", "EXECUTIVE ASSISTANCE", "CUSTOMER SUPPORT", "DATA ENTRY")
+        if not include_va and not is_explicit_unspecified and (not role_category or role_category.strip().upper() not in va_roles):
             clauses.append("(role_category != 'Virtual Assistant' AND lower(title) NOT LIKE '%virtual assistant%' AND lower(title) NOT LIKE '%administrative assistant%')")
         if experience_level and experience_level != "All":
             raw_levels = [l.strip() for l in experience_level.split(",") if l.strip() and l.strip() != "All"]
@@ -678,7 +634,7 @@ def get_jobs(
                     elif el in ("Senior / Lead", "Senior", "Lead"):
                         level_clauses.append("(experience_level = 'Senior / Lead' OR lower(title) LIKE '%senior%' OR lower(title) LIKE '%sr%' OR lower(title) LIKE '%lead%' OR lower(title) LIKE '%principal%')")
                     elif el in ("Mid-Level", "Mid"):
-                        level_clauses.append("(experience_level = 'Mid-Level' OR lower(title) LIKE '%engineer ii%' OR lower(title) LIKE '%developer ii%')")
+                        level_clauses.append("(experience_level = 'Mid-Level' OR ((experience_level IS NULL OR experience_level IN ('', 'Unspecified', 'Other')) AND (lower(title) LIKE '%engineer ii%' OR lower(title) LIKE '%developer ii%')))")
                     elif el in ("Unspecified", "Other", "Others", "Unspecified / Other"):
                         level_clauses.append("(experience_level = 'Unspecified' OR experience_level IS NULL OR experience_level = '' OR experience_level = 'Other')")
                     else:
@@ -758,7 +714,14 @@ def update_job_status(
     notes: Optional[str] = None,
     pipeline_stage: Optional[str] = None,
     follow_up_date: Optional[str] = None,
+    application_handling: Optional[str] = None,
 ) -> bool:
+    if application_handling is not None and application_handling not in ("", "needs_human", "applied_ai", "applied_human"):
+        raise ValueError("Unsupported application handling")
+    if application_handling in ("applied_ai", "applied_human"):
+        if status is not None and status != "applied":
+            raise ValueError("Applied handling requires applied status")
+        status = "applied"
     if status is not None and status not in VALID_STATUSES:
         raise ValueError("Unsupported job status")
     if pipeline_stage is not None and pipeline_stage not in VALID_STAGES:
@@ -783,6 +746,13 @@ def update_job_status(
             params.append(status)
             if status == "applied":
                 set_clauses.append("applied_at = COALESCE(applied_at, CURRENT_TIMESTAMP)")
+        if application_handling is not None:
+            set_clauses.append("application_handling = ?")
+            params.append(application_handling)
+        elif status == "applied":
+            set_clauses.append("application_handling = CASE WHEN application_handling = 'applied_ai' THEN 'applied_ai' ELSE 'applied_human' END")
+        elif status in ("new", "saved"):
+            set_clauses.append("application_handling = CASE WHEN application_handling = 'needs_human' THEN 'needs_human' ELSE '' END")
         if notes is not None:
             set_clauses.append("notes = ?")
             params.append(notes)

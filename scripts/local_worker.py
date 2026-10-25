@@ -24,7 +24,7 @@ BASE_URL = os.environ.get("JOB_ACCELERATOR_URL", "https://job-accelerator.vercel
 TOKEN_PATH = ROOT / ".vercel" / "local-worker.token"
 POLL_SECONDS = 5
 HEARTBEAT_SECONDS = 15
-UPLOAD_BATCH_SIZE = 20
+UPLOAD_BATCH_SIZE = 8
 
 
 def api_call(path, method="GET", data=None):
@@ -85,14 +85,19 @@ def pending_jobs():
         acknowledged = dict(conn.execute("SELECT job_id, fingerprint FROM worker_upload_ack").fetchall())
         rows = conn.execute("SELECT id, title, company, location, platform, tier, job_url, salary, description, role_category, experience_level, date_posted, sources FROM jobs ORDER BY id").fetchall()
         result = []
+        batch_bytes = 0
         for row in rows:
             item = dict(row)
             try:
                 item["sources"] = json.loads(item["sources"] or "[]")
             except (ValueError, TypeError):
                 item["sources"] = []
-            fingerprint = hashlib.sha256(json.dumps(item, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+            raw_item = json.dumps(item, sort_keys=True, ensure_ascii=True)
+            fingerprint = hashlib.sha256(raw_item.encode()).hexdigest()
             if acknowledged.get(item["id"]) != fingerprint:
+                if result and batch_bytes + len(raw_item) > 70000:
+                    break
+                batch_bytes += len(raw_item)
                 item["_fingerprint"] = fingerprint
                 result.append(item)
                 if len(result) >= UPLOAD_BATCH_SIZE:
@@ -132,7 +137,7 @@ def run_request(request, aggregator):
     if pending.get("request_id") == request["id"]:
         result = pending["result"]
     else:
-        result = aggregator.run_sync(queries=request.get("queries"), budget_seconds=30, cycle_id=request["id"], resume=request.get("resume", False))
+        result = aggregator.run_sync(queries=request.get("queries"), budget_seconds=90, cycle_id=request["id"], resume=request.get("resume", False))
         if result.get("status") == "already_syncing":
             raise RuntimeError("Local scraper is busy; retaining request for retry")
         totals = json.loads(get_user_setting(DB_PATH, "local_worker_scrape_totals", "{}") or "{}")
@@ -175,6 +180,13 @@ def load_token():
         os.environ["LOCAL_WORKER_TOKEN"] = TOKEN_PATH.read_text(encoding="utf-8").strip()
     if not os.environ.get("LOCAL_WORKER_TOKEN"):
         raise RuntimeError(f"Local worker token is missing: {TOKEN_PATH}")
+    if os.name == "nt" and not os.environ.get("FLCONSOLE_MCP_TOKEN"):
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+                os.environ["FLCONSOLE_MCP_TOKEN"] = winreg.QueryValueEx(key, "FLCONSOLE_MCP_TOKEN")[0]
+        except OSError:
+            pass
 
 
 @contextmanager

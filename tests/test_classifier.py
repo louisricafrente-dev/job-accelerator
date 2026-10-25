@@ -7,7 +7,6 @@ class TestClassifier(unittest.TestCase):
             ("Front-End Developer", "At least 1 year of web development experience, or equivalent project background."),
             ("Software Engineer", "0 - 2 years of experience in software development."),
             ("Developer II", "Fresh graduates are welcome to apply. Python: 3 years (Required)"),
-            ("Senior Developer", "Minimum 5 years of experience. Fresh graduates are welcome to apply."),
             ("Web Developer", "Fresh graduates with relevant internships are encouraged to apply."),
             ("AI Developer", "Years of Experience: Fresh Graduates / 1-3 years experience."),
             ("Full Stack Developer", "Open to recent graduates with strong projects."),
@@ -21,6 +20,19 @@ class TestClassifier(unittest.TestCase):
             ("Software Developer", "Open to first-time job seekers."),
             ("Software Developer", "Relevant academic projects are accepted."),
             ("Software Developer", "Minimum 3 years of experience. Internship experience accepted."),
+            ("Software Developer", "Minimum of 3 years of professional software development experience. AI coding tools: 1 year (Preferred)"),
+            ("Software Developer", "Job Types: Full-time, Permanent, Fresh graduate"),
+            ("Solutions Engineer", "In this early-career role, you will collaborate with our team."),
+            ("Software Engineer", "1+ years of experience on large scale distributed systems"),
+            ("QA Tester", "SQL: 1 year (Required)"),
+            ("Software Engineer II Golang", "Como é ser uma pessoa Software Engineer Júnior:"),
+            ("AI Product Engineer", "We hire on AI fluency, judgment, and velocity, not years of experience."),
+            ("Database Administrator", "At least 2 years. Freshers are also encouraged to apply."),
+            ("Software Developer", "Freshers with relevant technical knowledge are welcome."),
+            ("Application Engineer", "Freshers and candidates with 0-2 years of experience are welcome to apply."),
+            ("Software Engineer", "Comprehensive training provided for all new hires."),
+            ("Web Developer", "Beginners welcome to apply."),
+            ("Data Analyst", "0 - 1 year experience required."),
         ]:
             with self.subTest(description=description):
                 self.assertEqual(classify_experience_level(title, description), "Junior / Entry")
@@ -28,7 +40,6 @@ class TestClassifier(unittest.TestCase):
     def test_description_does_not_confuse_training_with_eligibility(self):
         for description in [
             "Bachelor's degree required. Provide training to junior developers.",
-            "Minimum of 3 years of professional software development experience. AI coding tools: 1 year (Preferred)",
             "One year contract. Mentor graduate developers.",
             "Graduate of Computer Science. 3 years experience required.",
             "Fresh graduates are not welcome to apply.",
@@ -51,6 +62,9 @@ class TestClassifier(unittest.TestCase):
         self.assertEqual(classify_experience_level("0-2 Years Experience Web Developer"), "Junior / Entry")
 
     def test_experience_level_senior(self):
+        for description in ["Requires 7 years of experience. Comprehensive training provided.",
+                            "Minimum 5 years of experience. Fresh graduates are welcome to apply."]:
+            self.assertEqual(classify_experience_level("Senior Software Engineer", description), "Senior / Lead")
         self.assertEqual(classify_experience_level("Senior Backend Engineer"), "Senior / Lead")
         self.assertEqual(classify_experience_level("Sr AI Engineer"), "Senior / Lead")
         self.assertEqual(classify_experience_level("Lead Data Architect"), "Senior / Lead")

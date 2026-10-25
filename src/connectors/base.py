@@ -20,14 +20,19 @@ class BaseConnector(ABC):
             content = content.decode("utf-8", errors="ignore")
         if isinstance(content, str) and ("<html" in content.lower() or "<title" in content.lower()) and any(
             marker in content for marker in ("/cdn-cgi/challenge-platform", "cf-chl-")):
+            if any(real in content for real in ("__NEXT_DATA__", "jobpost-cat-box", "itemListElement")) and "<title>just a moment" not in content.lower():
+                return
             raise RuntimeError("Cloudflare challenge; source requires verification")
 
     def request_with_fallback(self, send):
-        from src.proxy_manager import request_routes, is_connection_error, mark_proxy_unavailable, redact_proxy_error, DEFAULT_PROXIES
-        routes = request_routes(self.db_path)
+        from src.proxy_manager import request_routes, is_connection_error, mark_proxy_unavailable, redact_proxy_error, mark_proxy_quota_exhausted, DEFAULT_PROXIES
+        routes = request_routes(self.db_path, platform=self.platform)
         if not routes:
             raise RuntimeError("No healthy proxy available; waiting for proxy cooldown")
+        from src.proxy_manager import _unavailable_until
         for index, proxy in enumerate(routes):
+            if proxy and _unavailable_until.get(proxy, 0) > time.time():
+                continue
             route = ("WEBSHARE" if proxy in DEFAULT_PROXIES or (proxy and (urllib.parse.urlsplit(proxy).hostname or "").endswith("webshare.io")) else "PROXY") if proxy else "DIRECT"
             self.last_route = route
             try:
@@ -44,6 +49,13 @@ class BaseConnector(ABC):
                         pass
                 if not math.isfinite(getattr(self, "retry_after", 0)):
                     self.retry_after = 0
+                status = getattr(exc, "code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+                if proxy and (status == 402 or "402 payment required" in str(exc).lower() or "response 402" in str(exc).lower()):
+                    mark_proxy_quota_exhausted(self.db_path)
+                    if None in routes[index + 1:]:
+                        continue
+                    self.retry_after = max(getattr(self, "retry_after", 0), 3600)
+                    raise RuntimeError("Proxy quota exhausted (402); proxy pool paused for one hour") from None
                 connection_failed = is_connection_error(exc)
                 if proxy and connection_failed:
                     mark_proxy_unavailable(proxy)
@@ -54,15 +66,29 @@ class BaseConnector(ABC):
 
     def open_url(self, request, timeout=12):
         def send(proxy):
-            if proxy:
-                opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-                response = opener.open(request, timeout=timeout)
-            else:
-                response = urllib.request.urlopen(request, timeout=timeout)
-            with response as opened:
-                body = opened.read()
-                self.check_challenge(body)
-                return body
+            try:
+                if proxy:
+                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+                    response = opener.open(request, timeout=timeout)
+                else:
+                    response = urllib.request.urlopen(request, timeout=timeout)
+                with response as opened:
+                    body = opened.read()
+                    self.check_challenge(body)
+                    return body
+            except Exception as exc:
+                err_body = exc.read() if hasattr(exc, "read") else b""
+                if "cloudflare challenge" not in str(exc).lower() and not any(
+                    m in err_body for m in (b"/cdn-cgi/challenge-platform", b"cf-chl-")
+                ):
+                    raise
+                url = request.full_url if hasattr(request, "full_url") else str(request)
+                from curl_cffi import requests as cffi_requests
+                with cffi_requests.Session(trust_env=False) as session:
+                    resp = session.get(url, proxy=proxy or "", impersonate="chrome120", timeout=timeout)
+                resp.raise_for_status()
+                self.check_challenge(resp.text)
+                return resp.content
         return io.BytesIO(self.request_with_fallback(send))
 
     def get_url(self, url, **kwargs):
