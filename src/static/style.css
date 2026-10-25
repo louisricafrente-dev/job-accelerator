@@ -1236,12 +1236,12 @@ a {
 }
 
 .filter-title {
-  font-size: 0.76rem;
+  font-size: 0.82rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-tertiary);
-  min-width: 80px;
+  color: var(--text-secondary);
+  min-width: 85px;
   flex-shrink: 0;
 }
 
@@ -1262,6 +1262,26 @@ a {
 
 .chip-carousel::-webkit-scrollbar {
   display: none;
+}
+
+#role-group {
+  flex-wrap: wrap;
+  overflow-x: visible;
+}
+#role-group .filter-chip {
+  min-height: 36px;
+}
+#role-group .filter-chip:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.role-filter-help {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+@media (max-width: 600px) {
+  #role-group .filter-chip { min-height: 44px; }
+  #role-specialty-select { width: 100%; }
 }
 
 .filter-chip {
@@ -3485,4 +3505,45 @@ a {
   font-size: 0.8rem;
   color: #10b981;
   font-weight: 600;
+}
+
+.application-handling-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.application-handling-controls label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.application-handling-controls select.stage-dropdown {
+  max-width: 100%;
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: var(--bg-surface-elevated, #161b22);
+  border: 1px solid var(--border-default, #30363d);
+  color: var(--text-primary, #f0f6fc);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.application-handling-controls select.stage-dropdown:focus {
+  border-color: var(--accent-cyan);
+  outline: none;
+}
+#application-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+#application-filter-row .filter-select {
+  border-color: var(--border-default);
+}
+#application-filter-row .filter-select:hover {
+  border-color: var(--border-hover);
 }

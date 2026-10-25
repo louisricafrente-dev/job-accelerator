@@ -34,8 +34,8 @@ class TestLocationFilter(unittest.TestCase):
         self.assertTrue(is_work_authorized_location("Remoto", "Software Engineer II Golang", "Remote OK"))
 
     def test_dedicated_remote_platforms_allowed(self):
-        self.assertTrue(is_work_authorized_location("Vancouver", "Associate Data Scientist", "Remote OK"))
-        self.assertTrue(is_work_authorized_location("Cincinnati", "Software Deployment Engineer", "Remote OK"))
+        self.assertFalse(is_work_authorized_location("Vancouver", "Associate Data Scientist", "Remote OK"))
+        self.assertFalse(is_work_authorized_location("Cincinnati", "Software Deployment Engineer", "Remote OK"))
         self.assertTrue(is_work_authorized_location("", "Software Engineer", "We Work Remotely"))
 
     def test_foreign_onsite_rejected(self):
@@ -63,10 +63,25 @@ class TestLocationFilter(unittest.TestCase):
         self.assertFalse(is_work_authorized_location("Sydney, Australia", "Junior Java Developer", "Indeed"))
 
     def test_foreign_board_remote_allowed(self):
-        # If a foreign board explicitly specifies remote, candidate is allowed to apply remotely
-        self.assertTrue(is_work_authorized_location("Remote, India", "Python Developer", "Naukri"))
-        self.assertTrue(is_work_authorized_location("India", "Python Developer (Remote)", "Naukri"))
-        self.assertTrue(is_work_authorized_location("Bangladesh", "Full Stack Developer (WFH / Remote)", "BDJobs"))
+        # Remote does not override a foreign hiring location.
+        self.assertFalse(is_work_authorized_location("Remote, India", "Python Developer", "Naukri"))
+        self.assertFalse(is_work_authorized_location("India", "Python Developer (Remote)", "Naukri"))
+        self.assertFalse(is_work_authorized_location("Bangladesh", "Full Stack Developer (WFH / Remote)", "BDJobs"))
+
+    def test_remote_country_restrictions_override_board_and_remote_labels(self):
+        for location, platform, description in [
+            ("United States (Remote)", "LinkedIn", ""),
+            ("Poland", "Jobicy", ""),
+            ("Remote Worldwide", "FlexJobs", "Remote within Poland only."),
+            ("Remote", "Upwork", "x " * 300 + "Applicants must reside in the United States."),
+            ("Remote", "Glassdoor", "You must be authorized to work in the US."),
+            ("Remote - Europe", "Himalayas", ""),
+            ("Sweden (Remote)", "Remote OK", ""),
+        ]:
+            with self.subTest(location=location, description=description):
+                self.assertFalse(is_work_authorized_location(location, "Developer", platform, description))
+        self.assertTrue(is_work_authorized_location("Philippines (Remote)", "Developer", "LinkedIn"))
+        self.assertTrue(is_work_authorized_location("Remote Worldwide", "Developer", "Remotive", "Our clients are in the US."))
 
     def test_database_insert_skips_foreign_onsite(self):
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:

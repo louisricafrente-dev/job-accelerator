@@ -75,6 +75,15 @@ class TestServer(unittest.TestCase):
         self.assertEqual(len(updated), 1)
         self.assertEqual(updated[0]["notes"], "Applied via portal")
 
+    def test_application_handling_api(self):
+        jid = get_jobs(self.db_path)[0]["id"]
+        self.assertTrue(self._request("POST", f"/api/jobs/{jid}/status", body={"status": "saved", "application_handling": "needs_human"})["success"])
+        row = self._request("GET", "/api/jobs", "status=saved")["jobs"][0]
+        self.assertEqual(row["application_handling"], "needs_human")
+        self.assertTrue(self._request("POST", f"/api/jobs/{jid}/status", body={"application_handling": "applied_ai"})["success"])
+        row = self._request("GET", "/api/jobs", "status=applied")["jobs"][0]
+        self.assertEqual(row["application_handling"], "applied_ai")
+
     def test_get_stats(self):
         stats = self._request("GET", "/api/stats")
         self.assertEqual(stats["total"], 2)

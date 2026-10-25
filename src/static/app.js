@@ -10,6 +10,44 @@ let viewFilters = {};
 let selectedLevels = new Set(['All']);
 let currentLevel = 'All';
 let currentRole = 'All';
+const ROLE_OPTIONS = {
+  'Web/Software Dev': [['Software Development', 'Software development'], ['Frontend', 'Frontend development'],
+    ['Backend', 'Backend development'], ['Full Stack', 'Full-stack development'], ['Mobile', 'Mobile development'],
+    ['DevOps / Cloud', 'DevOps & cloud'], ['QA / Testing', 'QA & testing'], ['IT Support', 'IT support & infrastructure'],
+    ['Cybersecurity', 'Cybersecurity']],
+  'Data/AI/ML': [['Data Analyst', 'Data analyst & business intelligence'], ['Data Science', 'Data science'],
+    ['Data Engineering', 'Data engineering'], ['AI / ML', 'AI & machine learning'],
+    ['Business / Systems Analyst', 'Business & systems analyst'], ['Analyst', 'Other analyst roles']],
+  'Virtual Assistant': [['Administrative Support', 'Administrative support'], ['Executive Assistance', 'Executive assistance'],
+    ['Customer Support', 'Customer support'], ['Data Entry', 'Data entry']],
+};
+const ROLE_LABELS = {All: 'All jobs', 'Web/Software Dev': 'Tech & IT', 'Data/AI/ML': 'Data & Analytics',
+  'Virtual Assistant': 'Virtual Assistance'};
+
+function roleFamily(role) {
+  return Object.keys(ROLE_OPTIONS).find(family => family === role || ROLE_OPTIONS[family].some(([value]) => value === role)) || 'All';
+}
+
+function roleLabel(role) {
+  return ROLE_LABELS[role] || Object.values(ROLE_OPTIONS).flat().find(([value]) => value === role)?.[1] || role;
+}
+
+function syncRoleControls() {
+  const activeRole = currentViewMode === 'va' ? 'Virtual Assistant' : currentRole;
+  const family = roleFamily(activeRole);
+  document.querySelectorAll('#role-group .filter-chip').forEach(chip => {
+    const active = chip.dataset.val === family;
+    chip.classList.toggle('active', active);
+    chip.setAttribute('aria-pressed', String(active));
+  });
+  const select = document.getElementById('role-specialty-select');
+  if (!select) return;
+  const families = family === 'All' ? Object.keys(ROLE_OPTIONS) : [family];
+  select.innerHTML = `<option value="${family}">All roles${family === 'All' ? '' : ' in ' + escapeHtml(roleLabel(family))}</option>` +
+    families.map(group => `<optgroup label="${escapeHtml(roleLabel(group))}">${ROLE_OPTIONS[group].map(([value, label]) =>
+      `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</optgroup>`).join('');
+  select.value = activeRole;
+}
 let currentPlatform = 'All';
 let currentDateFilter = '7days';
 let hasSalaryOnly = false;
@@ -372,7 +410,7 @@ function flushJobOverride(jobId, token = currentSessionToken) {
         if (token === currentSessionToken) renderNoteSaveState(jobId);
       }
       const payload = {};
-      for (const field of ['status', 'notes', 'stage', 'follow_up_date']) {
+      for (const field of ['status', 'notes', 'stage', 'follow_up_date', 'application_handling']) {
         if (ov[field] !== undefined && ov[field] !== null) payload[field] = ov[field];
       }
       try {
@@ -768,9 +806,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 const viewFilterKeys = new Set(['date_filter', 'role', 'experience_levels', 'platform', 'remote_only', 'hide_senior', 'has_salary_only', 'filter_skills_only']);
 function filterViewKey() { return currentViewMode === 'va' ? 'va' : currentStatus; }
 function rememberViewFilters() {
+  const appFilterVal = document.getElementById('application-filter')?.value || 'all';
   viewFilters[filterViewKey()] = { date: currentDateFilter, role: currentRole, level: currentLevel,
     platform: currentPlatform, remote: remoteOnly, senior: hideSenior, salary: hasSalaryOnly,
-    skills: filterBySkillsOnly, search: searchQuery };
+    skills: filterBySkillsOnly, search: searchQuery, application: appFilterVal };
   persistSetting('view_filters', JSON.stringify(viewFilters));
 }
 function restoreViewFilters() {
@@ -783,6 +822,8 @@ function restoreViewFilters() {
   searchQuery = f.search || '';
   const input = document.getElementById('search-input');
   if (input) input.value = searchQuery;
+  const appSelect = document.getElementById('application-filter');
+  if (appSelect) appSelect.value = f.application || 'all';
 }
 
 // Universal persistence helper (saves to both localStorage & server SQLite)
@@ -939,8 +980,9 @@ async function loadAllUserSettings() {
     currentPlatform = settings.platform;
   }
   if (settings.status === 'va') {
-    currentViewMode = 'va';
+    currentViewMode = 'tech';
     currentStatus = 'new';
+    currentRole = 'Virtual Assistant';
   } else if (settings.status) {
     currentStatus = settings.status;
   }
@@ -982,24 +1024,25 @@ function syncFilterControlsUI() {
   const autoSyncCb = document.getElementById('auto-sync-checkbox');
   if (autoSyncCb) autoSyncCb.checked = autoSyncEnabled;
 
+  const appFilterSelect = document.getElementById('application-filter');
+  if (appFilterSelect) {
+    const f = viewFilters[filterViewKey()] || {};
+    appFilterSelect.value = f.application || 'all';
+  }
+
   updateFilterButtonState();
 
   // Status navigation tabs
-  const isVA = currentViewMode === 'va';
   document.querySelectorAll('.status-nav .status-tab').forEach(tab => {
     const val = tab.getAttribute('data-val');
-    if (isVA) {
-      tab.classList.toggle('active', val === 'va');
-    } else {
-      tab.classList.toggle('active', val === currentStatus);
-    }
+    tab.classList.toggle('active', val === currentStatus);
   });
 
-  // When in VA mode, dim Role Focus chips because all listings in this view are VA
+  // Category controls can also leave the dedicated remote VA feed.
   const roleGroupCell = document.getElementById('role-group')?.closest('.filter-cell');
   if (roleGroupCell) {
-    roleGroupCell.style.opacity = isVA ? '0.45' : '1';
-    roleGroupCell.style.pointerEvents = isVA ? 'none' : 'auto';
+    roleGroupCell.style.opacity = '1';
+    roleGroupCell.style.pointerEvents = 'auto';
   }
 
   // Date filter chips
@@ -1009,10 +1052,7 @@ function syncFilterControlsUI() {
   });
 
   // Role focus chips
-  document.querySelectorAll('#role-group .filter-chip').forEach(chip => {
-    const val = chip.getAttribute('data-val');
-    chip.classList.toggle('active', val === currentRole);
-  });
+  syncRoleControls();
 
   const platformSelect = document.getElementById('platform-select');
   if (platformSelect) {
@@ -1114,6 +1154,8 @@ async function loadJobs() {
     </div>
   `;
 
+  const handlingFilterRow = document.getElementById('application-filter-row');
+  if (handlingFilterRow) handlingFilterRow.style.display = 'flex';
   const pipelineHeader = document.getElementById('pipeline-hub-header');
   const activeView = typeof currentViewMode !== 'undefined' ? currentViewMode : 'tech';
   if (pipelineHeader) {
@@ -1132,7 +1174,7 @@ async function loadJobs() {
     if (hasSalaryOnly) params.set('has_salary', '1');
     if (isVA || remoteOnly) params.set('remote_only', '1');
     if (!isVA && hideSenior) params.set('hide_senior', '1');
-    if (isVA || vaTrainingEnabled || currentRole === 'Virtual Assistant') {
+    if (isVA || currentRole === 'All' || roleFamily(currentRole) === 'Virtual Assistant') {
       params.set('include_va', '1');
     }
     if (currentPlatform && currentPlatform !== 'All') {
@@ -1163,6 +1205,7 @@ async function loadJobs() {
         if (ov.notes !== undefined && ov.notes !== null) j.notes = ov.notes;
         if (ov.stage !== undefined && ov.stage !== null) j.pipeline_stage = ov.stage;
         if (ov.follow_up_date !== undefined && ov.follow_up_date !== null) j.follow_up_date = ov.follow_up_date;
+        if (ov.application_handling !== undefined) j.application_handling = ov.application_handling;
         if (ov.applied_at) j.applied_at = ov.applied_at;
       }
     });
@@ -1179,7 +1222,10 @@ async function loadJobs() {
     }
 
     // Inject any locally saved/applied jobs that the server might not have yet (e.g. serverless cold start / lag)
-    if (currentStatus === 'applied' || currentStatus === 'saved') {
+    if ((currentStatus === 'applied' || currentStatus === 'saved') && !isVA &&
+        currentRole === 'All' && currentPlatform === 'All' && !searchQuery &&
+        currentLevel === 'All' && ['all', 'anytime'].includes(currentDateFilter) &&
+        !hasSalaryOnly && !remoteOnly) {
       const existingIds = new Set(jobs.map(j => j.id));
       for (const [idStr, ov] of Object.entries(overrides)) {
         const idNum = parseInt(idStr, 10);
@@ -1187,6 +1233,7 @@ async function loadJobs() {
           const injectedJob = { ...ov.job };
           injectedJob.status = ov.status;
           if (ov.notes) injectedJob.notes = ov.notes;
+          if (ov.application_handling !== undefined) injectedJob.application_handling = ov.application_handling;
           if (ov.stage) injectedJob.pipeline_stage = ov.stage;
           if (ov.follow_up_date) injectedJob.follow_up_date = ov.follow_up_date;
           if (ov.applied_at) injectedJob.applied_at = ov.applied_at;
@@ -1206,6 +1253,10 @@ async function loadJobs() {
       jobs = jobs.filter(j => getSkillsMatch(j).count > 0);
     }
 
+    const applicationFilter = document.getElementById('application-filter')?.value || 'all';
+    if (applicationFilter !== 'all') {
+      jobs = filterByApplicationHandling(jobs, applicationFilter);
+    }
     jobsList = jobs;
     selectedIndex = 0;
     renderJobs();
@@ -1224,7 +1275,7 @@ async function loadJobs() {
 function getSkillsMatch(job) {
   if (!userStack || !userStack.trim()) return { count: 0, matched: [] };
   const tokens = userStack.split(',').map(s => s.trim()).filter(Boolean);
-  const targetText = `${job.title} ${job.company || ''} ${job.location || ''} ${job.role_category || ''} ${job.experience_level || ''} ${job.notes || ''}`.toLowerCase();
+  const targetText = `${job.title} ${job.description || ''} ${job.company || ''} ${job.location || ''} ${job.role_category || ''} ${job.experience_level || ''} ${job.notes || ''}`.toLowerCase();
 
   const matched = [];
   for (const token of tokens) {
@@ -1722,6 +1773,7 @@ function renderJobs() {
             </a>
             <span class="company-identifier">@ ${escapeHtml(job.company)}</span>
             ${followUpBadge}
+            ${applicationHandlingLabel(job) ? `<span class="badge-date" title="Application handling">${applicationHandlingLabel(job)}</span>` : ''}
           </div>
 
           <div class="job-meta-row">
@@ -1768,6 +1820,18 @@ function renderJobs() {
               <div class="job-description-body">${escapeHtml(job.description)}</div>
             </details>` : ''}
 
+            ${['saved', 'applied'].includes(job.status) ? `
+            <div class="application-handling-controls" onclick="event.stopPropagation()">
+              <label for="handling-${job.id}">Application:</label>
+              <select id="handling-${job.id}" class="stage-dropdown" onchange="changeApplicationHandling(${job.id}, this.value)">
+                <option value="" ${!job.application_handling && job.status !== 'applied' ? 'selected' : ''}>No application label</option>
+                <option value="needs_human" ${job.application_handling === 'needs_human' ? 'selected' : ''}>Needs human verification</option>
+                <option value="applied_ai" ${job.application_handling === 'applied_ai' ? 'selected' : ''}>Applied by AI</option>
+                <option value="applied_human" ${(job.application_handling === 'applied_human' || (!job.application_handling && job.status === 'applied')) ? 'selected' : ''}>Applied by me / human</option>
+              </select>
+              <span id="handling-save-${job.id}" role="status"></span>
+              ${job.status === 'saved' && job.application_handling === 'needs_human' ? `<input type="text" class="notes-text-input" aria-label="Reason human verification is needed" placeholder="What needs your attention?" value="${escapeHtml(job.notes || '')}" onblur="saveJobNotes(${job.id}, this.value)" onkeydown="if(event.key==='Enter')this.blur()"><button type="button" id="note-save-${job.id}" class="note-save-state" onclick="retryNoteSave(${job.id})">${getLocalStatusOverrides()[String(job.id)]?.save_state === 'failed' ? 'Failed - retry' : 'Saved'}</button>` : ''}
+            </div>` : ''}
             ${isAppliedView ? `
             <div class="pipeline-card-controls" onclick="event.stopPropagation()">
               <div class="stage-select-wrapper">
@@ -1883,7 +1947,7 @@ function renderEmptyStateHtml() {
     activeFilters.push({ label: `Search: "${searchQuery}"`, action: 'clearSearchInput()' });
   }
   if (currentRole && currentRole !== 'All') {
-    activeFilters.push({ label: `Role: ${currentRole}`, action: `setRole('All', document.querySelector('#role-group button[data-val="All"]'))` });
+    activeFilters.push({ label: `Role: ${roleLabel(currentRole)}`, action: `setRole('All', document.querySelector('#role-group button[data-val="All"]'))` });
   }
   if (selectedLevels && !selectedLevels.has('All') && selectedLevels.size > 0) {
     const levelsStr = Array.from(selectedLevels).join(', ');
@@ -1972,6 +2036,7 @@ function resetAllFeedFilters() {
   if (clearBtn) clearBtn.style.display = 'none';
 
   currentRole = 'All';
+  syncRoleControls();
   document.querySelectorAll('#role-group .filter-chip').forEach(c => {
     c.classList.toggle('active', c.dataset.val === 'All');
   });
@@ -1991,6 +2056,9 @@ function resetAllFeedFilters() {
   const platformSelect = document.getElementById('platform-select');
   if (platformSelect) platformSelect.value = 'All';
 
+  const appFilter = document.getElementById('application-filter');
+  if (appFilter) appFilter.value = 'all';
+
   if (filterBySkillsOnly) {
     filterBySkillsOnly = false;
     const btn = document.getElementById('filter-by-skills-btn');
@@ -2006,8 +2074,38 @@ function resetAllFeedFilters() {
   showToast('Filters reset to full 15-day inventory.', 'info');
 }
 
+function filterByApplicationHandling(jobs, filter) {
+  if (filter === 'all') return jobs;
+  return jobs.filter(job => {
+    const handling = job.application_handling || (job.status === 'applied' ? 'applied_human' : '');
+    return filter === 'unlabeled' ? !handling : handling === filter;
+  });
+}
+
+function applicationHandlingLabel(job) {
+  const value = job.application_handling || (job.status === 'applied' ? 'applied_human' : '');
+  return {needs_human: 'Needs human verification', applied_ai: 'Applied by AI', applied_human: 'Applied by me / human'}[value] || '';
+}
+
+function handleApplicationFilterChange(elem) {
+  rememberViewFilters();
+  loadJobs();
+}
+
+async function changeApplicationHandling(jobId, value) {
+  const job = jobsList.find(j => j.id === jobId);
+  if (!job) return;
+  const applied = value === 'applied_ai' || value === 'applied_human';
+  await updateJobStatus(jobId, applied && job.status !== 'applied' ? 'applied' : null, null, null, null, value);
+  renderJobs();
+  const failed = getLocalStatusOverrides()[String(jobId)]?.save_state === 'failed';
+  const indicator = document.getElementById(`handling-save-${jobId}`);
+  if (indicator) indicator.textContent = failed ? 'Save failed - change selection to retry' : 'Saved';
+  if (failed) showToast('Application label could not be saved. Please retry.');
+}
+
 // Update status via API (Optimistic in-place update with Local-First persistence & auto-retry)
-async function updateJobStatus(jobId, status = null, notes = null, stage = null, followUp = null) {
+async function updateJobStatus(jobId, status = null, notes = null, stage = null, followUp = null, handling = null) {
   const token = currentSessionToken;
   const storageKey = overrideStorageKey(token);
   const jobIdx = jobsList.findIndex(j => j.id === jobId);
@@ -2023,6 +2121,16 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
 
   // 1. Save immediately to Local-First storage (Instant offline/idle durability)
   const overrideUpdate = {};
+  if (handling === null && status === 'applied' && currentStatus !== 'applied') {
+    handling = targetJob?.application_handling === 'applied_ai' ? 'applied_ai' : 'applied_human';
+  }
+  if (handling === null && ['new', 'saved'].includes(status)) {
+    handling = targetJob?.application_handling === 'needs_human' ? 'needs_human' : '';
+  }
+  if (handling !== null) {
+    overrideUpdate.application_handling = handling;
+    if (targetJob) targetJob.application_handling = handling;
+  }
   if (status !== null) overrideUpdate.status = status;
   if (notes !== null) overrideUpdate.notes = notes;
   if (stage !== null) overrideUpdate.stage = stage;
@@ -2444,10 +2552,6 @@ function setLevel(level, elem) {
 }
 
 function setRole(role, elem) {
-  if (role === 'Virtual Assistant') {
-    switchToVAMode();
-    return;
-  }
   currentViewMode = 'tech';
   currentRole = role;
   persistSetting('role', role);
@@ -2570,11 +2674,10 @@ function updateSummaryText(count) {
       ctxEl.textContent = 'Track: Remote Virtual Assistant';
     } else {
       const filters = [];
-      if (currentRole !== 'All') filters.push(currentRole);
+      if (currentRole !== 'All') filters.push(roleLabel(currentRole));
       if (currentLevel !== 'All') filters.push(currentLevel);
       if (currentDateFilter !== 'all') filters.push(`Date: ${currentDateFilter}`);
       if (filterBySkillsOnly) filters.push('Matching Target Stack');
-      if (vaTrainingEnabled) filters.push('VA Included');
       ctxEl.textContent = filters.length > 0 ? `Filtered by: ${filters.join(' • ')}` : '';
     }
   }
@@ -2843,27 +2946,11 @@ function toggleTelemetryCollapse(forceState) {
 // VIRTUAL ASSISTANT & REMOTE FREELANCE HUB
 // --------------------------------------------------------------------------
 function toggleVaHub() {
-  const hub = document.getElementById('va-hub-section');
-  if (!hub) return;
-  const isHidden = hub.style.display === 'none' || !hub.style.display;
-  hub.style.display = isHidden ? 'flex' : 'none';
-  if (isHidden) {
-    hub.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    showToast('Virtual Assistant & Remote Freelance Hub opened.');
-  }
+  setRole('Virtual Assistant');
 }
 
 function switchToVAMode(elem) {
-  rememberViewFilters();
-  currentViewMode = 'va';
-  restoreViewFilters();
-  document.querySelectorAll('.status-nav .status-tab').forEach(t => t.classList.remove('active'));
-  const vaTab = elem || document.getElementById('va-feed-tab');
-  if (vaTab) vaTab.classList.add('active');
-
-  syncFilterControlsUI();
-  showToast('Viewing Remote Virtual Assistant & Freelance opportunities.');
-  loadJobs();
+  setRole('Virtual Assistant');
 }
 
 function switchToTechMode(targetStatus = 'new') {
@@ -2872,7 +2959,7 @@ function switchToTechMode(targetStatus = 'new') {
 }
 
 function filterRemoteVAJobs() {
-  switchToVAMode();
+  setRole('Virtual Assistant');
 }
 
 // --------------------------------------------------------------------------

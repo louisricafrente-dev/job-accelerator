@@ -40,13 +40,12 @@ class TestProxyManager(unittest.TestCase):
             self.assertIsNone(apply_proxy_environment())
             self.assertNotIn("HTTP_PROXY", os.environ)
 
-            # Cloud Vercel run -> Active (uses proxy pool)
             with patch.dict(os.environ, {"VERCEL": "1"}):
+                self.assertFalse(is_proxy_active())
+                self.assertIsNone(apply_proxy_environment())
+            with patch.dict(os.environ, {"FORCE_PROXY": "1"}):
                 self.assertTrue(is_proxy_active())
-                chosen = apply_proxy_environment()
-                self.assertIsNotNone(chosen)
-                self.assertEqual(os.environ["HTTP_PROXY"], chosen)
-                self.assertEqual(os.environ["HTTPS_PROXY"], chosen)
+                self.assertIsNotNone(apply_proxy_environment())
 
     def test_always_and_disabled_modes(self):
         with patch("src.proxy_manager.get_proxy_settings", return_value={"mode": "disabled", "proxies": DEFAULT_PROXIES}):

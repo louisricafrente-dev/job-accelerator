@@ -22,6 +22,27 @@ spec.loader.exec_module(worker)
 
 
 class TestLocalWorker(unittest.TestCase):
+    def test_upwork_feed_requires_worker_auth_and_validates_source(self):
+        payload = {"jobs": [{"platform": "Upwork", "title": "PHP Web Developer",
+                              "description": "Build PHP and MySQL web apps",
+                              "job_url": "https://www.upwork.com/jobs/~022114011265936675730"}]}
+        code, _ = self.call("/api/local-worker/upwork", "POST", payload,
+                            extra={"HTTP_AUTHORIZATION": "Bearer wrong"})
+        self.assertEqual(code, 401)
+        code, result = self.call("/api/local-worker/upwork", "POST", payload)
+        self.assertEqual(code, 200)
+        self.assertEqual(result["added"], 1)
+        set_user_setting(self.db, "sync_status", json.dumps({"progress": {"boards": {
+            "Upwork": {"last_error": "Configuration required: retired RSS"}}}}))
+        code, status = self.call("/api/sync/status", admin=True)
+        self.assertEqual(status["telemetry"]["Upwork"]["route"], "FLCONSOLE")
+        self.assertEqual(status["progress"]["boards"]["Upwork"]["last_error"], "")
+        code, result = self.call("/api/local-worker/upwork", "POST", payload)
+        self.assertEqual(result["added"], 0)
+        payload["jobs"][0]["job_url"] = "https://evil.example/jobs/~123"
+        code, _ = self.call("/api/local-worker/upwork", "POST", payload)
+        self.assertEqual(code, 400)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -5,8 +5,9 @@ from src.connectors.ph_jobs import KalibrrConnector, BossjobConnector
 from src.connectors.jobspy_adapter import JobSpyAdapter
 
 class TestConnectors(unittest.TestCase):
+    @patch("src.connectors.remote_feed.is_within_15_days", return_value=True)
     @patch("urllib.request.urlopen")
-    def test_remoteok_parsing(self, mock_urlopen):
+    def test_remoteok_parsing(self, mock_urlopen, mock_is_within):
         mock_response = MagicMock()
         mock_response.read.return_value = b'''[
             {"legal": "disclaimer"},
@@ -30,8 +31,9 @@ class TestConnectors(unittest.TestCase):
         self.assertEqual(jobs[0].experience_level, "Junior / Entry")
         self.assertEqual(jobs[0].tier, 3)
 
+    @patch("src.connectors.remote_feed.is_within_15_days", return_value=True)
     @patch("urllib.request.urlopen")
-    def test_weworkremotely_parsing(self, mock_urlopen):
+    def test_weworkremotely_parsing(self, mock_urlopen, mock_is_within):
         mock_response = MagicMock()
         mock_response.read.return_value = b'''<?xml version="1.0" encoding="UTF-8"?>
         <rss version="2.0">

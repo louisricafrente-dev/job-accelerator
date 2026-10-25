@@ -2,12 +2,13 @@
 
 Supports rotating residential proxy pools, direct endpoints, and hybrid execution:
 - Hybrid Mode (Default & Recommended):
-  Uses proxies in the cloud, and direct requests locally with one proxy fallback
-  for connection failures. Explicit access blocks and rate limits are deferred.
+  Uses direct requests with one proxy fallback for connection failures.
+  LinkedIn uses its verified proxy route. Access blocks and rate limits are deferred.
 - Always Active: Uses proxies on both cloud and local runs.
 - Disabled: Direct connection everywhere.
 """
 import os
+import hashlib
 import random
 import time
 from typing import List, Dict, Any, Optional
@@ -120,16 +121,7 @@ def is_proxy_active(db_path: Optional[str] = None) -> bool:
     if mode == "always":
         return True
     
-    # Hybrid mode (Default):
-    # Active if running on Vercel, Render, or in explicit Cloud Sync mode.
-    # Inactive (Bypassed) if running locally on candidate's laptop to conserve bandwidth.
-    is_cloud = bool(
-        os.environ.get("VERCEL") or 
-        os.environ.get("RENDER") or 
-        os.environ.get("CLOUD_SYNC") or
-        os.environ.get("FORCE_PROXY")
-    )
-    return is_cloud
+    return bool(os.environ.get("FORCE_PROXY"))
 
 
 _rr_index = 0
@@ -140,6 +132,11 @@ def get_next_proxy(db_path: Optional[str] = None) -> Optional[str]:
     """Get the next proxy from the pool using round-robin rotation."""
     global _rr_index
     proxies = get_proxy_settings(db_path).get("proxies", [])
+    if db_path:
+        from src.database import get_user_setting
+        key = "proxy_quota:" + hashlib.sha256("\n".join(proxies).encode()).hexdigest()
+        if float(get_user_setting(db_path, key, "0")) > time.time():
+            return None
     with _proxy_lock:
         for _ in proxies:
             proxy = proxies[_rr_index % len(proxies)]
@@ -149,16 +146,31 @@ def get_next_proxy(db_path: Optional[str] = None) -> Optional[str]:
     return None
 
 
-def request_routes(db_path=None):
+def request_routes(db_path=None, platform=""):
     config = get_proxy_settings(db_path)
     if config["mode"] == "disabled":
         return [None]
-    routes = [] if is_proxy_active(db_path) else [None]
+    proxy_first = is_proxy_active(db_path) or platform == "LinkedIn"
+    routes = [] if proxy_first else [None]
     for _ in range(2 if not routes else 1):
         proxy = get_next_proxy(db_path)
         if proxy and proxy not in routes:
             routes.append(proxy)
-    return routes
+    if config["mode"] == "hybrid" and None not in routes:
+        routes.append(None)
+    return routes or ([None] if config["mode"] == "hybrid" else [])
+
+
+def mark_proxy_quota_exhausted(db_path=None):
+    proxies = get_proxy_settings(db_path)["proxies"]
+    until = time.time() + 3600
+    with _proxy_lock:
+        for proxy in proxies:
+            _unavailable_until[proxy] = until
+    if db_path:
+        from src.database import set_user_setting
+        key = "proxy_quota:" + hashlib.sha256("\n".join(proxies).encode()).hexdigest()
+        set_user_setting(db_path, key, str(until))
 
 
 def mark_proxy_unavailable(proxy):
@@ -172,7 +184,7 @@ def is_connection_error(error):
         return False
     return isinstance(error, (TimeoutError, ConnectionError)) or any(term in message for term in (
         "timed out", "timeout", "connection reset", "connection refused", "connection aborted",
-        "could not resolve", "name resolution", "getaddrinfo", "remote end closed", "failed to connect",
+        "could not resolve", "name resolution", "getaddrinfo", "remote end closed", "failed to connect", "unexpected_eof_while_reading",
         "curl: (5)", "curl: (6)", "curl: (7)", "curl: (28)", "curl: (52)", "curl: (56)"))
 
 

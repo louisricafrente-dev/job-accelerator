@@ -12,4 +12,8 @@ async def sync_jobs(message: Message[dict[str, object]]) -> None:
     db_path = "/tmp/data/jobs.db"
     os.makedirs("/tmp/data", exist_ok=True)
     await asyncio.to_thread(init_db, db_path)
+    if message.payload.get("kind") == "upwork_monitor":
+        from src.upwork_monitor import process
+        await process(db_path, message.payload)
+        return
     await process_message(db_path, message.payload, Aggregator(db_path))

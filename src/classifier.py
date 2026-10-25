@@ -85,9 +85,36 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
     loc = (location or "").strip().lower()
     t = (title or "").strip().lower()
     plat = (platform or "").strip().lower()
-    desc = (description or "")[:500].lower()
+    desc = (description or "").lower()
+    foreign = FOREIGN_LOCATION_PATTERNS + [
+        r"\bu\.?s\.?\b", r"\bpoland\b", r"\bpolish\b", r"\bvancouver\b", r"\bcincinnati\b",
+        r"\beurope\b", r"\beu\b", r"\beea\b", r"\bemea\b", r"\bamericas\b",
+        r"\blatin america\b", r"\blatam\b", r"\bnew zealand\b", r"\bireland\b",
+        r"\bspain\b", r"\bitaly\b", r"\bportugal\b", r"\bbrazil\b", r"\bmexico\b",
+    ]
+    # Remote work can still require residence or work authorization abroad.
+    foreign_name = "(?:" + "|".join(foreign) + ")"
+    restrictions = [
+        rf"{foreign_name}[- ]only\b",
+        rf"\bonly\s+(?:in|within|from|for)\s+(?:the\s+)?{foreign_name}",
+        rf"\b(?:must|need to|required to)\s+(?:be\s+)?(?:reside|live|based|located|eligible to work|authorized to work)\b[^.\n]{{0,100}}{foreign_name}",
+        rf"\b(?:residency|residence|work authorization|work permit|citizenship)\b[^.\n]{{0,60}}{foreign_name}",
+        rf"{foreign_name}[^.\n]{{0,50}}\b(?:residents? only|citizens? only|work authorization required)\b",
+        rf"\bremote\s+(?:within|in)\s+(?:the\s+)?{foreign_name}",
+    ]
+    if any(re.search(pattern, f"{loc}\n{t}\n{desc}") for pattern in restrictions):
+        return False
+    ph_location = any(re.search(pat, loc) for pat in PH_LOCATION_PATTERNS)
+    worldwide = bool(re.search(r"\b(?:worldwide|anywhere|global|apac|asia|asia[- ]pacific|southeast asia)\b", loc))
+    if any(re.search(pat, loc) for pat in foreign) and not (ph_location or worldwide):
+        return False
+    remote_label = re.fullmatch(
+        r"(?:remote|wfh|work from home|telecommute|remoto|distributed|home-based)"
+        r"(?:\s*[/()-]?\s*(?:contract|freelance|location unverified)\s*\)?)*", loc)
+    if loc and not (ph_location or worldwide or remote_label):
+        return False
 
-    # 1. Dedicated remote platforms
+    # Unrestricted remote feeds can be considered only after geographic exclusions.
     if plat in DEDICATED_REMOTE_PLATFORMS:
         return True
 
@@ -366,31 +393,43 @@ def is_non_tech(title: str, description: str = "") -> bool:
 def description_accepts_entry(description: str) -> bool:
     text = re.sub(r"[*_\u200b\ufeff]", "", description.lower())
     text = re.sub(r"[^.\n]*\b(?:fresh|new|recent)\s*[- ]?grad(?:uate)?s?\b[^.\n]*\b(?:not welcome|not accepted|not eligible|do not apply|should not apply)\b[^.\n]*", "", text)
+    text = re.sub(r"[^.\n]*\bfreshers?\b[^.\n]*\b(?:not welcome|not accepted|not eligible|do not apply|should not apply)\b[^.\n]*", "", text)
     graduate_invitation = (
         r"\b(?:fresh|new|recent)\s*[- ]?grad(?:uate)?s?\b[^.\n]{0,240}\b(?:welcome|encouraged|accepted|considered|apply)\b",
         r"\b(?:open|welcomes?|accepts?)\b[^.\n]{0,160}\b(?:fresh|new|recent)\s*[- ]?grad(?:uate)?s?\b",
         r"\bfresh\s*[- ]?grad(?:uate)?s?\s*/\s*\d+",
         r"\b(?:college\s+graduates?|graduates?|graduating students?)\s+(?:are\s+|also\s+|very\s+|more than\s+)*welcome\s+to\s+apply\b",
         r"\b(?:accepting|open to|open for)\s+(?:applications from\s+)?(?:graduates?|graduating students?|career starters?|first[- ]time job\s*seekers?)\b",
+        r"\bfreshers?\b[^.\n]{0,240}\b(?:welcome|encouraged|accepted|considered|apply|eligible)\b",
+        r"\b(?:open\s+(?:for|to)|welcomes?|accepts?)\b[^.\n]{0,160}\bfreshers?\b",
+        r"\bfreshers?\s+(?:are\s+|can\s+|also\s+|very\s+|more than\s+)*(?:welcome|encouraged|apply|eligible)\b",
+        r"\b(?:freshers?|beginners?)\s+(?:welcome|encouraged|can\s+apply)\b",
     )
     if any(re.search(pattern, text) for pattern in graduate_invitation):
         return True
     # Do not mistake education, employee training, or contract length for eligibility.
     years = r"(?:years?|yrs?)"
     positive = (
+        r"\bjob types?\s*:[^\n]*\bfresh\s+graduates?\b",
+        r"\b(?:early[- ]career|entry[- ]level)\s+(?:role|position|opportunity|job|support specialist)\b",
+        r"\b(?:software\s+engineer|developer|programmer)\s+j[uú]nior\b",
+        r"\b(?:hire|hiring)\b[^.\n]{0,100}\bnot\s+(?:on\s+)?years\s+of\s+experience\b",
+        r"\b(?:1|one)\s*\+?\s*(?:years?|yrs?)\s*\(\s*(?:required|preferred)\s*\)",
         r"\b(?:no|zero)\s+(?:prior\s+|previous\s+)?(?:work\s+|professional\s+)?experience\s+(?:is\s+)?(?:required|needed|necessary)\b",
         r"\b(?:this\s+(?:is\s+an?\s+|is\s+|role\s+is\s+|position\s+is\s+)|an?\s+)entry[- ]level\s+(?:role|position|opportunity|job)\b",
         r"\b(?:suitable|ideal|designed)\s+for\s+(?:entry[- ]level\s+(?:applicants|candidates)|career starters|those\s+(?:starting|beginning)\s+their\s+careers)\b",
         r"\b(?:start|begin|launch)\s+your\s+(?:first\s+)?career\s+in\s+(?:software|web|mobile|development|programming)\b",
-        rf"\b[01]\s*[-–]\s*2\s*{years}\s+(?:of\s+)?(?:\w+\s+){{0,4}}experience\b",
-        rf"\b0\s*[-–]\s*1\s*{years}\s+(?:of\s+)?(?:\w+\s+){{0,4}}experience\b",
+        rf"\b[01]\s*[-–to]\s*[12]\s*{years}['’]?\s+(?:of\s+)?(?:\w+\s+){{0,4}}experience\b",
+        rf"\b0\s*[-–]\s*0?[12]\s*{years}\b",
         r"\b(?:6|six)\s+months?\s+(?:of\s+)?(?:\w+\s+){0,4}experience\b",
-        rf"\b(?:at least\s+|minimum(?: of)?\s+)?(?:1|one(?:\s*\(1\))?)\s*{years}\s+(?:of\s+)?(?:\w+\s+){{0,4}}experience\b",
+        rf"\b(?:at least\s+|minimum(?: of)?\s+)?(?:1|one(?:\s*\(1\))?)\s*\+?\s*{years}(?:\s*\+)?['’]?\s+(?:of\s+)?(?:\w+\s+){{0,4}}experience\b",
         r"\b(?:less than|under)\s+(?:1|one)\s+year\s+(?:of\s+)?experience\b",
         r"\b(?:internship(?: experience)?|personal projects?|academic projects?|capstone projects?|project experience)\b[^.\n]{0,65}\b(?:accepted|considered|equivalent|counts? toward)\b",
         r"\b(?:accepts?|consider(?:s|ing)?)\s+(?:relevant\s+)?(?:internship|academic|personal|capstone)\s+(?:experience|projects?)\b",
         r"\bor\s+equivalent\s+project\s+background\b",
         r"\bearly[- ]career\s+(?:developers?|professionals?|candidates?)\b",
+        r"\b(?:comprehensive\s+training\s+provided|full\s+training\s+(?:is\s+|will\s+be\s+)?provided|training\s+(?:will\s+be\s+|is\s+)provided\b(?!\s+to\b))",
+        r"\bbeginners?\s+(?:welcome|encouraged|can\s+apply)\b",
     )
     return any(re.search(pattern, text) for pattern in positive)
 
@@ -406,6 +445,8 @@ def classify_experience_level(title: str, description: str = "") -> str:
     is_senior = any(re.search(pat, title_lower) for pat in SENIOR_PATTERNS)
     is_mid = any(re.search(pat, title_lower) for pat in MID_PATTERNS)
 
+    if is_senior and not re.search(r"\bjunior\s*(?:to|or|/|-)\s*senior\b", title_lower):
+        return "Senior / Lead"
     if description_accepts_entry(desc_lower):
         return "Junior / Entry"
     if is_junior and not is_senior:

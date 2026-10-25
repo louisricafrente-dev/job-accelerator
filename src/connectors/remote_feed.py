@@ -38,7 +38,7 @@ class RemoteOKConnector(BaseConnector):
                     jobs.append(Job(
                         title=title,
                         company=company,
-                        location=item.get("location", "Remote Worldwide"),
+                        location=item.get("location") or "Remote (location unverified)",
                         platform=self.platform,
                         tier=self.tier,
                         job_url=link,
@@ -100,7 +100,7 @@ class WeWorkRemotelyConnector(BaseConnector):
                         jobs.append(Job(
                             title=title,
                             company=company,
-                            location="Remote Worldwide",
+                            location=item.findtext("region") or "Remote (location unverified)",
                             platform=self.platform,
                             tier=self.tier,
                             job_url=link,
@@ -133,25 +133,28 @@ class ArcConnector(BaseConnector):
                     data = json.loads(next_data.string)
                     props = data.get("props", {}).get("pageProps", {})
                     raw_jobs = props.get("arcJobs", []) + props.get("externalJobs", [])
+                    from src.models import normalize_date
                     for item in raw_jobs:
                         title = item.get("title", "")
                         if not title or not is_relevant_opportunity(title, ""):
                             continue
-                        pub_date = str(item.get("postedDate", ""))[:10]
+                        raw_date = item.get("postedDate") or item.get("postedAt") or ""
+                        pub_date = normalize_date(raw_date) or str(raw_date)[:10]
                         if not is_within_15_days(pub_date):
                             continue
-                        comp_name = item.get("companyName") or "Tech Company"
+                        comp_obj = item.get("company")
+                        comp_name = item.get("companyName") or (comp_obj.get("name") if isinstance(comp_obj, dict) else None) or "Tech Company"
                         if query:
                             q_lower = query.lower()
                             if q_lower not in title.lower() and q_lower not in comp_name.lower():
                                 continue
-                        slug = item.get("slug", "")
-                        link = f"https://arc.dev/remote-jobs/{slug}" if slug else (item.get("url") or "https://arc.dev/remote-jobs")
+                        slug = item.get("slug") or item.get("urlString") or item.get("randomKey") or ""
+                        link = f"https://arc.dev/remote-jobs/j/{slug}" if item.get("urlString") else (f"https://arc.dev/remote-jobs/{slug}" if slug else (item.get("url") or "https://arc.dev/remote-jobs"))
                         salary = str(item.get("salaryRange") or "")
                         jobs.append(Job(
                             title=title,
                             company=comp_name,
-                            location="Remote Worldwide",
+                            location=item.get("location") if isinstance(item.get("location"), str) else "Remote (location unverified)",
                             platform=self.platform,
                             tier=self.tier,
                             job_url=link,
@@ -243,7 +246,7 @@ class HimalayasConnector(BaseConnector):
                     jobs.append(Job(
                         title=title,
                         company=company,
-                        location="Remote Worldwide",
+                        location=", ".join(item.get("locationRestrictions") or []) or "Remote (location unverified)",
                         platform=self.platform,
                         tier=self.tier,
                         job_url=link,
@@ -363,12 +366,20 @@ class FreelancerConnector(BaseConnector):
 class UpworkConnector(BaseConnector):
     platform = "Upwork"
     tier = 2
+    is_feed = True
+    revision = 2
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""
         import os
         jobs: List[Job] = []
         feed_url = os.environ.get("UPWORK_FEED_URL", "").strip()
+        if os.environ.get("FLCONSOLE_MCP_TOKEN", "").strip():
+            if self.db_path:
+                self.last_route = "FLCONSOLE"
+                return []  # The shared monitor owns polling, independently of full-board sync.
+            from src.connectors.upwork_flconsole import fetch_jobs
+            return fetch_jobs(self)
         if not feed_url:
             self.last_error = "Configuration required: Upwork retired public RSS; configure UPWORK_FEED_URL with an authorized feed"
             return []
@@ -476,7 +487,7 @@ class WellfoundConnector(BaseConnector):
                             salary = v.get("compensation", "") or ""
                             is_remote = v.get("remote", False)
                             locs = v.get("locationNames", [])
-                            loc_str = "Remote Worldwide" if is_remote else (", ".join(locs) if locs else "Remote Worldwide")
+                            loc_str = (", ".join(locs) + (" (Remote)" if is_remote and not any("remote" in loc.lower() for loc in locs) else "")) if locs else ("Remote (location unverified)" if is_remote else "Unknown")
 
                             # Work authorization filter: only remote or Philippine locations allowed
                             if not is_work_authorized_location(loc_str, title, self.platform, desc):
@@ -551,14 +562,14 @@ class ContraConnector(BaseConnector):
                             jobs.append(Job(
                                 title=title,
                                 company="Direct Client (Contra)",
-                                location="Remote Worldwide / Freelance",
+                                location="Remote (location unverified)",
                                 platform=self.platform,
                                 tier=self.tier,
                                 job_url=link,
                                 salary="",
                                 role_category=classify_role(title),
                                 experience_level=classify_experience_level(title),
-                                date_posted=""
+                                date_posted=v.get("datePosted") or v.get("publishedAt") or ""
                             ))
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
@@ -573,8 +584,49 @@ class FlexJobsConnector(BaseConnector):
     platform = "FlexJobs"
     tier = 2
     is_feed = True
+    revision = 2
     _cached_jobs = None
     _last_fetch = 0
+    GJW_SITEMAP_URL = "https://www.flexjobs.com/sitemap-for-gjw-jobs.xml"
+
+    def _fetch_gjw_sitemap(self) -> List[Job]:
+        jobs: List[Job] = []
+        resp = self.get_url(
+            self.GJW_SITEMAP_URL,
+            headers={"Accept": "application/xml,text/xml,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.9"},
+            impersonate="chrome124",
+            timeout=12,
+        )
+        if resp.status_code == 200 and resp.content:
+            tree = ET.fromstring(resp.content)
+            seen = set()
+            for loc_el in tree.iter():
+                if not (loc_el.tag.endswith("loc") and loc_el.text and "/gjw/" in loc_el.text):
+                    continue
+                link = loc_el.text.strip()
+                if link in seen:
+                    continue
+                seen.add(link)
+                parts = link.split("/gjw/", 1)[1].split("/")
+                if len(parts) < 2:
+                    continue
+                comp = parts[0].replace("_", " ").replace("-", " ").title() or "Screened Tech Client"
+                title = parts[1].replace("-", " ").replace("_", " ").title()
+                if not title or not is_relevant_opportunity(title, ""):
+                    continue
+                jobs.append(Job(
+                    title=title,
+                    company=comp,
+                    location="Remote (location unverified)",
+                    platform=self.platform,
+                    tier=self.tier,
+                    job_url=link,
+                    salary="",
+                    role_category=classify_role(title),
+                    experience_level=classify_experience_level(title),
+                    date_posted=""
+                ))
+        return jobs
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -586,9 +638,8 @@ class FlexJobsConnector(BaseConnector):
             return FlexJobsConnector._cached_jobs
 
         jobs: List[Job] = []
-        feed_url = os.environ.get("FLEXJOBS_FEED_URL", "").strip()
-        if not feed_url:
-            feed_url = "https://www.flexjobs.com/search?search=software"
+        custom_feed = os.environ.get("FLEXJOBS_FEED_URL", "").strip()
+        feed_url = custom_feed or "https://www.flexjobs.com/search?search=software"
 
         try:
             from bs4 import BeautifulSoup
@@ -610,21 +661,29 @@ class FlexJobsConnector(BaseConnector):
                     jobs.append(Job(
                         title=title,
                         company=comp,
-                        location="Remote Worldwide",
+                        location="Remote (location unverified)",
                         platform=self.platform,
                         tier=self.tier,
                         job_url=link or "https://www.flexjobs.com",
                         salary="",
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=""
+                        date_posted=(item.select_one("time").get("datetime", "") if item.select_one("time") else "")
                     ))
             elif resp.status_code == 403:
-                self.last_error = "Cloudflare Protected (HTTP 403)"
-                logger.warning(f"[{self.platform}] requires authenticated session or FLEXJOBS_FEED_URL")
+                if not custom_feed:
+                    jobs = self._fetch_gjw_sitemap()
+                else:
+                    self.last_error = "Cloudflare Protected (HTTP 403)"
         except Exception as e:
-            self.last_error = str(e) or type(e).__name__
-            logger.warning(f"[{self.platform}] fetch notice: {e}")
+            if not custom_feed and ("403" in str(e) or "cloudflare" in str(e).lower()):
+                try:
+                    jobs = self._fetch_gjw_sitemap()
+                except Exception as fallback_e:
+                    self.last_error = str(fallback_e) or type(fallback_e).__name__
+            else:
+                self.last_error = str(e) or type(e).__name__
+                logger.warning(f"[{self.platform}] fetch notice: {e}")
 
         FlexJobsConnector._cached_jobs = jobs
         FlexJobsConnector._last_fetch = now if not self.last_error else 0

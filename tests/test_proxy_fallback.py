@@ -44,6 +44,32 @@ class TestProxyFallback(unittest.TestCase):
             self.assertEqual([c.kwargs["proxy"] for c in send.call_args_list], self.pool)
             self.assertEqual(get_next_proxy(self.db), self.pool[1])
 
+    def test_cloud_feed_uses_direct_without_spending_proxy_bandwidth(self):
+        with patch.dict(os.environ, {"VERCEL": "1"}), patch("src.database.is_turso_active", return_value=False), patch("curl_cffi.requests.Session.get", return_value=Mock(text="ok")) as send:
+            self.board.get_url("https://example.com")
+        self.assertEqual([c.kwargs["proxy"] for c in send.call_args_list], [""])
+
+    def test_linkedin_starts_with_proxy_without_a_direct_rate_limit(self):
+        board = JobSpyAdapter("LinkedIn", "linkedin", 1)
+        Aggregator(self.db, [board])
+        send = Mock(return_value="ok")
+        self.assertEqual(board.request_with_fallback(send), "ok")
+        send.assert_called_once_with(self.pool[0])
+
+    def test_quota_error_stops_entire_pool_across_process_state(self):
+        set_user_setting(self.db, "proxy_mode", "always")
+        error = urllib.error.HTTPError("https://example.com", 402, "Payment Required", {}, None)
+        with patch("curl_cffi.requests.Session.get", side_effect=error) as send:
+            with self.assertRaisesRegex(RuntimeError, "quota exhausted"):
+                self.board.get_url("https://example.com")
+        self.assertEqual(send.call_count, 1)
+        with patch("src.proxy_manager._unavailable_until", {}):
+            self.assertIsNone(get_next_proxy(self.db))
+            set_user_setting(self.db, "proxy_mode", "hybrid")
+            self.assertEqual(request_routes(self.db), [None])
+            set_user_setting(self.db, "proxy_list", "http://replacement:password@new.example:80")
+            self.assertIsNotNone(get_next_proxy(self.db))
+
     def test_disabled_mode_never_spends_proxy_bandwidth(self):
         set_user_setting(self.db, "proxy_mode", "disabled")
         with patch("curl_cffi.requests.Session.get", side_effect=TimeoutError("timed out")) as send:
@@ -96,6 +122,19 @@ class TestProxyFallback(unittest.TestCase):
             board.fetch()
         self.assertEqual(send.call_args_list[0].kwargs["proxies"], None)
         self.assertEqual(send.call_args_list[1].kwargs["proxies"], [self.pool[0]])
+
+    def test_jobspy_logged_failure_is_not_reported_as_empty_success(self):
+        import logging
+        import pandas as pd
+        def failed_scrape(**kwargs):
+            logging.getLogger("JobSpy:LinkedIn").error("LinkedIn response status code 429")
+            return pd.DataFrame()
+        board = JobSpyAdapter("LinkedIn", "linkedin", 1)
+        Aggregator(self.db, [board])
+        with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=failed_scrape)}):
+            self.assertEqual(board.fetch(), [])
+        self.assertIn("429", board.last_error)
+        self.assertFalse(logging.getLogger("JobSpy:LinkedIn").handlers)
 
     def test_proxy_credentials_are_redacted_from_errors(self):
         with patch("curl_cffi.requests.Session.get", side_effect=TimeoutError("failed proxy " + self.pool[0])):
