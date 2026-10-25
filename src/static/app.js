@@ -1773,7 +1773,7 @@ function renderJobs() {
             </a>
             <span class="company-identifier">@ ${escapeHtml(job.company)}</span>
             ${followUpBadge}
-            ${applicationHandlingLabel(job) ? `<span class="badge-date" title="Application handling">${applicationHandlingLabel(job)}</span>` : ''}
+            ${applicationHandlingLabel(job) ? `<span class="badge-date ${job.application_handling === 'in_progress' ? 'badge-in-progress' : ''}" title="Application handling">${applicationHandlingLabel(job)}</span>` : ''}
           </div>
 
           <div class="job-meta-row">
@@ -1825,12 +1825,13 @@ function renderJobs() {
               <label for="handling-${job.id}">Application:</label>
               <select id="handling-${job.id}" class="stage-dropdown" onchange="changeApplicationHandling(${job.id}, this.value)">
                 <option value="" ${!job.application_handling && job.status !== 'applied' ? 'selected' : ''}>No application label</option>
+                <option value="in_progress" ${job.application_handling === 'in_progress' ? 'selected' : ''}>In progress</option>
                 <option value="needs_human" ${job.application_handling === 'needs_human' ? 'selected' : ''}>Needs human verification</option>
                 <option value="applied_ai" ${job.application_handling === 'applied_ai' ? 'selected' : ''}>Applied by AI</option>
                 <option value="applied_human" ${(job.application_handling === 'applied_human' || (!job.application_handling && job.status === 'applied')) ? 'selected' : ''}>Applied by me / human</option>
               </select>
               <span id="handling-save-${job.id}" role="status"></span>
-              ${job.status === 'saved' && job.application_handling === 'needs_human' ? `<input type="text" class="notes-text-input" aria-label="Reason human verification is needed" placeholder="What needs your attention?" value="${escapeHtml(job.notes || '')}" onblur="saveJobNotes(${job.id}, this.value)" onkeydown="if(event.key==='Enter')this.blur()"><button type="button" id="note-save-${job.id}" class="note-save-state" onclick="retryNoteSave(${job.id})">${getLocalStatusOverrides()[String(job.id)]?.save_state === 'failed' ? 'Failed - retry' : 'Saved'}</button>` : ''}
+              ${job.status === 'saved' && ['needs_human', 'in_progress'].includes(job.application_handling) ? `<input type="text" class="notes-text-input" aria-label="${job.application_handling === 'in_progress' ? 'In progress notes' : 'Reason human verification is needed'}" placeholder="${job.application_handling === 'in_progress' ? 'Worker notes (e.g. AI model name, human applying)...' : 'What needs your attention?'}" value="${escapeHtml(job.notes || '')}" onblur="saveJobNotes(${job.id}, this.value)" onkeydown="if(event.key==='Enter')this.blur()"><button type="button" id="note-save-${job.id}" class="note-save-state" onclick="retryNoteSave(${job.id})">${getLocalStatusOverrides()[String(job.id)]?.save_state === 'failed' ? 'Failed - retry' : 'Saved'}</button>` : ''}
             </div>` : ''}
             ${isAppliedView ? `
             <div class="pipeline-card-controls" onclick="event.stopPropagation()">
@@ -2084,7 +2085,7 @@ function filterByApplicationHandling(jobs, filter) {
 
 function applicationHandlingLabel(job) {
   const value = job.application_handling || (job.status === 'applied' ? 'applied_human' : '');
-  return {needs_human: 'Needs human verification', applied_ai: 'Applied by AI', applied_human: 'Applied by me / human'}[value] || '';
+  return {in_progress: 'In progress', needs_human: 'Needs human verification', applied_ai: 'Applied by AI', applied_human: 'Applied by me / human'}[value] || '';
 }
 
 function handleApplicationFilterChange(elem) {
@@ -2124,8 +2125,8 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
   if (handling === null && status === 'applied' && currentStatus !== 'applied') {
     handling = targetJob?.application_handling === 'applied_ai' ? 'applied_ai' : 'applied_human';
   }
-  if (handling === null && ['new', 'saved'].includes(status)) {
-    handling = targetJob?.application_handling === 'needs_human' ? 'needs_human' : '';
+  if (handling === null && ['new', 'saved', 'in_progress'].includes(status)) {
+    handling = ['needs_human', 'in_progress'].includes(targetJob?.application_handling) ? targetJob.application_handling : '';
   }
   if (handling !== null) {
     overrideUpdate.application_handling = handling;

@@ -3,6 +3,7 @@
 Saved jobs begin without an application label. Pipeline defaults to Applied by me / human, including existing Pipeline entries. Labels are separate from recruiter stages.
 
 Authenticated POST /api/jobs/<id>/status accepts application_handling:
+- in_progress: In progress / actively being processed by a human or AI model; keeps the current tab. Signals concurrency lock across parallel AI runs or manual review to prevent duplicate work.
 - needs_human: Needs human verification; keeps the current tab. Send notes with the specific blocker.
 - applied_ai: Applied by AI; automatically changes status to applied and records applied_at. Use only after confirmed submission.
 - applied_human: Applied by me / human; automatically changes status to applied.

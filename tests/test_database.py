@@ -33,7 +33,12 @@ class TestDatabase(unittest.TestCase):
         update_job_status(self.db_path, jid, application_handling="needs_human", notes="Employer login required")
         init_db(self.db_path)
         row = get_jobs(self.db_path, status="saved")[0]
-        self.assertEqual(row["application_handling"], "needs_human")
+        self.assertEqual(row["application_handling"], "needs_human")
+        self.assertFalse(row["applied_at"])
+        update_job_status(self.db_path, jid, application_handling="in_progress", notes="AI run active")
+        row = get_jobs(self.db_path, status="saved")[0]
+        self.assertEqual(row["application_handling"], "in_progress")
+        self.assertEqual(row["notes"], "AI run active")
         self.assertFalse(row["applied_at"])
         update_job_status(self.db_path, jid, application_handling="applied_ai")
         row = get_jobs(self.db_path, status="applied")[0]
@@ -46,8 +51,10 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(get_jobs(self.db_path, status="applied")[0]["application_handling"], "applied_human")
         with self.assertRaises(ValueError):
             update_job_status(self.db_path, jid, application_handling="banana")
-        with self.assertRaises(ValueError):
-            update_job_status(self.db_path, jid, status="saved", application_handling="applied_ai")
+        with self.assertRaises(ValueError):
+            update_job_status(self.db_path, jid, status="saved", application_handling="applied_ai")
+        update_job_status(self.db_path, jid, status="in_progress")
+        self.assertEqual(get_jobs(self.db_path, status="in_progress")[0]["status"], "in_progress")
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()

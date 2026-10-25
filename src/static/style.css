@@ -1808,6 +1808,16 @@ a {
   color: var(--text-secondary);
 }
 
+.badge-date.badge-in-progress {
+  background-color: var(--accent-amber-bg, rgba(245, 158, 11, 0.15));
+  color: var(--accent-amber-bright, #f59e0b);
+  border: 1px solid var(--accent-amber-border, rgba(245, 158, 11, 0.45));
+  padding: 2px 7px;
+  border-radius: var(--radius-xs, 4px);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .badge-followup-due {
   font-size: 0.72rem;
   font-weight: 700;
