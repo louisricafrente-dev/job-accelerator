@@ -79,7 +79,11 @@ class TestServer(unittest.TestCase):
         jid = get_jobs(self.db_path)[0]["id"]
         self.assertTrue(self._request("POST", f"/api/jobs/{jid}/status", body={"status": "saved", "application_handling": "needs_human"})["success"])
         row = self._request("GET", "/api/jobs", "status=saved")["jobs"][0]
-        self.assertEqual(row["application_handling"], "needs_human")
+        self.assertEqual(row["application_handling"], "needs_human")
+        self.assertTrue(self._request("POST", f"/api/jobs/{jid}/status", body={"status": "saved", "application_handling": "in_progress", "notes": "AI agent running"})["success"])
+        row = get_jobs(self.db_path, status="saved")[0]
+        self.assertEqual(row["application_handling"], "in_progress")
+        self.assertEqual(row["notes"], "AI agent running")
         self.assertTrue(self._request("POST", f"/api/jobs/{jid}/status", body={"application_handling": "applied_ai"})["success"])
         row = self._request("GET", "/api/jobs", "status=applied")["jobs"][0]
         self.assertEqual(row["application_handling"], "applied_ai")

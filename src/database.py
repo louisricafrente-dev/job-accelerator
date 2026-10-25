@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.models import Job, normalize_date, clean_url
 from src.classifier import is_work_authorized_location, classify_experience_level
 
-VALID_STATUSES = {"new", "saved", "applied", "ignored"}
+VALID_STATUSES = {"new", "saved", "in_progress", "applied", "ignored"}
 VALID_STAGES = {"applied", "hr_screening", "tech_exam", "final_interview", "offer", "rejected", "screening", "interview", "technical", "withdrawn"}
 
 def normalize_company(name: str) -> str:
@@ -716,7 +716,7 @@ def update_job_status(
     follow_up_date: Optional[str] = None,
     application_handling: Optional[str] = None,
 ) -> bool:
-    if application_handling is not None and application_handling not in ("", "needs_human", "applied_ai", "applied_human"):
+    if application_handling is not None and application_handling not in ("", "needs_human", "in_progress", "applied_ai", "applied_human"):
         raise ValueError("Unsupported application handling")
     if application_handling in ("applied_ai", "applied_human"):
         if status is not None and status != "applied":
@@ -751,8 +751,8 @@ def update_job_status(
             params.append(application_handling)
         elif status == "applied":
             set_clauses.append("application_handling = CASE WHEN application_handling = 'applied_ai' THEN 'applied_ai' ELSE 'applied_human' END")
-        elif status in ("new", "saved"):
-            set_clauses.append("application_handling = CASE WHEN application_handling = 'needs_human' THEN 'needs_human' ELSE '' END")
+        elif status in ("new", "saved", "in_progress"):
+            set_clauses.append("application_handling = CASE WHEN application_handling IN ('needs_human', 'in_progress') THEN application_handling ELSE '' END")
         if notes is not None:
             set_clauses.append("notes = ?")
             params.append(notes)
@@ -853,6 +853,7 @@ def get_stats(db_path: str) -> Dict[str, Any]:
             "total": total,
             "new": status_counts.get("new", 0),
             "saved": status_counts.get("saved", 0),
+            "in_progress": status_counts.get("in_progress", 0),
             "applied": status_counts.get("applied", 0),
             "ignored": status_counts.get("ignored", 0),
             "va": va_count,
