@@ -21,20 +21,7 @@ import threading
 
 logger = logging.getLogger("proxy_manager")
 
-DEFAULT_PROXIES = [
-    "http://qbpwgfwy:5h0usxx7tj71@45.38.107.97:6014",
-    "http://qbpwgfwy:5h0usxx7tj71@64.137.96.74:6641",
-    "http://qbpwgfwy:5h0usxx7tj71@198.23.243.226:6361",
-    "http://qbpwgfwy:5h0usxx7tj71@38.154.185.97:6370",
-    "http://qbpwgfwy:5h0usxx7tj71@84.247.60.125:6095",
-    "http://qbpwgfwy:5h0usxx7tj71@191.96.254.138:6185",
-    "http://qbpwgfwy:5h0usxx7tj71@198.46.161.42:5092",
-    "http://qbpwgfwy:5h0usxx7tj71@64.137.10.153:5803",
-    "http://qbpwgfwy:5h0usxx7tj71@104.164.49.38:7693",
-    "http://qbpwgfwy:5h0usxx7tj71@23.26.71.145:5628",
-]
-
-DEFAULT_ROTATING_PROXY = "http://qbpwgfwy-rotate:5h0usxx7tj71@p.webshare.io:80"
+DEFAULT_PROXIES = []
 
 
 def parse_proxy_line(line: str) -> Optional[str]:
@@ -210,7 +197,11 @@ def get_proxy_pool(db_path: Optional[str] = None) -> List[str]:
 def apply_proxy_environment(db_path: Optional[str] = None) -> Optional[str]:
     """Apply the proxy configuration to environment variables for urllib/requests."""
     if is_proxy_active(db_path):
-        proxy = get_next_proxy(db_path) or DEFAULT_ROTATING_PROXY
+        proxy = get_next_proxy(db_path)
+        if not proxy:
+            for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                os.environ.pop(var, None)
+            return None
         os.environ["HTTP_PROXY"] = proxy
         os.environ["HTTPS_PROXY"] = proxy
         os.environ["http_proxy"] = proxy
