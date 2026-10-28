@@ -14,5 +14,5 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - run: python -m unittest tests.test_database tests.test_local_worker tests.test_sync_batches -q
+      - run: python -m unittest tests.test_database tests.test_local_worker tests.test_sync_batches tests.test_execution_inbox -q
       - run: python scripts/actions_runner.py --sandbox
