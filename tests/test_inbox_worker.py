@@ -90,6 +90,40 @@ class InboxWorkerTests(unittest.TestCase):
         stop.wait.assert_called_once_with(60)
         http.assert_not_called()
 
+    def test_source_wait_loop_does_not_poll_database_every_quarter_second(self):
+        import threading
+        from src import sync_batches
+        ready = threading.Event()
+        self.addCleanup(ready.set)
+
+        class SlowFeed(Feed):
+            def fetch(inner, *args, **kwargs):
+                if not ready.wait(5):
+                    raise RuntimeError("Test did not release source")
+                return [listing()]
+
+        inbox.enqueue(self.db, ["developer"])
+        aggregator = Aggregator(self.db, [SlowFeed()])
+        aggregator.execution_guard = {**inbox.claim(self.db, "local", "pc"), "key": inbox.KEY}
+        elapsed = [0]
+        cycles = [0]
+        actual_wait = sync_batches.wait
+
+        def simulated_wait(futures, **kwargs):
+            cycles[0] += 1
+            elapsed[0] += 0.25
+            if cycles[0] >= 100:
+                ready.set()
+            return actual_wait(futures, timeout=0.001, return_when=kwargs["return_when"])
+
+        with patch("src.sync_batches.time.monotonic", side_effect=lambda: elapsed[0]), patch(
+                "src.sync_batches.wait", side_effect=simulated_wait), patch(
+                "src.execution_inbox.owned", wraps=inbox.owned) as reads:
+            result = aggregator.run_sync(queries=["developer"], budget_seconds=30)
+        self.assertEqual(result["added"], 1)
+        self.assertGreaterEqual(cycles[0], 100)
+        self.assertLessEqual(reads.call_count, 3)
+
     def test_automatic_pause_does_not_fetch(self):
         set_user_setting(self.db, "auto_sync_enabled", "0")
         inbox.enqueue(self.db, automatic=True)
