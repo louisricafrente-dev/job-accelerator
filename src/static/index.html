@@ -60,6 +60,14 @@
           <span class="tab-label">Archived</span>
           <span class="tab-count" id="stat-ignored">0</span>
         </button>
+        <button class="status-tab" data-val="gmail" onclick="setStatus('gmail', this)" title="Gmail Hub — Centralized Email Updates, Requirements & Interviews">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+            <polyline points="22 6 12 13 2 6"/>
+          </svg>
+          <span class="tab-label">Gmail Hub</span>
+          <span class="tab-count" id="stat-gmail">0</span>
+        </button>
       </nav>
 
       <!-- Header Action Controls -->
@@ -107,17 +115,69 @@
         </div>
 
 
-        <!-- Primary Action: Scrape & Sync -->
-        <button id="sync-btn" class="btn-primary" onclick="triggerSync()" title="Search connected job sites for recent postings">
-          <svg class="icon-svg spin-icon" id="sync-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-            <path d="M3 3v5h5"/>
-            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
-            <path d="M16 21h5v-5"/>
-          </svg>
-          <span id="sync-text">Sync now</span>
-        </button>
-        <button id="resume-sync-btn" class="btn-subtle" onclick="triggerSync('resume')" hidden title="Continue unfinished searches without restarting completed sources">Resume unfinished</button>
+        <!-- Scraper Media Player Controls & Mini Progress -->
+        <div class="sync-media-unit" id="sync-media-unit">
+          <div class="sync-media-cluster" id="sync-media-cluster" role="group" aria-label="Job Scraper Controls">
+            <!-- 1. Restart Button: Fresh cycle from 0% -->
+            <button type="button" id="btn-sync-restart" class="media-btn btn-restart" onclick="triggerSync('restart')" title="Restart Fresh: Reset checkpoints and start a 100% brand-new scrape cycle from 0%">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+              </svg>
+              <span class="media-btn-text">Restart</span>
+            </button>
+
+            <!-- 2. Resume / Play Button -->
+            <button type="button" id="btn-sync-play" class="media-btn btn-play" onclick="triggerSync('resume')" title="Resume / Play: Continue unfinished or paused searches without restarting completed sources">
+              <svg class="icon-svg" id="play-icon" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="6 4 19 12 6 20 6 4"/>
+              </svg>
+              <span class="media-btn-text" id="play-text">Resume</span>
+            </button>
+
+            <!-- 3. Pause Button -->
+            <button type="button" id="btn-sync-pause" class="media-btn btn-pause" onclick="triggerSync('pause')" title="Pause: Temporarily pause scraping after the current batch">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4" width="4" height="16" rx="1"/>
+                <rect x="14" y="4" width="4" height="16" rx="1"/>
+              </svg>
+              <span class="media-btn-text">Pause</span>
+            </button>
+
+            <!-- 4. Stop Button -->
+            <button type="button" id="btn-sync-stop" class="media-btn btn-stop" onclick="triggerSync('stop')" title="Stop: Cancel active scrape and reset runner">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+              <span class="media-btn-text">Stop</span>
+            </button>
+
+            <!-- Legacy hidden targets for backwards compatibility with tests & scripts -->
+            <button id="sync-btn" style="display:none;" onclick="triggerSync('restart')"><span id="sync-text">Sync now</span><svg id="sync-spinner"></svg></button>
+            <button id="resume-sync-btn" style="display:none;" onclick="triggerSync('resume')"></button>
+          </div>
+
+          <!-- Mini Progress Bar directly underneath media buttons -->
+          <div class="sync-mini-progress" id="sync-progress-banner" style="display: none;" title="Live Scraper Progress">
+            <div class="mini-progress-track" onclick="toggleSyncLogModal()" style="cursor: pointer;" title="Click to view full board telemetry & logs">
+              <div class="progress-fill" id="progress-fill" style="width: 0%;">
+                <div class="progress-shimmer"></div>
+              </div>
+            </div>
+            <div class="mini-progress-meta">
+              <div class="mini-meta-left">
+                <span class="pulse-indicator" id="progress-pulse-indicator"></span>
+                <span class="progress-state-badge" id="progress-state-badge">Syncing</span>
+                <span class="progress-stat-pill" id="progress-searches-pill">0 / 0 searches</span>
+                <span class="progress-stat-pill added-pill" id="progress-added-pill">+0 new jobs</span>
+              </div>
+              <div class="mini-meta-right">
+                <span class="progress-pct-badge" id="progress-pct-badge">0%</span>
+              </div>
+              <span class="progress-headline" id="progress-headline" style="display: none;"></span>
+            </div>
+          </div>
+        </div>
 
         <!-- User Profile & Explicit Logout Control -->
         <div id="auth-header-cluster" class="auth-header-cluster">
@@ -342,6 +402,22 @@
           <span class="role-filter-help" id="application-filter-help">Filter jobs by application &amp; submission progress</span>
         </div>
 
+        <!-- Pipeline Process Stage Filter -->
+        <div class="filter-cell" id="pipeline-stage-filter-row" style="display: none;">
+          <label class="filter-title" for="pipeline-stage-filter">Hiring Stage</label>
+          <select id="pipeline-stage-filter" class="filter-select" onchange="handlePipelineStageFilterChange(this)">
+            <option value="All">All Hiring Stages</option>
+            <option value="offer">🎉 Job Offer</option>
+            <option value="final_interview">🤝 Final Interview</option>
+            <option value="tech_exam">💻 Tech Assessment / Exam</option>
+            <option value="screening">🗣️ HR Screening / Interview</option>
+            <option value="applied">📝 Applied / In Review</option>
+            <option value="needs_human">⚠️ Action Required (Needs You)</option>
+            <option value="rejected">❌ Archived / Rejected</option>
+          </select>
+          <span class="role-filter-help">Filter applications by hiring process &amp; stage</span>
+        </div>
+
         <!-- Experience & Recency Multi-Filter -->
         <div class="filter-subgrid">
           <div class="filter-cell">
@@ -405,6 +481,76 @@
       </div>
       <div class="pipeline-stages-grid" id="pipeline-stages-summary">
         <!-- Rendered dynamically by app.js -->
+      </div>
+    </section>
+
+    <!-- Centralized Gmail Application Hub Container -->
+    <section id="gmail-hub-container" class="gmail-hub-container" style="display: none;">
+      <div class="gmail-hub-banner">
+        <div class="gmail-banner-left">
+          <div class="gmail-title-row">
+            <h2 class="gmail-title">Gmail Application Inbox</h2>
+            <span class="gmail-badge-connected" title="Connected to Gmail IMAP">
+              <span class="status-dot-pulse"></span> michael18ricafrente@gmail.com
+            </span>
+          </div>
+          <p class="gmail-subtitle">Centralized tracker for employer requirements, interview bookings, coding tests, and status updates.</p>
+        </div>
+        <div class="gmail-banner-right">
+          <button type="button" id="btn-gmail-scan" class="btn-gmail-refresh" onclick="triggerGmailScan(this)">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+            <span id="gmail-scan-btn-text">Refresh Inbox</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Quick Stats Metrics -->
+      <div class="gmail-stats-strip" id="gmail-stats-strip">
+        <div class="gmail-stat-card card-action" onclick="filterGmailCategory('action_required', this)">
+          <span class="gmail-stat-num" id="gmail-stat-action">0</span>
+          <span class="gmail-stat-lbl">🚨 Action Required</span>
+        </div>
+        <div class="gmail-stat-card card-interview" onclick="filterGmailCategory('INTERVIEW', this)">
+          <span class="gmail-stat-num" id="gmail-stat-interview">0</span>
+          <span class="gmail-stat-lbl">📅 Interviews</span>
+        </div>
+        <div class="gmail-stat-card card-requirement" onclick="filterGmailCategory('REQUIREMENT', this)">
+          <span class="gmail-stat-num" id="gmail-stat-requirement">0</span>
+          <span class="gmail-stat-lbl">📝 Requirements &amp; Forms</span>
+        </div>
+        <div class="gmail-stat-card card-rejection" onclick="filterGmailCategory('REJECTED', this)">
+          <span class="gmail-stat-num" id="gmail-stat-rejection">0</span>
+          <span class="gmail-stat-lbl">❌ Rejections</span>
+        </div>
+        <div class="gmail-stat-card card-total active" onclick="filterGmailCategory('ALL', this)">
+          <span class="gmail-stat-num" id="gmail-stat-total">0</span>
+          <span class="gmail-stat-lbl">📬 All Messages</span>
+        </div>
+      </div>
+
+      <!-- Gmail Category Filter Pills & Search -->
+      <div class="gmail-controls-bar">
+        <div class="gmail-category-chips" id="gmail-category-chips">
+          <button type="button" class="gmail-chip active" data-cat="ALL" onclick="filterGmailCategory('ALL', this)">All Updates</button>
+          <button type="button" class="gmail-chip chip-action" data-cat="action_required" onclick="filterGmailCategory('action_required', this)">🚨 Needs Action</button>
+          <button type="button" class="gmail-chip" data-cat="INTERVIEW" onclick="filterGmailCategory('INTERVIEW', this)">📅 Interviews</button>
+          <button type="button" class="gmail-chip" data-cat="REQUIREMENT" onclick="filterGmailCategory('REQUIREMENT', this)">📝 Requirements</button>
+          <button type="button" class="gmail-chip" data-cat="REJECTED" onclick="filterGmailCategory('REJECTED', this)">❌ Rejections</button>
+        </div>
+        <div class="gmail-search-box">
+          <input type="text" id="gmail-search-input" placeholder="Search emails by company, subject, keyword..." oninput="handleGmailSearch(this.value)">
+        </div>
+      </div>
+
+      <!-- Messages Feed -->
+      <div class="gmail-messages-feed" id="gmail-messages-feed">
+        <div class="feed-empty-state">
+          <p>Loading Gmail application updates...</p>
+        </div>
       </div>
     </section>
 
@@ -585,7 +731,42 @@
     </div>
   </div>
 
-  <!-- Admin & Guest Workspace Gate Modal -->
+  <!-- Centralized Gmail Message Viewer Modal -->
+  <div id="gmail-message-modal" class="modal-overlay gmail-modal-overlay" style="display: none;" onclick="handleGmailModalOverlayClick(event)" role="dialog" aria-modal="true" aria-labelledby="gmail-modal-subject">
+    <div class="modal-card gmail-viewer-card" onclick="event.stopPropagation()">
+      <!-- Top Utility Header / Action Toolbar -->
+      <div class="gmail-viewer-toolbar">
+        <div class="gmail-viewer-toolbar-left">
+          <button type="button" class="btn-viewer-nav" id="btn-gmail-prev" onclick="navigateGmailMessage(-1)" title="Previous email (Up/Left arrow)">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            <span>Prev</span>
+          </button>
+          <button type="button" class="btn-viewer-nav" id="btn-gmail-next" onclick="navigateGmailMessage(1)" title="Next email (Down/Right arrow)">
+            <span>Next</span>
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+          <span class="gmail-viewer-counter" id="gmail-viewer-counter">1 of 21</span>
+        </div>
+        <div class="gmail-viewer-toolbar-right">
+          <button type="button" class="btn-viewer-tool" onclick="copyCurrentGmailMessage()" title="Copy email text">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span>Copy Text</span>
+          </button>
+          <button type="button" class="btn-viewer-close" onclick="closeGmailMessageViewer()" title="Close viewer (ESC)">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <kbd class="kbd-esc">ESC</kbd>
+          </button>
+        </div>
+      </div>
+
+      <!-- Scrollable Email Content Body -->
+      <div class="gmail-viewer-scrollable" id="gmail-viewer-content">
+        <!-- Rendered dynamically by app.js -->
+      </div>
+    </div>
+  </div>
+
+    <!-- Admin & Guest Workspace Gate Modal -->
   <div id="auth-gate-modal" class="auth-gate-overlay" style="display: none;">
     <div class="auth-gate-card">
       <div class="auth-gate-header">

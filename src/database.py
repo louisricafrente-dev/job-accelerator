@@ -114,6 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_level ON jobs(experience_level);
 CREATE INDEX IF NOT EXISTS idx_jobs_category ON jobs(role_category);
 CREATE INDEX IF NOT EXISTS idx_jobs_tier ON jobs(tier);
+CREATE INDEX IF NOT EXISTS idx_jobs_url ON jobs(job_url);
 """
 
 try:
@@ -341,6 +342,7 @@ def init_db(db_path: str = "data/jobs.db") -> None:
             conn.execute("ALTER TABLE jobs ADD COLUMN sources TEXT DEFAULT '[]';")
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_stage ON jobs(pipeline_stage);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_url ON jobs(job_url);")
 
         # Safe backfill for legacy unclassified junior/entry opportunities
         try:
@@ -374,8 +376,10 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
         pending = []
         catalog = {}
         known_hashes = set()
+        catalog_by_url = {}
         if cloud and sync_cache is not None and sync_cache.get("db_path") == db_path and "catalog" in sync_cache:
             catalog = sync_cache["catalog"]
+            catalog_by_url = sync_cache.get("catalog_by_url", {})
             known_hashes = sync_cache["known_hashes"]
         elif cloud:
             for row in cursor.execute("SELECT dedup_hash, company, title, location, platform, job_url, salary, description, date_posted, sources, status, experience_level FROM jobs ORDER BY id DESC").fetchall():
@@ -383,6 +387,18 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                 norm_co = normalize_company(item["company"]) or item["company"].strip().lower()
                 norm_ti = normalize_title(item["title"]) or item["title"].strip().lower()
                 catalog.setdefault((norm_co, norm_ti), []).append(item)
+                cu = clean_url(item.get("job_url", ""))
+                if cu:
+                    catalog_by_url.setdefault(cu, []).append(item)
+                try:
+                    s_list = json.loads(item["sources"] or "[]")
+                    for s in s_list:
+                        if isinstance(s, dict) and s.get("url"):
+                            scu = clean_url(s["url"])
+                            if scu and scu != cu:
+                                catalog_by_url.setdefault(scu, []).append(item)
+                except Exception:
+                    pass
                 known_hashes.add(item["dedup_hash"])
 
         def write(sql, params):
@@ -401,8 +417,13 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
             canonical_co = normalize_company(job.company) or job.company.strip().lower()
             canonical_title = normalize_title(job.title) or job.title.strip().lower()
 
+            clean_job_url = clean_url(job.job_url)
             if cloud:
-                candidates = catalog.get((canonical_co, canonical_title), [])
+                candidates = list(catalog.get((canonical_co, canonical_title), []))
+                if clean_job_url:
+                    for url_match in catalog_by_url.get(clean_job_url, []):
+                        if url_match not in candidates:
+                            candidates.append(url_match)
             else:
                 cursor.execute(
                     """
@@ -414,6 +435,17 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                     (job.company.strip().lower(), job.title.strip().lower()),
                 )
                 candidates = [dict(r) for r in cursor.fetchall()]
+                if not candidates and clean_job_url:
+                    cursor.execute(
+                        """
+                        SELECT id, dedup_hash, platform, job_url, salary, description, date_posted, sources, status, location, company, title, experience_level
+                        FROM jobs
+                        WHERE job_url = ? OR job_url = ?
+                        ORDER BY id DESC;
+                        """,
+                        (job.job_url, clean_job_url),
+                    )
+                    candidates = [dict(r) for r in cursor.fetchall()]
                 if not candidates:
                     cursor.execute(
                         """
@@ -545,7 +577,10 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                     added += 1
                     known_hashes.add(job.dedup_hash)
                     if cloud:
-                        catalog.setdefault((canonical_co, canonical_title), []).append({**vars(job), "date_posted": norm_date, "sources": initial_sources, "status": "new"})
+                        new_item = {**vars(job), "date_posted": norm_date, "sources": initial_sources, "status": "new"}
+                        catalog.setdefault((canonical_co, canonical_title), []).append(new_item)
+                        if clean_job_url:
+                            catalog_by_url.setdefault(clean_job_url, []).append(new_item)
                 else:
                     skipped += 1
         if cloud:
@@ -553,7 +588,7 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                 conn._client.batch(pending[start:start + 50])
         conn.commit()
         if cloud and sync_cache is not None:
-            sync_cache.update(db_path=db_path, catalog=catalog, known_hashes=known_hashes)
+            sync_cache.update(db_path=db_path, catalog=catalog, catalog_by_url=catalog_by_url, known_hashes=known_hashes)
     except Exception:
         if sync_cache is not None:
             sync_cache.clear()
@@ -578,6 +613,7 @@ def get_jobs(
     limit: int = 100,
     offset: int = 0,
     with_total: bool = False,
+    pipeline_stage: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     conn = get_db_connection(db_path)
     conn.row_factory = sqlite3.Row
@@ -683,6 +719,23 @@ def get_jobs(
                 clauses.append(f"{effective_date} >= date('now', 'localtime', '-14 days')")
             elif df_lower in ("15days", "15d"):
                 clauses.append(f"{effective_date} >= date('now', 'localtime', '-15 days')")
+
+        if pipeline_stage and pipeline_stage != "All":
+            p_stage = pipeline_stage.strip()
+            if p_stage == "needs_human":
+                clauses.append("application_handling = 'needs_human'")
+            elif "," in p_stage:
+                stages = [s.strip() for s in p_stage.split(",") if s.strip()]
+                placeholders = ",".join(["?"] * len(stages))
+                clauses.append(f"pipeline_stage IN ({placeholders})")
+                params.extend(stages)
+            elif p_stage == "screening":
+                clauses.append("pipeline_stage IN ('screening', 'hr_screening')")
+            elif p_stage == "tech_exam":
+                clauses.append("pipeline_stage IN ('tech_exam', 'technical')")
+            else:
+                clauses.append("pipeline_stage = ?")
+                params.append(p_stage)
 
         where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         order_by = "COALESCE(applied_at, updated_at) DESC, id DESC" if (status == "applied" or (status and "applied" in status)) else "COALESCE(date_posted, '') DESC, updated_at DESC, id DESC"
