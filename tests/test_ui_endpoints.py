@@ -30,6 +30,11 @@ class TestUIEndpoints(unittest.TestCase):
             res.close()
         self.assertIn("Job Application Accelerator", body)
         self.assertIn("sync-btn", body)
+        self.assertIn("btn-sync-restart", body)
+        self.assertIn("btn-sync-play", body)
+        self.assertIn("btn-sync-pause", body)
+        self.assertIn("btn-sync-stop", body)
+        self.assertIn("sync-progress-banner", body)
         self.assertIn("user-stack-input", body)
         self.assertIn("skill-chips-container", body)
         self.assertIn("filter-by-skills-btn", body)
@@ -93,6 +98,76 @@ class TestUIEndpoints(unittest.TestCase):
         self.assertEqual(len(job["sources"]), 2)
         platforms = {s["platform"] for s in job["sources"]}
         self.assertEqual(platforms, {"LinkedIn", "JobStreet"})
+
+    def test_api_sync_media_actions(self):
+        import json, io
+        from src.auth import create_session_token
+
+        token = create_session_token("admin", "admin", expiry_hours=24)
+        for act in ("pause", "stop"):
+            body_bytes = json.dumps({"action": act}).encode("utf-8")
+            env = {
+                "REQUEST_METHOD": "POST",
+                "PATH_INFO": "/api/sync",
+                "QUERY_STRING": "",
+                "wsgi.input": io.BytesIO(body_bytes),
+                "CONTENT_LENGTH": str(len(body_bytes)),
+                "CONTENT_TYPE": "application/json",
+                "HTTP_AUTHORIZATION": f"Bearer {token}"
+            }
+            res = self.app._handle(env)
+            body = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)
+            if hasattr(res, "close"):
+                res.close()
+            data = json.loads(body)
+            self.assertEqual(data.get("status"), f"{act}d" if act == "pause" else "stopped")
+
+    def test_gmail_messages_endpoint(self):
+        import json
+        from src.auth import create_session_token
+
+        token = create_session_token("admin", "admin", expiry_hours=24)
+        env = {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/gmail/messages",
+            "QUERY_STRING": "",
+            "wsgi.input": None,
+            "HTTP_AUTHORIZATION": f"Bearer {token}"
+        }
+        res = self.app._handle(env)
+        body = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)
+        if hasattr(res, "close"):
+            res.close()
+        data = json.loads(body)
+        self.assertIn("account", data)
+        self.assertIn("messages", data)
+        self.assertIn("stats", data)
+
+    def test_pipeline_stage_filter_endpoint(self):
+        import json
+        from src.models import Job
+        from src.database import insert_jobs, update_job_status
+        from src.auth import create_session_token
+
+        job1 = Job(title="Backend Dev", company="Alpha Corp", location="Remote", platform="LinkedIn", tier=1, job_url="https://linkedin.com/a1")
+        insert_jobs(self.db_path, [job1])
+        update_job_status(self.db_path, 1, status="applied", pipeline_stage="offer")
+
+        token = create_session_token("admin", "admin", expiry_hours=24)
+        env = {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/jobs",
+            "QUERY_STRING": "status=applied&pipeline_stage=offer",
+            "wsgi.input": None,
+            "HTTP_AUTHORIZATION": f"Bearer {token}"
+        }
+        res = self.app._handle(env)
+        body = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res)
+        if hasattr(res, "close"):
+            res.close()
+        data = json.loads(body)
+        self.assertEqual(len(data["jobs"]), 1)
+        self.assertEqual(data["jobs"][0]["pipeline_stage"], "offer")
 
 if __name__ == "__main__":
     unittest.main()

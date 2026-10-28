@@ -1,9 +1,12 @@
 .git
 .env
 .env.*
-data
+data/*.db
+data/guests
+data/backups
 tests
 docs
 .superpowers
 __pycache__
 **/__pycache__
+scratch

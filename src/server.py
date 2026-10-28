@@ -277,6 +277,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         include_va = bottle.request.query.get("include_va", "0") in ("1", "true", "True")
         platform = bottle.request.query.get("platform", "All")
         tier = int(tier_str) if tier_str.isdigit() else None
+        pipeline_stage = bottle.request.query.get("pipeline_stage", "")
 
         query_status = status
         try:
@@ -301,6 +302,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             limit=limit,
             offset=offset,
             with_total=True,
+            pipeline_stage=pipeline_stage,
         )
         bottle.response.content_type = "application/json"
         total = jobs[0]["matching_total"] if jobs else 0
@@ -333,6 +335,69 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             save_guest_changes(session["id"], db_path, job_id, changes)
         bottle.response.content_type = "application/json"
         return json.dumps({"success": success})
+
+
+    @app.route("/api/gmail/messages", method=["GET", "OPTIONS"])
+    def api_get_gmail_messages():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+
+        data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "gmail_messages.json")
+        data = None
+        if os.path.exists(data_path):
+            try:
+                with open(data_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        if not data:
+            try:
+                from src.gmail_data import GMAIL_PAYLOAD
+                data = GMAIL_PAYLOAD
+            except Exception:
+                data = {"account": "michael18ricafrente@gmail.com", "messages": [], "stats": {}}
+
+        bottle.response.content_type = "application/json"
+        return json.dumps(data)
+
+    @app.route("/api/gmail/scan", method=["POST", "OPTIONS"])
+    def api_post_gmail_scan():
+        if bottle.request.method == "OPTIONS":
+            return ""
+        auth_err = require_auth()
+        if auth_err:
+            return auth_err
+
+        import subprocess
+        script_path = r"C:\Users\PC\Documents\antigravity\resilient-pasteur\scripts\check_job_application_emails.py"
+        if os.path.exists(script_path):
+            try:
+                subprocess.run([sys.executable, script_path], capture_output=True, timeout=25)
+            except Exception:
+                pass
+
+        data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "gmail_messages.json")
+        data = None
+        if os.path.exists(data_path):
+            try:
+                with open(data_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        if not data:
+            try:
+                from src.gmail_data import GMAIL_PAYLOAD
+                data = GMAIL_PAYLOAD
+            except Exception:
+                data = {"success": True, "messages": [], "stats": {}}
+        data["ok"] = True
+        data["found"] = len(data.get("messages", []))
+
+        bottle.response.content_type = "application/json"
+        return json.dumps(data)
 
     @app.route("/api/stats", method="GET")
     def api_get_stats():
@@ -836,8 +901,26 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         is_background = data.get("background", False) or (bottle.request.query.get("background") in ("1", "true"))
         force = data.get("force", False)
         action = data.get("action", "fresh")
-        if not isinstance(action, str) or action not in {"fresh", "resume"}:
-            bottle.abort(400, "action must be fresh or resume")
+        if not isinstance(action, str) or action not in {"fresh", "restart", "resume", "pause", "stop"}:
+            bottle.abort(400, "action must be fresh, restart, resume, pause, or stop")
+
+
+        if action == "pause":
+            from src.local_worker import pause_local_sync
+            from src.cloud_sync import pause_run
+            pause_run(db_path)
+            res = pause_local_sync(db_path)
+            bottle.response.content_type = "application/json"
+            return json.dumps(res)
+
+        if action == "stop":
+            from src.local_worker import stop_local_sync
+            from src.cloud_sync import stop_run
+            stop_run(db_path)
+            res = stop_local_sync(db_path)
+            bottle.response.content_type = "application/json"
+            return json.dumps(res)
+
 
         if isinstance(keywords, str):
             keywords = [k.strip() for k in keywords.split(",") if k.strip()]
@@ -875,12 +958,14 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                                                  pause_reason="local_worker_selected")
                         set_user_setting(db_path, RUN_KEY, json.dumps(current_cloud_run))
 
-                    local = request_local_sync(db_path, queries=keywords if keywords else None, resume=action == "resume")
+                    is_restart = action in {"fresh", "restart"}
+                    is_resume = action == "resume"
+                    local = request_local_sync(db_path, queries=keywords if keywords else None, resume=is_resume, restart=is_restart)
                     if local:
                         return local
 
                 cancel_queued_local_sync(db_path)
-                return start_run(db_path, queries=keywords if keywords else None, resume=action == "resume")
+                return start_run(db_path, queries=keywords if keywords else None, resume=is_resume)
             except Exception as exc:
                 bottle.response.status = 503
                 return {"status": "error", "error": str(exc)}
@@ -894,7 +979,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                 "message": "Background sync started." if started else "Sync already running in background."
             })
 
-        stats = aggregator.run_sync(queries=keywords if keywords else None, force=force, budget_seconds=150 if os.environ.get("VERCEL") else None)
+        stats = aggregator.run_sync(queries=keywords if keywords else None, force=force, budget_seconds=150 if os.environ.get("VERCEL") else None, resume=action == "resume", restart=action in {"fresh", "restart"})
         bottle.response.content_type = "application/json"
         return json.dumps(stats)
 
