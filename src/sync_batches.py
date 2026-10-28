@@ -15,6 +15,7 @@ REFRESH_SECONDS = 6 * 3600
 ERROR_COOLDOWN_SECONDS = 15 * 60
 BLOCK_COOLDOWN_SECONDS = 6 * 3600
 CYCLE_SECONDS = 2 * 3600
+OWNERSHIP_CHECK_SECONDS = 15
 
 
 def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None, resume=False, restart=False):
@@ -108,13 +109,17 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                     "boards": {c.platform: {key: value for key, value in boards[c.platform].items()
                                              if key not in ("completed_queries", "individual_queries")} for c in aggregator.connectors}}
 
+        next_execution_check = 0
+
         def check_execution():
+            nonlocal next_execution_check
             guard = getattr(aggregator, "execution_guard", None)
-            if guard:
+            if guard and time.monotonic() >= next_execution_check:
                 from src.execution_inbox import owned
                 from src.database import ExecutionLeaseLost
                 if not owned(aggregator.db_path, guard, key=guard["key"]):
                     raise ExecutionLeaseLost("Execution ownership changed; discard stale results")
+                next_execution_check = time.monotonic() + OWNERSHIP_CHECK_SECONDS
 
         def persist():
             check_execution()
