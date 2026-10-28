@@ -137,7 +137,9 @@ def run_request(request, aggregator):
     if pending.get("request_id") == request["id"]:
         result = pending["result"]
     else:
-        result = aggregator.run_sync(queries=request.get("queries"), budget_seconds=90, cycle_id=request["id"], resume=request.get("resume", False))
+        from src.sync_batches import CYCLE_SECONDS
+        remaining = max(0, request.get("requested_at", time.time()) + CYCLE_SECONDS - time.time())
+        result = aggregator.run_sync(queries=request.get("queries"), budget_seconds=min(30, remaining), cycle_id=request["id"], resume=request.get("resume", False), restart=request.get("restart", False))
         if result.get("status") == "already_syncing":
             raise RuntimeError("Local scraper is busy; retaining request for retry")
         totals = json.loads(get_user_setting(DB_PATH, "local_worker_scrape_totals", "{}") or "{}")
