@@ -1,0 +1,31 @@
+name: Shared database scraper
+on:
+  workflow_dispatch:
+    inputs:
+      command_id:
+        description: Existing shared command ID
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: shared-scraper-${{ inputs.command_id }}
+  cancel-in-progress: false
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 135
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python scripts/inbox_worker.py --executor cloud --command-id "$COMMAND_ID"
+        env:
+          COMMAND_ID: ${{ inputs.command_id }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          PROXY_LIST: ${{ secrets.SCRAPER_PROXY_LIST }}
+          FLCONSOLE_MCP_TOKEN: ${{ secrets.FLCONSOLE_MCP_TOKEN }}

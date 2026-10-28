@@ -23,7 +23,9 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         return {"status": "error", "error": "No search keywords", "added": 0}
     if not aggregator._sync_lock.acquire(blocking=False):
         return {"status": "already_syncing", "is_syncing": True}
-    lease = f"{int(time.time()) + 600}|{uuid.uuid4().hex}"
+    guard = getattr(aggregator, "execution_guard", None)
+    lease_expiry = int(guard["lease_until"]) if guard else int(time.time()) + 600
+    lease = f"{lease_expiry}|{uuid.uuid4().hex}"
     acquired = False
     aggregator.is_syncing = True
     try:
@@ -106,7 +108,16 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                     "boards": {c.platform: {key: value for key, value in boards[c.platform].items()
                                              if key not in ("completed_queries", "individual_queries")} for c in aggregator.connectors}}
 
+        def check_execution():
+            guard = getattr(aggregator, "execution_guard", None)
+            if guard:
+                from src.execution_inbox import owned
+                from src.database import ExecutionLeaseLost
+                if not owned(aggregator.db_path, guard, key=guard["key"]):
+                    raise ExecutionLeaseLost("Execution ownership changed; discard stale results")
+
         def persist():
+            check_execution()
             result["progress"] = progress()
             result["telemetry"] = telemetry
             result["logs"] = list(aggregator.sync_logs)
@@ -116,7 +127,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 "is_syncing": result["is_syncing"], "last_sync_time": aggregator.last_sync_time,
                 "last_successful_fetch": aggregator.last_sync_time,
                 "total_boards": len(aggregator.connectors), "last_result": {**result, "status": "running"} if result["is_syncing"] else result,
-                "telemetry": telemetry, "logs": result["logs"], "progress": result["progress"]}))
+                "telemetry": telemetry, "logs": result["logs"], "progress": result["progress"]}), **({"execution_guard": aggregator.execution_guard} if getattr(aggregator, "execution_guard", None) else {}))
 
         def fetch(connector, indices):
             started_at = time.monotonic()
@@ -152,6 +163,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         connectors = aggregator.connectors
         with ThreadPoolExecutor(max_workers=workers) as executor:
             while True:
+                check_execution()
                 now = time.time()
                 can_start = time.monotonic() < deadline
                 if can_start and connectors:
@@ -213,7 +225,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 save_error = ""
                 if completed:
                     try:
-                        added, skipped = insert_jobs(aggregator.db_path, combined_jobs, sync_cache=sync_cache) if combined_jobs else (0, 0)
+                        check_execution()
+                        added, skipped = insert_jobs(aggregator.db_path, combined_jobs, sync_cache=sync_cache, **({"execution_guard": aggregator.execution_guard} if getattr(aggregator, "execution_guard", None) else {})) if combined_jobs else (0, 0)
                         result["added"] += added
                         result["skipped"] += skipped
                     except Exception as exc:

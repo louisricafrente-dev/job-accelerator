@@ -22,6 +22,7 @@ from src.auth import (
 def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False) -> bottle.Bottle:
     app = bottle.Bottle()
     aggregator = Aggregator(db_path=db_path)
+    from src.execution_dispatch import enabled as database_execution
 
     # Pre-initialize master admin TOTP secret so it exists in database
     get_or_create_admin_totp_secret(db_path)
@@ -47,9 +48,12 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
     def enable_cors_and_nocache():
         bottle.response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, OPTIONS"
         bottle.response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Session-Token"
-        bottle.response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        bottle.response.headers["Pragma"] = "no-cache"
-        bottle.response.headers["Expires"] = "0"
+        if bottle.request.path.startswith("/static/"):
+            bottle.response.headers["Cache-Control"] = "public, max-age=60, s-maxage=3600"
+        else:
+            bottle.response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            bottle.response.headers["Pragma"] = "no-cache"
+            bottle.response.headers["Expires"] = "0"
 
     def get_current_session():
         token = None
@@ -361,6 +365,8 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                 data = {"account": "michael18ricafrente@gmail.com", "messages": [], "stats": {}}
 
         bottle.response.content_type = "application/json"
+        if bottle.request.query.get("summary") == "1":
+            return {"stats": {"total": data.get("stats", {}).get("total", len(data.get("messages", [])))}}
         return json.dumps(data)
 
     @app.route("/api/gmail/scan", method=["POST", "OPTIONS"])
@@ -471,6 +477,14 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         if "target_stack" not in settings:
             settings["target_stack"] = DEFAULT_TARGET_STACK
         bottle.response.content_type = "application/json"
+        if (is_admin and "auto_sync_enabled" in data and settings.get("auto_sync_enabled", "0") in ("1", "true")
+                and os.environ.get("VERCEL") and os.environ.get("FLCONSOLE_MCP_TOKEN")):
+            try:
+                import asyncio
+                from src.upwork_monitor import start
+                asyncio.run(start(db_path))
+            except Exception:
+                pass
         return json.dumps({"success": True, "settings": settings})
 
     @app.route("/api/settings/stack", method=["GET", "OPTIONS"])
@@ -539,6 +553,9 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                 import asyncio
                 from src.upwork_monitor import start
                 asyncio.run(start(db_path))
+            if database_execution():
+                from src.execution_dispatch import start
+                return start(db_path, automatic=True)
             if bottle.request.path == "/api/cron/cloud-sync":
                 from src.cloud_sync import start_run
                 bottle.response.content_type = "application/json"
@@ -610,6 +627,9 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         if auth_err:
             return auth_err
         bottle.response.content_type = "application/json"
+        if database_execution():
+            from src.execution_dispatch import telemetry as database_telemetry
+            return json.dumps(database_telemetry(db_path))
         telemetry = aggregator.get_telemetry()
         telemetry.setdefault("last_result", aggregator.last_sync_result)
         upwork_feed = json.loads(get_user_setting(db_path, "upwork_feed_status", "{}") or "{}")
@@ -657,6 +677,12 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         return json.dumps(telemetry)
 
     def require_local_worker():
+        if database_execution() and bottle.request.path in {
+            "/api/local-worker/heartbeat", "/api/local-worker/request",
+            "/api/local-worker/jobs", "/api/local-worker/complete",
+        }:
+            bottle.response.status = 409
+            return {"status": "error", "error": "Use the direct database worker for this deployment"}
         token = os.environ.get("LOCAL_WORKER_TOKEN", "").strip()
         supplied = bottle.request.headers.get("Authorization", "")
         if not token:
@@ -905,6 +931,12 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             bottle.abort(400, "action must be fresh, restart, resume, pause, or stop")
 
 
+        if database_execution() and action in {"pause", "stop"}:
+            from src.execution_inbox import cancel
+            terminal = "paused" if action == "pause" else "stopped"
+            cancel(db_path, status=terminal)
+            return {"status": terminal, "is_syncing": False}
+
         if action == "pause":
             from src.local_worker import pause_local_sync
             from src.cloud_sync import pause_run
@@ -932,6 +964,15 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                 bottle.abort(400, "The selected keyword matrix must be at most 10000 characters")
             keywords = list(dict.fromkeys(k.strip() for k in keywords))
 
+        if database_execution():
+            from src.execution_dispatch import start
+            try:
+                return start(db_path, queries=keywords or None, resume=action == "resume", restart=action == "restart")
+            except Exception:
+                bottle.response.status = 503
+                return {"status": "error", "error": "Worker dispatch unavailable; retry Sync to recover the saved command"}
+
+        is_resume = action == "resume"
         if os.environ.get("VERCEL"):
             from src.cloud_sync import ACTIVE, RUN_KEY, public_run, read_run, start_run
             from src.local_worker import request_local_sync, worker_status, cancel_queued_local_sync

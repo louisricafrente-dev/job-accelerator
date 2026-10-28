@@ -40,7 +40,7 @@ class TestSourceRepairs(unittest.TestCase):
 
     def test_upwork_does_not_retry_retired_rss_without_authorized_feed(self):
         board = UpworkConnector()
-        with patch.dict(os.environ, {"UPWORK_FEED_URL": ""}), patch("curl_cffi.requests.Session.get") as fetch:
+        with patch.dict(os.environ, {"UPWORK_FEED_URL": "", "FLCONSOLE_MCP_TOKEN": ""}), patch("curl_cffi.requests.Session.get") as fetch:
             self.assertEqual(board.fetch(), [])
         fetch.assert_not_called()
         self.assertIn("Configuration required:", board.last_error)
