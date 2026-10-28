@@ -363,7 +363,20 @@ def init_db(db_path: str = "data/jobs.db") -> None:
     finally:
         conn.close()
 
-def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = None) -> Tuple[int, int]:
+class ExecutionLeaseLost(RuntimeError):
+    pass
+
+
+def execution_condition(guard):
+    return ("EXISTS (SELECT 1 FROM user_settings WHERE key=? "
+            "AND json_extract(value, '$.id')=? AND json_extract(value, '$.fence')=? "
+            "AND json_extract(value, '$.status')='running' "
+            "AND json_extract(value, '$.lease_until')>CAST(strftime('%s','now') AS INTEGER) "
+            "AND json_extract(value, '$.expires_at')>CAST(strftime('%s','now') AS INTEGER))",
+            [guard["key"], guard["id"], guard["fence"]])
+
+
+def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = None, execution_guard=None) -> Tuple[int, int]:
     if not jobs:
         return 0, 0
     conn = get_db_connection(db_path)
@@ -402,6 +415,15 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                 known_hashes.add(item["dedup_hash"])
 
         def write(sql, params):
+            if execution_guard:
+                predicate, fence_params = execution_condition(execution_guard)
+                sql = sql.strip().rstrip(";")
+                if sql.startswith("UPDATE"):
+                    sql += " AND " + predicate
+                else:
+                    sql = sql.replace("VALUES (", "SELECT ", 1)
+                    sql = sql.replace(")\n                    ON CONFLICT", " WHERE " + predicate + "\n                    ON CONFLICT", 1)
+                params = [*params, *fence_params]
             if cloud:
                 pending.append((sql, list(params)))
             else:
@@ -887,20 +909,22 @@ def get_stats(db_path: str) -> Dict[str, Any]:
     conn.row_factory = sqlite3.Row
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT status, COUNT(*) as cnt FROM jobs GROUP BY status")
-        status_counts = {row["status"]: row["cnt"] for row in cursor.fetchall()}
-
-        cursor.execute("SELECT experience_level, COUNT(*) as cnt FROM jobs WHERE status = 'new' GROUP BY experience_level")
-        level_counts = {row["experience_level"]: row["cnt"] for row in cursor.fetchall()}
-
-        cursor.execute("SELECT pipeline_stage, COUNT(*) as cnt FROM jobs WHERE status = 'applied' GROUP BY pipeline_stage")
-        stage_counts = {row["pipeline_stage"] or "applied": row["cnt"] for row in cursor.fetchall()}
-
-        cursor.execute("SELECT COUNT(*) as total FROM jobs")
-        total = cursor.fetchone()["total"]
-
-        cursor.execute("SELECT COUNT(*) as cnt FROM jobs WHERE role_category = 'Virtual Assistant' OR lower(title) LIKE '%virtual assistant%'")
-        va_count = cursor.fetchone()["cnt"]
+        cursor.execute("""SELECT status, experience_level, pipeline_stage, COUNT(*) AS cnt,
+            SUM(CASE WHEN role_category = 'Virtual Assistant' OR lower(title) LIKE '%virtual assistant%' THEN 1 ELSE 0 END) AS va
+            FROM jobs GROUP BY status, experience_level, pipeline_stage""")
+        status_counts, level_counts, stage_counts = {}, {}, {}
+        total = va_count = 0
+        for row in cursor.fetchall():
+            count = row["cnt"]
+            total += count
+            va_count += row["va"] or 0
+            status_counts[row["status"]] = status_counts.get(row["status"], 0) + count
+            if row["status"] == "new":
+                level = row["experience_level"]
+                level_counts[level] = level_counts.get(level, 0) + count
+            if row["status"] == "applied":
+                stage = row["pipeline_stage"] or "applied"
+                stage_counts[stage] = stage_counts.get(stage, 0) + count
 
         return {
             "total": total,
@@ -956,15 +980,21 @@ def set_user_setting(db_path: str, key: str, value: str, revision: Optional[int]
         conn.close()
 
 
-def set_sync_checkpoint(db_path: str, checkpoint: str, status: str) -> None:
+def set_sync_checkpoint(db_path: str, checkpoint: str, status: str, execution_guard=None) -> None:
     conn = get_db_connection(db_path)
     try:
-        conn.execute(
-            "INSERT INTO user_settings (key, value, updated_at) VALUES "
-            "('sync_batch_progress', ?, CURRENT_TIMESTAMP), ('sync_status', ?, CURRENT_TIMESTAMP) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",
-            (checkpoint, status),
-        )
+        sql = ("INSERT INTO user_settings (key, value, updated_at) "
+               "SELECT column1, column2, column3 FROM (VALUES "
+               "('sync_batch_progress', ?, CURRENT_TIMESTAMP), ('sync_status', ?, CURRENT_TIMESTAMP)) WHERE ")
+        params = [checkpoint, status]
+        if execution_guard:
+            predicate, fence_params = execution_condition(execution_guard)
+            sql += predicate
+            params.extend(fence_params)
+        else:
+            sql += "1"
+        sql += " ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP"
+        conn.execute(sql, params)
         conn.commit()
     finally:
         conn.close()

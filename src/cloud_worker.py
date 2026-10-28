@@ -7,6 +7,9 @@ from src.cloud_sync import TOPIC, process_message
 
 @subscribe(topic=TOPIC, consumer_group="job-sync-worker", max_concurrency=1, retry_after=60)
 async def sync_jobs(message: Message[dict[str, object]]) -> None:
+    from src.execution_dispatch import enabled
+    if enabled() and message.payload.get("kind") != "upwork_monitor":
+        return
     from src.aggregator import Aggregator
     from src.database import init_db
     db_path = "/tmp/data/jobs.db"

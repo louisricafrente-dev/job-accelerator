@@ -1084,6 +1084,8 @@ async function loadStackSettings() {
 }
 
 // Load stats from server
+let gmailBadgeUpdatedAt = 0;
+
 async function loadStats() {
   try {
     const res = await fetch('/api/stats');
@@ -1105,8 +1107,9 @@ async function loadStats() {
 
     // Sync Gmail Hub count in nav
     const gmailNavBadge = document.getElementById('stat-gmail');
-    if (gmailNavBadge) {
-      fetch('/api/gmail/messages')
+    if (gmailNavBadge && Date.now() - gmailBadgeUpdatedAt > 300000) {
+      gmailBadgeUpdatedAt = Date.now();
+      fetch('/api/gmail/messages?summary=1')
         .then(r => r.json())
         .then(gdata => {
           if (gdata && gdata.stats && typeof gdata.stats.total !== 'undefined') {
@@ -2981,10 +2984,14 @@ function renderTelemetry(data) {
     if (['queued', 'running'].includes(data.local_request?.status)) {
       syncStateEl.textContent += data.local_request.status === 'running' ? ' · Running on this PC' : ' · Queued on this PC';
     } else if (data.local_worker) {
-      syncStateEl.textContent += data.local_worker.online ? ' · Local worker online' : ' · Local worker offline';
+      syncStateEl.textContent += data.local_worker.presence_mode === 'last_seen'
+        ? (data.local_worker.last_seen_at ? ` · PC last seen ${retryTime(data.local_worker.last_seen_at)}` : ' · PC checked when Sync starts')
+        : (data.local_worker.online ? ' · Local worker online' : ' · Local worker offline');
     }
     if (data.cloud_run?.status === 'waiting') {
       syncStateEl.textContent += ` · Cloud retry ${new Date(data.cloud_run.next_at * 1000).toLocaleTimeString()}`;
+    } else if (data.execution?.status === 'queued') {
+      syncStateEl.textContent += ' · Waiting for PC acknowledgment; cloud fallback pending';
     } else if (data.cloud_run?.status === 'queued') {
       syncStateEl.textContent += ' · Queued in cloud';
     } else if (data.cloud_run?.status === 'stalled') {
@@ -3328,9 +3335,9 @@ function updateProxyHint(mode) {
   const hint = document.getElementById('proxy-mode-hint');
   if (!hint) return;
   if (mode === 'hybrid') {
-    hint.textContent = 'Hybrid mode automatically routes requests through residential proxies on Vercel Cloud to prevent anti-bot blocks, but turns them OFF when running on your laptop to save bandwidth.';
+    hint.textContent = 'Hybrid mode connects directly first and uses a configured proxy for connection failures. Some sources use proxies first. Access blocks wait for a later cycle.';
   } else if (mode === 'always') {
-    hint.textContent = 'Always Active routes all scraping requests through the residential proxy pool regardless of environment.';
+    hint.textContent = 'Always Active routes scraping requests through your configured proxy pool.';
   } else {
     hint.textContent = 'Disabled turns off all proxies. Requests will connect directly from your current network.';
   }

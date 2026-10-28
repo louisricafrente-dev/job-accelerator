@@ -11,7 +11,7 @@ const context = vm.createContext({
   currentSessionToken: token('guest', 'guest-a'), currentUserRole: 'guest',
   localStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) },
   window: { fetch: async (url, options) => { requests.push({ url, options }); return { ok: true, json: async () => ({ success: true }) }; } },
-  document: { getElementById: id => { if (!elements.has(id)) elements.set(id, { style: {}, innerHTML: '', dataset: {} }); return elements.get(id); } },
+  document: { querySelector: () => null, getElementById: id => { if (!elements.has(id)) elements.set(id, { style: {}, innerHTML: '', dataset: {}, classList: {add() {}, remove() {}, toggle() {}} }); return elements.get(id); } },
   currentViewMode: 'tech', currentStatus: 'new', currentRole: 'All', currentLevel: 'All', searchQuery: '', currentDateFilter: 'all',
   hasSalaryOnly: false, remoteOnly: false, hideSenior: false, vaTrainingEnabled: false, currentPlatform: 'All',
   selectedLevels: new Set(), filterBySkillsOnly: false, userStack: 'Junior / Entry',

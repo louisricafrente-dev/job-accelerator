@@ -38,6 +38,18 @@ class UpworkMonitorTests(unittest.TestCase):
         self.assertFalse(claim(self.db, "local"))
         self.assertEqual(poll_cloud(self.db)["status"], "paused")
 
+    def test_paused_monitor_stops_queue_and_resume_starts_new_chain(self):
+        saved = {"id": "old", "step": 0, "next_at": time.time(), "deployment": ""}
+        set_user_setting(self.db, RUN_KEY, json.dumps(saved))
+        set_user_setting(self.db, "auto_sync_enabled", "0")
+        with patch("src.upwork_monitor.publish", new_callable=AsyncMock) as publish:
+            run(process(self.db, {"run_id": "old", "step": 0}))
+            publish.assert_not_awaited()
+            self.assertTrue(json.loads(get_user_setting(self.db, RUN_KEY))["paused"])
+            set_user_setting(self.db, "auto_sync_enabled", "1")
+            self.assertEqual(run(start(self.db))["status"], "queued")
+            publish.assert_awaited_once()
+
     def test_cloud_yields_to_recent_local_poller_then_takes_over(self):
         set_user_setting(self.db, "upwork_local_seen", str(time.time()))
         with patch("src.connectors.upwork_flconsole.fetch_jobs", return_value=[]) as fetch:

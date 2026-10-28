@@ -14,7 +14,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - run: python -m unittest tests.test_database tests.test_local_worker tests.test_sync_batches tests.test_execution_inbox tests.test_proxy_manager tests.test_proxy_fallback -q
+      - run: python scripts/check_regressions.py
       - run: python scripts/actions_runner.py --sandbox
         env:
           PROXY_LIST: ${{ secrets.SCRAPER_PROXY_LIST }}
+      - name: Isolated Turso inbox integration
+        run: python scripts/test_turso_inbox.py
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_INTEGRATION_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_INTEGRATION_AUTH_TOKEN }}

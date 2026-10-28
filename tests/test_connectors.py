@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import unittest
 from unittest.mock import patch, MagicMock
 from src.connectors.remote_feed import RemoteOKConnector, WeWorkRemotelyConnector
@@ -91,6 +92,8 @@ class TestConnectors(unittest.TestCase):
         '''
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
+        mock_response.read.return_value = mock_response.read.return_value.replace(
+            b"2026-10-12", datetime.now(timezone.utc).date().isoformat().encode())
         from src.connectors.ph_jobs import OnlineJobsConnector
         connector = OnlineJobsConnector()
         jobs = connector.fetch()

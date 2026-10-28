@@ -61,7 +61,7 @@ async def start(db_path):
     try:
         run = read(db_path, RUN_KEY)
         deployment = os.environ.get("VERCEL_DEPLOYMENT_ID", "")
-        if run.get("deployment") == deployment and run.get("next_at", 0) + 900 > now:
+        if not run.get("paused") and run.get("deployment") == deployment and run.get("next_at", 0) + 900 > now:
             return {"status": "already_running", "next_at": run["next_at"]}
         run = {"id": uuid.uuid4().hex, "step": 0, "next_at": now, "deployment": deployment}
         set_user_setting(db_path, RUN_KEY, json.dumps(run))
@@ -74,6 +74,10 @@ async def start(db_path):
 async def process(db_path, payload):
     run = read(db_path, RUN_KEY)
     if payload.get("run_id") != run.get("id") or payload.get("step") != run.get("step"):
+        return
+    if get_user_setting(db_path, "auto_sync_enabled", "1").strip().lower() in ("0", "false"):
+        run.update(paused=True, next_at=0)
+        set_user_setting(db_path, RUN_KEY, json.dumps(run))
         return
     await asyncio.to_thread(poll_cloud, db_path)
     if read(db_path, RUN_KEY).get("id") != run["id"]:
