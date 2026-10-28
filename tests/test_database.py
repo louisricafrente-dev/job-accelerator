@@ -33,8 +33,10 @@ class TestDatabase(unittest.TestCase):
         update_job_status(self.db_path, jid, application_handling="needs_human", notes="Employer login required")
         init_db(self.db_path)
         row = get_jobs(self.db_path, status="saved")[0]
-        self.assertEqual(row["application_handling"], "needs_human")
-        self.assertFalse(row["applied_at"])
+        self.assertEqual(row["application_handling"], "needs_human")
+
+        self.assertFalse(row["applied_at"])
+
         update_job_status(self.db_path, jid, application_handling="in_progress", notes="AI run active")
         row = get_jobs(self.db_path, status="saved")[0]
         self.assertEqual(row["application_handling"], "in_progress")
@@ -51,8 +53,10 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(get_jobs(self.db_path, status="applied")[0]["application_handling"], "applied_human")
         with self.assertRaises(ValueError):
             update_job_status(self.db_path, jid, application_handling="banana")
-        with self.assertRaises(ValueError):
-            update_job_status(self.db_path, jid, status="saved", application_handling="applied_ai")
+        with self.assertRaises(ValueError):
+
+            update_job_status(self.db_path, jid, status="saved", application_handling="applied_ai")
+
         update_job_status(self.db_path, jid, status="in_progress")
         self.assertEqual(get_jobs(self.db_path, status="in_progress")[0]["status"], "in_progress")
 
@@ -579,6 +583,43 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(platforms, {"Indeed", "Glassdoor"})
         # Date should be updated to latest
         self.assertEqual(job["date_posted"], "2026-10-16")
+
+    def test_deduplication_same_url_renamed_title(self):
+        """Employer changing title on the same requisition URL must update existing job, not create duplicates."""
+        job1 = Job(
+            title="Process Engineer (Renewable Energy)",
+            company="Amarna Energy",
+            location="Remote",
+            platform="Indeed",
+            tier=1,
+            job_url="https://ph.indeed.com/viewjob?jk=c556e6e0440e1abb",
+            salary="PHP 50k - 70k",
+            date_posted="2026-10-10"
+        )
+        added1, skipped1 = insert_jobs(self.db_path, [job1])
+        self.assertEqual(added1, 1)
+        self.assertEqual(skipped1, 0)
+
+        # Employer re-titles position on Indeed with identical URL
+        job2 = Job(
+            title="Process Design Engineer (Renewable Energy Projects | Work From Home)",
+            company="Amarna Energy Pte Ltd",
+            location="Remote",
+            platform="Indeed",
+            tier=1,
+            job_url="https://ph.indeed.com/viewjob?jk=c556e6e0440e1abb&from=web",
+            salary="PHP 60k - 80k",
+            date_posted="2026-10-18"
+        )
+        added2, skipped2 = insert_jobs(self.db_path, [job2])
+        self.assertEqual(added2, 0)
+        self.assertEqual(skipped2, 1)
+
+        # Still exactly 1 job in database
+        jobs = get_jobs(self.db_path, search="Amarna Energy")
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["date_posted"], "2026-10-18")
+        self.assertEqual(jobs[0]["salary"], "PHP 60k - 80k")
 
     def test_filter_15days(self):
         """15days filter must include jobs up to 15 days ago and exclude older ones."""

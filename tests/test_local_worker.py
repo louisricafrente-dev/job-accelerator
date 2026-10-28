@@ -22,6 +22,16 @@ spec.loader.exec_module(worker)
 
 
 class TestLocalWorker(unittest.TestCase):
+    def test_expired_cycle_cannot_start_another_scrape_batch(self):
+        from src.sync_batches import CYCLE_SECONDS
+        aggregator = Mock()
+        aggregator.connectors = []
+        aggregator.run_sync.return_value = {"status": "partial", "progress": {"has_more": True, "unfinished": True}}
+        request = {"id": "expired", "worker_id": "test", "requested_at": time.time() - CYCLE_SECONDS - 1}
+        with patch.object(worker, "upload_pending", return_value=(0, 0, 0)), patch.object(worker, "api_call"):
+            self.assertIsNone(worker.run_request(request, aggregator))
+        self.assertEqual(aggregator.run_sync.call_args.kwargs["budget_seconds"], 0)
+
     def test_upwork_feed_requires_worker_auth_and_validates_source(self):
         payload = {"jobs": [{"platform": "Upwork", "title": "PHP Web Developer",
                               "description": "Build PHP and MySQL web apps",
