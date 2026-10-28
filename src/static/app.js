@@ -3276,16 +3276,6 @@ async function triggerEmailDigest() {
 // --------------------------------------------------------------------------
 // RESIDENTIAL PROXY & HYBRID ROUTING MANAGER
 // --------------------------------------------------------------------------
-const DEFAULT_WEBSHARE_PROXIES = `45.38.107.97:6014:REDACTED:REDACTED
-64.137.96.74:6641:REDACTED:REDACTED
-198.23.243.226:6361:REDACTED:REDACTED
-38.154.185.97:6370:REDACTED:REDACTED
-84.247.60.125:6095:REDACTED:REDACTED
-191.96.254.138:6185:REDACTED:REDACTED
-198.46.161.42:5092:REDACTED:REDACTED
-64.137.10.153:5803:REDACTED:REDACTED
-104.164.49.38:7693:REDACTED:REDACTED
-23.26.71.145:5628:REDACTED:REDACTED`;
 
 function toggleProxyModal() {
   const modal = document.getElementById('proxy-modal');
@@ -3315,7 +3305,7 @@ async function loadProxyStatus() {
 
     if (modeSelect) modeSelect.value = data.mode || 'hybrid';
     if (listInput) {
-      const activeRaw = (data.raw && data.raw.trim()) ? data.raw : DEFAULT_WEBSHARE_PROXIES;
+      const activeRaw = (data.raw && data.raw.trim()) ? data.raw : '';
       listInput.value = activeRaw;
     }
     if (badge) badge.textContent = `${data.count || 0} Configured`;
@@ -3349,8 +3339,8 @@ function updateProxyHint(mode) {
 function resetToDefaultProxies() {
   const listInput = document.getElementById('proxy-list-input');
   if (listInput) {
-    listInput.value = DEFAULT_WEBSHARE_PROXIES;
-    showToast('Reset to verified Webshare 10-proxy pool.', 'info');
+    listInput.value = '';
+    showToast('Proxy list cleared. Add your current provider before saving.', 'info');
   }
 }
 

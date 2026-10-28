@@ -20,12 +20,16 @@ def main():
     os.environ.pop("TURSO_DATABASE_URL", None)
     os.environ.pop("TURSO_AUTH_TOKEN", None)
     os.environ.pop("VERCEL", None)
-    from src.database import init_db
+    from src.database import init_db, set_user_setting
     from src.aggregator import Aggregator
     from src.connectors.remote_feed import RemoteOKConnector
     with tempfile.TemporaryDirectory() as directory:
         db = str(Path(directory) / "sandbox_test.db")
         init_db(db)
+        proxy_list = os.environ.get("PROXY_LIST", "")
+        if proxy_list:
+            set_user_setting(db, "proxy_list", proxy_list)
+        print(json.dumps({"configured_proxy_count": len([line for line in proxy_list.splitlines() if line.strip()])}))
         connector = RemoteOKConnector()
         result = Aggregator(db, connectors=[connector]).run_sync(
             queries=["developer"], budget_seconds=20, cycle_id=uuid.uuid4().hex)
