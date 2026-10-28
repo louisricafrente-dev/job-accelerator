@@ -37,5 +37,10 @@
       "src": "/(.*)",
       "dest": "api/index.py"
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "codex/actions-migration": false
+    }
+  }
 }
