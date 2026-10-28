@@ -22,7 +22,7 @@ LOCAL_DATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Loca
 DB_PATH = str(LOCAL_DATA / "jobs.db")
 BASE_URL = os.environ.get("JOB_ACCELERATOR_URL", "https://job-accelerator.vercel.app").rstrip("/")
 TOKEN_PATH = ROOT / ".vercel" / "local-worker.token"
-POLL_SECONDS = 5
+POLL_SECONDS = 30
 HEARTBEAT_SECONDS = 15
 UPLOAD_BATCH_SIZE = 8
 
@@ -222,12 +222,15 @@ def run_worker():
     aggregator = Aggregator(DB_PATH)
     active_request = [""]
     stop = threading.Event()
+    initial_heartbeat_pending = True
     heartbeat_thread = threading.Thread(target=keep_alive, args=(worker_id, active_request, stop, aggregator), daemon=True)
     heartbeat_thread.start()
     try:
         while True:
             try:
-                heartbeat(worker_id, active_request[0])
+                if initial_heartbeat_pending:
+                    heartbeat(worker_id)
+                    initial_heartbeat_pending = False
                 request_data = api_call(f"/api/local-worker/request?worker_id={worker_id}")
                 for key, value in request_data.get("proxy_settings", {}).items():
                     if key in {"proxy_mode", "proxy_list"} and isinstance(value, str) and get_user_setting(DB_PATH, key, "") != value:
@@ -241,8 +244,7 @@ def run_worker():
                     else:
                         active_request[0] = ""
                 else:
-                    heartbeat(worker_id)
-                    time.sleep(POLL_SECONDS)
+                    stop.wait(POLL_SECONDS)
             except KeyboardInterrupt:
                 raise
             except Exception as exc:

@@ -455,8 +455,8 @@ async function syncLocalOverridesToServer() {
 }
 
 document.addEventListener('visibilitychange', () => {
+  startTelemetryPolling();
   if (document.visibilityState === 'visible') {
-    startTelemetryPolling();
     syncLocalOverridesToServer();
     flushPendingSettings();
     loadStats();
@@ -758,9 +758,8 @@ async function lockSession() {
   localStorage.removeItem('job_accel_session_token');
   currentSessionToken = '';
   currentUserRole = null;
-  clearTimeout(telemetryTimer);
-  clearInterval(syncPollTimer);
-  syncPollTimer = null;
+  startTelemetryPolling();
+  syncCompletionPending = false;
   stopSyncIndicator();
   document.getElementById('telemetry-log-stream').textContent = 'Sign in to view sync activity.';
   isDashboardBootstrapped = false;
@@ -2372,7 +2371,7 @@ async function retryNoteSave(jobId) {
   await flushJobOverride(jobId);
 }
 
-let syncPollTimer = null;
+let syncCompletionPending = false;
 
 // Trigger Sync (Non-blocking Background Execution with Live Polling)
 async function triggerSync(action = 'restart') {
@@ -2514,47 +2513,29 @@ async function triggerSync(action = 'restart') {
 }
 
 function startSyncPoller() {
-  if (syncPollTimer) clearInterval(syncPollTimer);
-  syncPollTimer = setInterval(async () => {
-    try {
-      const data = await fetchSyncTelemetry();
-      if (!data) return;
+  syncCompletionPending = true;
+  startTelemetryPolling();
+}
 
-      // Live update telemetry modal if open
-      const modal = document.getElementById('sync-activity');
-      if (modal && modal.style.display !== 'none' && typeof renderTelemetry === 'function') {
-        renderTelemetry(data);
-      }
-
-      if (!data.is_syncing) {
-        clearInterval(syncPollTimer);
-        syncPollTimer = null;
-        stopSyncIndicator();
-        if (data.last_result?.status === 'error') {
-          showToast(`Sync failed: ${data.last_result.error || 'Database ingestion failed'}`);
-          return;
-        }
-        const added = (data.last_result && data.last_result.added !== undefined) ? data.last_result.added : 0;
-        const skipped = (data.last_result && data.last_result.skipped !== undefined) ? data.last_result.skipped : 0;
-        if (data.last_result?.progress) {
-          showToast(batchSyncMessage(data.last_result));
-        } else if (data.last_result?.status === 'partial') {
-          showToast(`Sync finished: ${added} new jobs found. Some sites were unavailable; check Logs.`);
-        } else {
-          showToast(`Sync complete: ${added} new jobs found, ${skipped} existing listings updated.`);
-        }
-        loadStats();
-        loadJobs();
-        if (modal && modal.style.display !== 'none' && typeof renderTelemetry === 'function') {
-          renderTelemetry(data);
-        }
-      }
-    } catch (e) {
-      clearInterval(syncPollTimer);
-      syncPollTimer = null;
-      stopSyncIndicator();
-    }
-  }, 1800);
+function checkSyncCompletion(data) {
+  if (!syncCompletionPending || data.is_syncing) return;
+  syncCompletionPending = false;
+  stopSyncIndicator();
+  if (data.last_result?.status === 'error') {
+    showToast(`Sync failed: ${data.last_result.error || 'Database ingestion failed'}`);
+    return;
+  }
+  const added = data.last_result?.added ?? 0;
+  const skipped = data.last_result?.skipped ?? 0;
+  if (data.last_result?.progress) {
+    showToast(batchSyncMessage(data.last_result));
+  } else if (data.last_result?.status === 'partial') {
+    showToast(`Sync finished: ${added} new jobs found. Some sites were unavailable; check Logs.`);
+  } else {
+    showToast(`Sync complete: ${added} new jobs found, ${skipped} existing listings updated.`);
+  }
+  loadStats();
+  loadJobs();
 }
 
 function batchSyncMessage(result) {
@@ -2920,6 +2901,7 @@ const MONITORED_BOARDS = [
 
 let telemetryTimer = null;
 let telemetryRequest = null;
+let telemetryPollGeneration = 0;
 
 function toggleSyncLogModal() {
   const activitySec = document.getElementById('sync-activity');
@@ -2932,10 +2914,14 @@ function toggleSyncLogModal() {
 
 function startTelemetryPolling() {
   clearTimeout(telemetryTimer);
+  telemetryTimer = null;
+  const generation = ++telemetryPollGeneration;
   if (!currentUserRole || document.visibilityState === 'hidden') return;
   fetchSyncTelemetry().then(data => {
+    if (generation !== telemetryPollGeneration) return;
+    if (data) checkSyncCompletion(data);
     if (currentUserRole && document.visibilityState !== 'hidden') {
-      telemetryTimer = setTimeout(startTelemetryPolling, data?.is_syncing ? 2000 : 10000);
+      telemetryTimer = setTimeout(startTelemetryPolling, data?.is_syncing || syncCompletionPending ? 5000 : 60000);
     }
   });
 }
@@ -2952,7 +2938,7 @@ async function fetchSyncTelemetry() {
       if (!res.ok) throw new Error(data.error || 'Could not read sync status');
       if (token !== currentSessionToken) return;
       renderTelemetry(data);
-      if (hint) hint.textContent = `Updated ${new Date().toLocaleTimeString()} · Refreshes every ${data.is_syncing ? '2' : '10'} seconds`;
+      if (hint) hint.textContent = `Updated ${new Date().toLocaleTimeString()} · Refreshes every ${data.is_syncing ? '5' : '60'} seconds`;
       return data;
     } catch (err) {
       if (token === currentSessionToken && hint) hint.textContent = `Live updates unavailable: ${err.message}. Retrying automatically.`;
