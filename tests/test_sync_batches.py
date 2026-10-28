@@ -59,7 +59,7 @@ class TestSyncBatches(unittest.TestCase):
     def test_all_295_keywords_eventually_complete_without_restarting(self):
         keywords = [f"keyword-{i}" for i in range(295)]
         for _ in range(150):
-            result = self.run_batch(keywords)
+            result = Aggregator(self.db, [self.board]).run_sync(queries=keywords, budget_seconds=3)
             if not result["progress"]["has_more"]:
                 break
         self.assertEqual(self.board.calls, keywords)
@@ -67,6 +67,50 @@ class TestSyncBatches(unittest.TestCase):
         self.assertEqual(result["progress"]["completed_searches"], 295)
         self.run_batch(keywords)
         self.assertEqual(len(self.board.calls), 295, "finished board must respect refresh cooldown")
+
+    def test_saved_large_matrix_edit_includes_appended_keywords(self):
+        keywords = [f"keyword-{i}" for i in range(25)]
+        set_user_setting(self.db, "target_stack", ",".join(keywords))
+        Aggregator(self.db, [self.board]).run_sync(budget_seconds=100)
+        self.assertEqual(self.board.calls, keywords)
+        keywords += ["Rust / WebAssembly", "Elixir developer", "QA Automation", "IT Support"]
+        set_user_setting(self.db, "target_stack", ",".join(keywords))
+        self.board.calls.clear()
+        result = Aggregator(self.db, [self.board]).run_sync(budget_seconds=100)
+        self.assertEqual(self.board.calls, keywords[-4:])
+        self.assertEqual(result["progress"]["keywords"], len(keywords))
+        self.assertEqual(result["progress"]["completed_searches"], len(keywords))
+        self.assertFalse(result["progress"]["has_more"])
+
+    def test_matrix_reorder_and_new_cycle_reuse_only_successful_queries(self):
+        from src.sync_batches import run_batch
+        run_batch(Aggregator(self.db, [self.board]), ["a", "b", "c"], budget_seconds=3, workers=1, cycle_id="first")
+        self.assertEqual(self.board.calls, ["a", "b"])
+        result = run_batch(Aggregator(self.db, [self.board]), ["new", "c", "b", "a"], budget_seconds=100, workers=1, cycle_id="edited")
+        self.assertEqual(self.board.calls, ["a", "b", "new", "c"])
+        self.assertEqual(result["progress"]["completed_searches"], 4)
+        self.assertNotIn("completed_queries", result["progress"]["boards"][self.board.platform])
+
+    def test_matrix_cache_expires_and_connector_revision_invalidates_it(self):
+        from src.sync_batches import run_batch
+        run_batch(Aggregator(self.db, [self.board]), ["a", "b"], budget_seconds=100, workers=1, cycle_id="first")
+        self.clock.value += 6 * 3600 + 1
+        run_batch(Aggregator(self.db, [self.board]), ["a", "b", "c"], budget_seconds=100, workers=1, cycle_id="expired")
+        self.assertEqual(self.board.calls, ["a", "b", "a", "b", "c"])
+        self.board.revision = 2
+        run_batch(Aggregator(self.db, [self.board]), ["a", "b", "c"], budget_seconds=100, workers=1, cycle_id="revised")
+        self.assertEqual(self.board.calls[-3:], ["a", "b", "c"])
+        self.assertEqual(len(self.board.calls), 8)
+
+    def test_failed_query_is_not_cached_when_matrix_changes(self):
+        self.run_batch(["a", "b", "c"])
+        self.board.error = "temporary outage"
+        self.run_batch(["a", "b", "c"])
+        self.board.error = ""
+        self.clock.value += 15 * 60 + 1
+        result = self.run_batch(["c", "a", "b", "new"], budget=100)
+        self.assertEqual(self.board.calls, ["a", "b", "c", "c", "new"])
+        self.assertEqual(result["progress"]["completed_searches"], 4)
 
     def test_budget_saves_progress_and_results_between_instances(self):
         first = self.run_batch(["a", "b", "c", "d"])
@@ -125,7 +169,7 @@ class TestSyncBatches(unittest.TestCase):
         result = self.run_batch(["a"])
         self.assertEqual(result["telemetry"][self.board.platform]["status"], "complete")
 
-    def test_fresh_cycle_restarts_healthy_queries_while_respecting_blocked_source(self):
+    def test_fresh_cycle_reuses_recent_queries_while_respecting_blocked_source(self):
         from src.sync_batches import run_batch
         blocked = Board(self.clock)
         blocked.platform = "Blocked"
@@ -135,7 +179,7 @@ class TestSyncBatches(unittest.TestCase):
         self.assertTrue(first["progress"]["unfinished"])
         self.assertEqual(first["progress"]["deferred_boards"][0]["platform"], "Blocked")
         second = run_batch(Aggregator(self.db, [self.board, blocked]), ["a", "b"], budget_seconds=30, workers=1, cycle_id="second")
-        self.assertEqual(self.board.calls, ["a", "b", "a", "b"])
+        self.assertEqual(self.board.calls, ["a", "b"])
         self.assertEqual(blocked.calls, ["a"])
         self.assertFalse(second["progress"]["has_more"])
 
@@ -160,6 +204,7 @@ class TestSyncBatches(unittest.TestCase):
         self.board.error = ""
         result = run_batch(Aggregator(self.db, [self.board]), ["a"], cycle_id="new", workers=1)
         self.assertFalse(result["progress"]["unfinished"])
+        self.clock.value += 6 * 3600 + 1
         self.board.error = "HTTP 403"
         run_batch(Aggregator(self.db, [self.board]), ["a"], cycle_id="blocked", workers=1)
         self.board.revision = 3

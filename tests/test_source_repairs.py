@@ -79,11 +79,6 @@ class TestSourceRepairs(unittest.TestCase):
             self.assertEqual(len(JobStreetConnector().fetch('developer')), 50)
         self.assertEqual(fetch.call_count, 2)
 
-    def test_large_keyword_matrix_keeps_qa_and_support_queries(self):
-        from src.aggregator import compact_search_queries
-        queries = [f'keyword {i}' for i in range(13)] + ['QA Automation', 'IT Support']
-        self.assertEqual(compact_search_queries(queries + ['QA Automation']), queries)
-
     def test_fallbacks_do_not_invent_publication_dates(self):
         from src.connectors.jobspy_adapter import JobSpyAdapter
         from src.connectors.remote_feed import FlexJobsConnector, ContraConnector
