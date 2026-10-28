@@ -40,6 +40,10 @@ def enqueue(db_path, queries=None, key=KEY, now=None, automatic=False, resume=Fa
         raw = get_user_setting(db_path, key, "{}")
         current = json.loads(raw)
         if current.get("status") in ACTIVE and current.get("expires_at", now + 1) > now:
+            if automatic and not (current.get("automatic") or current.get("daily_requested")):
+                current["daily_requested"] = True
+                if not _replace(db_path, raw, current, key):
+                    continue
             return current
         command = {"id": uuid.uuid4().hex, "status": "queued", "queries": queries,
                    "requested_at": now, "local_deadline": now + LOCAL_ACK_SECONDS,
@@ -86,6 +90,9 @@ def update_owned(db_path, claimed, result=None, key=KEY, now=None, totals=None):
         if totals is not None:
             command["totals"] = totals
         if result is not None:
+            # A midnight request accepted during this batch still needs a daily pass.
+            if command.get("daily_requested") and not claimed.get("daily_requested"):
+                return False
             command.update(status=(result.get("status") if result.get("status") in {"error", "partial"} else "complete"), result=result)
         if _replace(db_path, raw, command, key):
             return True

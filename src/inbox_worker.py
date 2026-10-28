@@ -1,5 +1,6 @@
 """Local/cloud execution using the shared database, without dashboard polling."""
 import json
+import logging
 import threading
 import time
 from src import execution_inbox as inbox
@@ -29,6 +30,8 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
     totals = command.get("totals") or {"added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}}
     try:
         while not lost.is_set() and inbox.owned(db_path, command, key=key):
+            command["daily_requested"] = inbox.read(db_path, key).get("daily_requested", False)
+            aggregator.daily_run = bool(command.get("automatic") or command["daily_requested"])
             if command.get("automatic") and get_user_setting(db_path, "auto_sync_enabled", "1") in ("0", "false"):
                 inbox.cancel(db_path, key=key, status="paused")
                 return
@@ -55,7 +58,7 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
                     result["status"] = "partial"
                 if inbox.update_owned(db_path, command, result, key=key):
                     return result
-                return
+                continue
             stop.wait(min(30, max(1, progress.get("next_run_at", time.time()) - time.time())))
     except ExecutionLeaseLost:
         return
@@ -70,17 +73,23 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
 
 def run_cloud(db_path, command_id, aggregator, key=inbox.KEY, wait=time.sleep):
     # One Actions run supervises local execution and takes over an expired claim.
-    while True:
-        command = inbox.read(db_path, key=key)
-        if command.get("id") != command_id or inbox.public(command).get("status") not in inbox.ACTIVE:
-            return
-        now = time.time()
-        boundary = command.get("lease_until", 0) if command.get("status") == "running" else command["local_deadline"]
-        if boundary <= now:
-            claimed = inbox.claim(db_path, "cloud", "github", key=key)
-            if claimed:
-                return run_claimed(db_path, claimed, aggregator, key)
-        wait(min(60, max(1, boundary - now)))
+    deadline = time.monotonic() + inbox.CYCLE_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            command = inbox.read(db_path, key=key)
+            if command.get("id") != command_id or inbox.public(command).get("status") not in inbox.ACTIVE:
+                return
+            now = time.time()
+            boundary = command.get("lease_until", 0) if command.get("status") == "running" else command["local_deadline"]
+            if boundary <= now:
+                claimed = inbox.claim(db_path, "cloud", "github", key=key)
+                if claimed:
+                    return run_claimed(db_path, claimed, aggregator, key)
+            delay = min(60, max(1, boundary - now))
+        except Exception:
+            logging.warning("Cloud worker operation failed; retrying in 60 seconds")
+            delay = 60
+        wait(min(delay, max(0, deadline - time.monotonic())))
 
 
 def run_local(db_path, aggregator, stop=None, key=inbox.KEY):
@@ -89,14 +98,23 @@ def run_local(db_path, aggregator, stop=None, key=inbox.KEY):
     import uuid
     worker_id = socket.gethostname() + "-" + uuid.uuid4().hex[:8]
     presence_key = key + ":local"
-    set_user_setting(db_path, presence_key, json.dumps({"worker_id": worker_id, "last_seen_at": time.time()}))
+    presence_saved = False
     try:
         while not stop.is_set():
-            command = inbox.read(db_path, key)
-            if command.get("status") == "queued" and time.time() < command.get("local_deadline", 0):
-                claimed = inbox.claim(db_path, "local", worker_id, key=key)
-                if claimed:
-                    run_claimed(db_path, claimed, aggregator, key)
+            try:
+                if not presence_saved:
+                    set_user_setting(db_path, presence_key, json.dumps({"worker_id": worker_id, "last_seen_at": time.time()}))
+                    presence_saved = True
+                command = inbox.read(db_path, key)
+                if command.get("status") == "queued" and time.time() < command.get("local_deadline", 0):
+                    claimed = inbox.claim(db_path, "local", worker_id, key=key)
+                    if claimed:
+                        run_claimed(db_path, claimed, aggregator, key)
+            except Exception:
+                logging.warning("Local worker operation failed; retrying in 60 seconds")
             stop.wait(inbox.POLL_SECONDS)
     finally:
-        set_user_setting(db_path, presence_key, json.dumps({"worker_id": worker_id, "last_seen_at": time.time(), "stopped": True}))
+        try:
+            set_user_setting(db_path, presence_key, json.dumps({"worker_id": worker_id, "last_seen_at": time.time(), "stopped": True}))
+        except Exception:
+            logging.warning("Could not save local worker stopped status")

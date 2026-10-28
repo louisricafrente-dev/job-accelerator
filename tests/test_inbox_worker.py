@@ -90,6 +90,56 @@ class InboxWorkerTests(unittest.TestCase):
         stop.wait.assert_called_once_with(60)
         http.assert_not_called()
 
+    def test_local_poll_recovers_from_transient_database_error(self):
+        stop = Mock()
+        stop.is_set.side_effect = [False, False, True]
+        with patch("src.inbox_worker.inbox.read", side_effect=[ConnectionError("offline"), {}]) as read:
+            run_local(self.db, Aggregator(self.db, []), stop=stop)
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(stop.wait.call_count, 2)
+        self.assertGreaterEqual(stop.wait.call_args_list[0].args[0], 60)
+
+    def test_cloud_poll_recovers_and_executes_after_database_error(self):
+        command = inbox.enqueue(self.db, ["developer"], now=time.time() - 91)
+        actual_read = inbox.read
+        calls = [0]
+
+        def transient(*args, **kwargs):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise ConnectionError("offline")
+            return actual_read(*args, **kwargs)
+
+        wait = Mock()
+        with patch("src.inbox_worker.inbox.read", side_effect=transient):
+            result = run_cloud(self.db, command["id"], Aggregator(self.db, [Feed()]), wait=wait)
+        self.assertEqual(result["added"], 1)
+        wait.assert_called_once_with(60)
+
+    def test_local_startup_failure_retries_and_shutdown_failure_is_safe(self):
+        stop = Mock()
+        stop.is_set.side_effect = [False, False, True]
+        with patch("src.inbox_worker.set_user_setting", side_effect=[ConnectionError("offline"), None, ConnectionError("offline")]) as write, patch(
+                "src.inbox_worker.inbox.read", return_value={}) as read:
+            run_local(self.db, Aggregator(self.db, []), stop=stop)
+        self.assertEqual(write.call_count, 3)
+        read.assert_called_once()
+        self.assertEqual(stop.wait.call_count, 2)
+
+    def test_cloud_outage_retries_stop_at_execution_budget(self):
+        clock = [0]
+
+        def wait(seconds):
+            self.assertGreater(seconds, 0)
+            clock[0] += seconds
+
+        with patch("src.inbox_worker.time.monotonic", side_effect=lambda: clock[0]), patch(
+                "src.inbox_worker.inbox.read", side_effect=ConnectionError("offline")) as read, patch(
+                "src.inbox_worker.logging.warning"):
+            run_cloud(self.db, "missing", Aggregator(self.db, []), wait=wait)
+        self.assertEqual(clock[0], inbox.CYCLE_SECONDS)
+        self.assertEqual(read.call_count, inbox.CYCLE_SECONDS // 60)
+
     def test_source_wait_loop_does_not_poll_database_every_quarter_second(self):
         import threading
         from src import sync_batches

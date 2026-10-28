@@ -104,6 +104,48 @@ class DailyScheduleTests(unittest.TestCase):
             connector.fetch()
         fetch.assert_called_once_with(connector, limit=10)
 
+    def test_midnight_during_manual_batch_runs_daily_upwork_before_completion(self):
+        from src.aggregator import Aggregator
+        from src.execution_dispatch import start
+        from src.inbox_worker import run_claimed
+        inbox.enqueue(self.db, ["developer"])
+        command = inbox.claim(self.db, "local", "pc")
+        aggregator = Aggregator(self.db, [UpworkConnector()])
+        actual_run = aggregator.run_sync
+        batches = []
+
+        def overlap(**options):
+            batches.append(aggregator.daily_run)
+            result = actual_run(**options)
+            if len(batches) == 1:
+                start_daily(self.db, lambda **kwargs: start(self.db, **kwargs))
+            return result
+
+        with patch.dict(os.environ, {"GITHUB_ACTIONS_TOKEN": "test", "FLCONSOLE_MCP_TOKEN": "test"}), patch(
+                "src.execution_dispatch.dispatch"), patch.object(aggregator, "run_sync", side_effect=overlap), patch(
+                "src.connectors.upwork_flconsole.fetch_jobs", return_value=[]) as fetch:
+            run_claimed(self.db, command, aggregator)
+        self.assertEqual(batches, [False, True])
+        fetch.assert_called_once()
+        self.assertEqual(inbox.read(self.db)["status"], "complete")
+        self.assertEqual(start_daily(self.db, Mock())["status"], "already_scheduled")
+
+    def test_midnight_reuses_queued_manual_command_without_duplicate_dispatch(self):
+        from src.aggregator import Aggregator
+        from src.execution_dispatch import start
+        from src.inbox_worker import run_claimed
+        with patch.dict(os.environ, {"GITHUB_ACTIONS_TOKEN": "test", "FLCONSOLE_MCP_TOKEN": "test"}), patch(
+                "src.execution_dispatch.dispatch") as dispatch, patch(
+                "src.connectors.upwork_flconsole.fetch_jobs", return_value=[]) as fetch:
+            manual = start(self.db, ["developer"])
+            daily = start_daily(self.db, lambda **kwargs: start(self.db, **kwargs))
+            self.assertEqual(manual["execution"]["id"], daily["execution"]["id"])
+            self.assertFalse(inbox.read(self.db)["automatic"])
+            command = inbox.claim(self.db, "local", "pc")
+            run_claimed(self.db, command, Aggregator(self.db, [UpworkConnector()]))
+        dispatch.assert_called_once()
+        fetch.assert_called_once()
+
 
 class DailyApiTests(unittest.TestCase):
     from tests.test_local_worker import TestLocalWorker as _Fixture
