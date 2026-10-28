@@ -8,9 +8,17 @@
 2. `python scripts/inbox_worker.py --executor local` reads the small inbox once every 60 seconds. It sends no idle dashboard requests or periodic idle presence writes. Startup/shutdown records supply Last seen, which is not an online guarantee.
 3. The PC may claim within 90 seconds. The cloud supervisor waits for this acknowledgment deadline or an expired active claim, then uses the same scraper and shared checkpoint. GitHub queue startup time is additional; 90 seconds is not a guaranteed cloud start time.
 4. Active claims renew every 60 seconds with a 180-second expiry. Atomic compare-and-swap claims and database-side fence predicates protect job/checkpoint writes after cancellation or takeover. The existing scraper lease remains in place.
-5. Existing deduplication and job tracking rules remain unchanged. Automatic runs with additions retain the digest call; duplicate supervisors do not repeat a completed command. Provider blocks finish as Partial rather than pretending retrieval succeeded.
+5. Existing deduplication and job tracking rules remain unchanged. Scrape completion never sends email; the separate 10 AM Manila digest endpoint reads stored jobs only, with one successful digest per calendar day. Provider blocks finish as Partial rather than pretending retrieval succeeded.
 
-The main scraper no longer needs repeated 8-job dashboard uploads. It inserts via the existing ingestion code directly into Turso. The separate Upwork monitor remains on its existing queue/local task for continuity; paused auto-sync now stops that queue chain and enabling auto-sync restarts it. This patch does not claim zero Vercel requests or zero provider usage.
+The main scraper no longer needs repeated 8-job dashboard uploads. It inserts via the existing ingestion code directly into Turso. Upwork runs inside the midnight queue once per Manila day, requesting at most 10 recent results. Old monitor callbacks drain without fetching/requeueing, and the standalone script is retired. This patch does not claim zero Vercel requests or zero provider usage.
+
+## Daily schedule
+
+- Midnight Manila (`0 16 * * *` UTC): one automatic scrape. Preserve unfinished checkpoint cycle/cursors on resume; completed queues start fresh. Duplicate daily cron deliveries do not start another run.
+- 10 AM Manila (`0 2 * * *` UTC): stored-data email digest only, including days with no new jobs. No scrape or worker dispatch. Failed email delivery remains retryable; successful delivery is recorded for the day.
+- No separate 9 AM scrape, no independent Upwork queue/timer. At cutover disable the Windows task `Job Accelerator Upwork Feed` as well; its currently running original source has not been changed during testing.
+- Upwork uses the provider's recent 30-minute window, not a full-day historical backfill. The user explicitly accepted a few daily results.
+- Cron execution can be delayed by the hosting platform; these are configured schedule times.
 
 ## Usage changes
 

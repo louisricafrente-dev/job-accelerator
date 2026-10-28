@@ -134,14 +134,13 @@ class InboxWorkerTests(unittest.TestCase):
         fetch.assert_not_called()
         self.assertEqual(inbox.read(self.db)["status"], "paused")
 
-    def test_automatic_digest_is_not_resent_by_duplicate_cloud_supervisor(self):
+    def test_scrape_completion_never_sends_digest(self):
         command = inbox.enqueue(self.db, ["developer"], automatic=True, now=time.time() - 91)
         aggregator = Aggregator(self.db, [Feed()])
         with patch("scripts.daily_notifier.send_daily_email", return_value={"success": True}) as send:
             run_cloud(self.db, command["id"], aggregator)
             run_cloud(self.db, command["id"], aggregator)
-        send.assert_called_once()
-        self.assertEqual(send.call_args.kwargs["new_jobs_count"], 1)
+        send.assert_not_called()
 
     def test_dispatch_is_idempotent(self):
         from src.execution_dispatch import start

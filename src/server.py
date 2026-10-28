@@ -477,14 +477,6 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         if "target_stack" not in settings:
             settings["target_stack"] = DEFAULT_TARGET_STACK
         bottle.response.content_type = "application/json"
-        if (is_admin and "auto_sync_enabled" in data and settings.get("auto_sync_enabled", "0") in ("1", "true")
-                and os.environ.get("VERCEL") and os.environ.get("FLCONSOLE_MCP_TOKEN")):
-            try:
-                import asyncio
-                from src.upwork_monitor import start
-                asyncio.run(start(db_path))
-            except Exception:
-                pass
         return json.dumps({"success": True, "settings": settings})
 
     @app.route("/api/settings/stack", method=["GET", "OPTIONS"])
@@ -529,7 +521,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
     @app.route("/api/sync/cron", method=["GET", "POST"])
     def api_cron_sync():
         """Cloud Cron endpoint for Vercel Cron or external scheduled runners.
-        Runs scraper across platforms, ingests new listings, and dispatches email digest if new jobs found.
+        Schedules one daily scrape/resume. Email delivery is handled by the separate digest endpoint.
         """
         session = get_current_session()
         cron_secret = os.environ.get("CRON_SECRET", "").strip()
@@ -549,53 +541,30 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             return {"status": "skipped", "reason": "Automatic sync is paused", "email_notification": None}
 
         try:
-            if os.environ.get("VERCEL") and os.environ.get("FLCONSOLE_MCP_TOKEN"):
-                import asyncio
-                from src.upwork_monitor import start
-                asyncio.run(start(db_path))
+            from src.daily_schedule import start_daily
             if database_execution():
                 from src.execution_dispatch import start
-                return start(db_path, automatic=True)
+                return start_daily(db_path, lambda **options: start(db_path, **options))
             if bottle.request.path == "/api/cron/cloud-sync":
                 from src.cloud_sync import start_run
-                bottle.response.content_type = "application/json"
-                return json.dumps(start_run(db_path, automatic=True))
+                return start_daily(db_path, lambda **options: start_run(db_path, **options))
             if os.environ.get("VERCEL"):
                 from src.local_worker import request_local_sync
-                local = request_local_sync(db_path, automatic=True)
-                if local:
-                    return json.dumps({"status": "queued_local", "local_request": local.get("local_request"),
-                                       "local_worker": local.get("local_worker"), "email_notification": None})
                 from src.cloud_sync import start_run
-                return json.dumps(start_run(db_path, automatic=True))
-
-            stats = aggregator.run_sync(force=True, budget_seconds=150)
-            if os.environ.get("VERCEL"):
-                from src.cloud_sync import start_run
-                stats["cloud_continuation"] = start_run(db_path, automatic=True)
-            added = stats.get("added", 0)
-            email_result = None
-            if added > 0:
-                try:
-                    from scripts.daily_notifier import send_daily_email
-                    dashboard_url = os.environ.get("VERCEL_URL", "https://job-accelerator-rhettrina.vercel.app")
-                    if not dashboard_url.startswith("http"):
-                        dashboard_url = "https://" + dashboard_url
-                    email_result = send_daily_email(db_path=db_path, dashboard_url=dashboard_url, new_jobs_count=added)
-                except Exception as mail_err:
-                    email_result = {"status": "error", "error": str(mail_err)}
-            bottle.response.content_type = "application/json"
-            sync_status = stats.get("status", "error")
-            status = "success" if sync_status == "ok" else sync_status
-            if sync_status == "error":
-                bottle.response.status = 500
-            if email_result is not None and (email_result.get("success") is False or email_result.get("status") == "error") and status == "success":
-                status = "partial"
-            return json.dumps({
-                "status": status,
-                "sync_stats": stats,
-                "email_notification": email_result
-            })
+                def start_legacy(**options):
+                    if bottle.request.path == "/api/cron/cloud-sync":
+                        return start_run(db_path, **options)
+                    local = request_local_sync(db_path, **options)
+                    return local or start_run(db_path, **options)
+                return start_daily(db_path, start_legacy)
+            def start_inline(**options):
+                aggregator.daily_run = True
+                stats = aggregator.run_sync(force=True, budget_seconds=150, resume=options["resume"])
+                if stats.get("status") == "error":
+                    bottle.response.status = 500
+                return {"status": "success" if stats.get("status") == "ok" else stats.get("status"),
+                        "sync_stats": stats, "email_notification": None}
+            return start_daily(db_path, start_inline)
         except Exception as e:
             bottle.response.status = 500
             bottle.response.content_type = "application/json"
@@ -615,7 +584,8 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             })
         try:
             from scripts.daily_notifier import send_daily_email
-            result = send_daily_email(db_path)
+            from src.daily_schedule import send_digest
+            result = send_digest(db_path, send_daily_email)
         except Exception as e:
             result = {"success": False, "error": str(e)}
         bottle.response.content_type = "application/json"
@@ -665,15 +635,15 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             age = time.time() - upwork_feed.get("checked_at", 0)
             if isinstance(telemetry.get("progress"), dict):
                 board = telemetry["progress"].setdefault("boards", {}).setdefault("Upwork", {})
-                board.update(last_error="", deferred=False, retry=[], next_at=upwork_feed.get("checked_at", 0) + 600)
+                board.update(last_error="", deferred=False, retry=[], next_at=upwork_feed.get("checked_at", 0) + 86400)
             if isinstance(telemetry.get("last_result"), dict):
                 telemetry["last_result"].setdefault("platforms", {})["Upwork"] = upwork_feed.get("fetched", 0)
             if isinstance(telemetry.get("run_totals"), dict):
                 telemetry["run_totals"].setdefault("platforms", {})["Upwork"] = upwork_feed.get("fetched", 0)
             telemetry.setdefault("telemetry", {})["Upwork"] = {
-                "status": "error" if upwork_feed.get("error") else "active" if age < 1800 else "cooldown",
+                "status": "error" if upwork_feed.get("error") else "complete" if age < 172800 else "cooldown",
                 "count": upwork_feed.get("fetched", 0), "tier": 2, "route": "FLCONSOLE",
-                "error": upwork_feed.get("error", "") if age < 1800 else "Upwork feed is stale; check local/cloud monitor"}
+                "error": upwork_feed.get("error", "") if age < 172800 else "Upwork daily check is overdue"}
         return json.dumps(telemetry)
 
     def require_local_worker():
@@ -873,16 +843,6 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             return {"status": "error", "error": "No matching sync request is active"}
         result = data.get("result") if isinstance(data.get("result"), dict) else {}
         email_result = None
-        if request.get("automatic") and result.get("added", 0) > 0:
-            try:
-                from scripts.daily_notifier import send_daily_email
-                dashboard_url = os.environ.get("VERCEL_URL", "https://job-accelerator-rhettrina.vercel.app")
-                if not dashboard_url.startswith("http"):
-                    dashboard_url = "https://" + dashboard_url
-                email_result = send_daily_email(db_path=db_path, dashboard_url=dashboard_url,
-                                                new_jobs_count=result.get("added", 0))
-            except Exception as mail_err:
-                email_result = {"status": "error", "error": str(mail_err)}
         request.update(status="complete" if result.get("status") == "ok" else "partial" if result.get("status") == "partial" else "error",
                        completed_at=time.time(), updated_at=time.time(), result=result,
                        email_notification=email_result)

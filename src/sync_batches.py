@@ -74,6 +74,11 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         now = time.time()
         for connector in aggregator.connectors:
             state = boards.setdefault(connector.platform, {"cursor": 0, "retry": [], "next_at": 0})
+            connector.daily_sync = bool(getattr(aggregator, "daily_run", False))
+            if connector.platform == "Upwork" and connector.daily_sync:
+                from src.daily_schedule import day
+                if state.get("daily_day") != day():
+                    state.update(cursor=0, retry=[], next_at=0, deferred=False, daily_day=day())
             total = 1 if getattr(connector, "is_feed", False) else len(queries)
             revision = getattr(connector, "revision", 1)
             if state.get("revision", 1) != revision:

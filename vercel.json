@@ -21,11 +21,11 @@
   "crons": [
     {
       "path": "/api/cron/sync",
-      "schedule": "0 1 * * *"
+      "schedule": "0 16 * * *"
     },
     {
-      "path": "/api/cron/cloud-sync",
-      "schedule": "0 16 * * *"
+      "path": "/api/notify/daily",
+      "schedule": "0 2 * * *"
     }
   ],
   "routes": [

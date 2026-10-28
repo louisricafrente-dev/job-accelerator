@@ -167,6 +167,7 @@ async def _process_message(db_path, payload, aggregator):
     else:
         run.update(status="running", updated_at=now, deployment_id=os.environ.get("VERCEL_DEPLOYMENT_ID"))
         await asyncio.to_thread(set_user_setting, db_path, RUN_KEY, json.dumps(run))
+        aggregator.daily_run = bool(run.get("automatic"))
         result = await asyncio.to_thread(aggregator.run_sync, queries=run["queries"], budget_seconds=min(120, max(0, run["expires_at"] - time.time())), cycle_id=run.get("cycle_id", run["id"]), resume=run.get("resume", False))
         if result.get("status") != "already_syncing":
             totals = run.setdefault("totals", {"added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}})
