@@ -133,6 +133,7 @@ def upload_pending(request_id, worker_id):
 
 
 def run_request(request, aggregator):
+    aggregator.daily_run = bool(request.get("automatic"))
     pending = json.loads(get_user_setting(DB_PATH, "local_worker_pending_result", "{}") or "{}")
     if pending.get("request_id") == request["id"]:
         result = pending["result"]

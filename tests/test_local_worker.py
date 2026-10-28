@@ -285,7 +285,7 @@ class TestLocalWorker(unittest.TestCase):
             status, result = self.call("/api/cron/cloud-sync", admin=True)
         self.assertEqual(status, 200)
         self.assertEqual(result["cloud_run"]["id"], "midnight")
-        queue.assert_called_once_with(self.db, automatic=True)
+        queue.assert_called_once_with(self.db, automatic=True, resume=False)
         local.assert_not_called()
 
     def test_paired_worker_receives_saved_proxy_settings_without_public_exposure(self):
@@ -316,8 +316,8 @@ class TestLocalWorker(unittest.TestCase):
         from zoneinfo import ZoneInfo
         config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text())
         schedules = {job["path"]: job["schedule"] for job in config["crons"]}
-        self.assertEqual(schedules["/api/cron/sync"], "0 1 * * *")
-        self.assertEqual(schedules["/api/cron/cloud-sync"], "0 16 * * *")
+        self.assertEqual(schedules["/api/cron/sync"], "0 16 * * *")
+        self.assertEqual(schedules["/api/notify/daily"], "0 2 * * *")
         midnight = datetime(2026, 10, 21, 16, tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Asia/Manila"))
         self.assertEqual((midnight.hour, midnight.minute), (0, 0))
 

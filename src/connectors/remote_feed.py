@@ -374,12 +374,15 @@ class UpworkConnector(BaseConnector):
         import os
         jobs: List[Job] = []
         feed_url = os.environ.get("UPWORK_FEED_URL", "").strip()
+        if self.db_path and (feed_url or os.environ.get("FLCONSOLE_MCP_TOKEN", "").strip()):
+            from src.upwork_monitor import claim
+            if not getattr(self, "daily_sync", False) or not claim(self.db_path, "daily"):
+                return []
         if os.environ.get("FLCONSOLE_MCP_TOKEN", "").strip():
             if self.db_path:
                 self.last_route = "FLCONSOLE"
-                return []  # The shared monitor owns polling, independently of full-board sync.
             from src.connectors.upwork_flconsole import fetch_jobs
-            return fetch_jobs(self)
+            return fetch_jobs(self, limit=10) if self.db_path else fetch_jobs(self)
         if not feed_url:
             self.last_error = "Configuration required: Upwork retired public RSS; configure UPWORK_FEED_URL with an authorized feed"
             return []

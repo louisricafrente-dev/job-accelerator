@@ -45,6 +45,9 @@ def enqueue(db_path, queries=None, key=KEY, now=None, automatic=False, resume=Fa
                    "requested_at": now, "local_deadline": now + LOCAL_ACK_SECONDS,
                    "expires_at": now + CYCLE_SECONDS, "automatic": automatic,
                    "resume": resume, "restart": restart}
+        if resume and not restart:
+            checkpoint = json.loads(get_user_setting(db_path, "sync_batch_progress", "{}") or "{}")
+            command["cycle_id"] = checkpoint.get("cycle_id") or current.get("cycle_id") or current.get("id") or command["id"]
         if _replace(db_path, raw, command, key):
             return command
     raise RuntimeError("Inbox changed concurrently; retry enqueue")

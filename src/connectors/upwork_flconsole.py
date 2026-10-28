@@ -29,11 +29,11 @@ def rpc(name, arguments):
     return data
 
 
-def fetch_jobs(connector):
+def fetch_jobs(connector, limit=30):
     connector.last_route = "FLCONSOLE"
     try:
         data = rpc("find_jobs", {"filters": {"schema_version": 1, "base": {"q": QUERY}},
-                                 "lookback_minutes": 30, "limit": 30})
+                                 "lookback_minutes": 30, "limit": limit})
         if not isinstance(data.get("jobs"), list):
             raise ValueError("flconsole returned no jobs array")
         jobs = []

@@ -44,6 +44,7 @@ class TestSelectedFixes(unittest.TestCase):
     def test_cron_outcomes_match_sync_result(self):
         for status, expected, http in (("ok", "success", 200), ("partial", "partial", 200),
                                        ("error", "error", 500), ("already_syncing", "already_syncing", 200)):
+            set_user_setting(self.db, "daily_scrape_day", "")
             with self.subTest(status=status), patch("src.server.Aggregator.run_sync", return_value={"status": status, "added": 0}):
                 response = wsgi_request(self.app, "GET", "/api/cron/sync", cookie=self.admin)
                 self.assertEqual(response["json"]["status"], expected)
@@ -64,15 +65,15 @@ class TestSelectedFixes(unittest.TestCase):
         for revisions in ([], {"view_filters": True}, {"view_filters": -1}, {"view_filters": "200"}):
             self.assertEqual(wsgi_request(self.app, "POST", "/api/settings", {"view_filters": "invalid", "__revisions": revisions}, cookie=self.admin)["status"], 400)
 
-    def test_email_failure_makes_successful_sync_partial(self):
+    def test_digest_failure_is_reported_separately_from_scraping(self):
         import sys
         from types import ModuleType
         notifier = ModuleType("scripts.daily_notifier")
-        notifier.send_daily_email = lambda **kwargs: {"success": False, "error": "mock email failure"}
+        notifier.send_daily_email = lambda *args, **kwargs: {"success": False, "error": "mock email failure"}
         with patch.dict(sys.modules, {"scripts.daily_notifier": notifier}), patch("src.server.Aggregator.run_sync", return_value={"status": "ok", "added": 1}):
-            response = wsgi_request(self.app, "GET", "/api/cron/sync", cookie=self.admin)
-            self.assertEqual(response["json"]["status"], "partial")
-            self.assertEqual(response["json"]["sync_stats"]["status"], "ok")
+            response = wsgi_request(self.app, "GET", "/api/notify/daily", cookie=self.admin)
+            self.assertFalse(response["json"]["success"])
+            self.assertEqual(response["json"]["error"], "mock email failure")
 
 
 class TestLauncher(unittest.TestCase):

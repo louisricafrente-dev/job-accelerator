@@ -9,6 +9,7 @@ from src.database import ExecutionLeaseLost, get_user_setting, set_user_setting
 def run_claimed(db_path, command, aggregator, key=inbox.KEY):
     guard = {**command, "key": key}
     aggregator.execution_guard = guard
+    aggregator.daily_run = bool(command.get("automatic"))
     stop = threading.Event()
     lost = threading.Event()
 
@@ -35,7 +36,7 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
             if remaining <= 0:
                 return
             result = aggregator.run_sync(queries=command.get("queries"), budget_seconds=min(120, remaining),
-                                         cycle_id=command["id"], resume=command.get("resume", False),
+                                         cycle_id=command.get("cycle_id", command["id"]), resume=command.get("resume", False),
                                          restart=command.get("restart", False))
             command["restart"] = False
             if result.get("status") == "already_syncing":
@@ -53,13 +54,6 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
                 if progress.get("unfinished") and result.get("status") != "error":
                     result["status"] = "partial"
                 if inbox.update_owned(db_path, command, result, key=key):
-                    if command.get("automatic") and result.get("added", 0) > 0:
-                        try:
-                            from scripts.daily_notifier import send_daily_email
-                            send_daily_email(db_path=db_path, dashboard_url="https://job-accelerator.vercel.app", new_jobs_count=result["added"])
-                        except Exception:
-                            # Never retry a completed scrape just to resend its digest.
-                            pass
                     return result
                 return
             stop.wait(min(30, max(1, progress.get("next_run_at", time.time()) - time.time())))
