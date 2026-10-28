@@ -130,13 +130,32 @@ def clean_url(url: str) -> str:
         return ""
     try:
         parsed = urllib.parse.urlparse(str(url).strip())
+        netloc = parsed.netloc.lower()
         query_params = urllib.parse.parse_qsl(parsed.query)
+
+        # Indeed: isolate canonical jk query param
+        if "indeed." in netloc and ("viewjob" in parsed.path or "rc/clk" in parsed.path):
+            jk = next((v for k, v in query_params if k.lower() == "jk"), None)
+            if jk:
+                return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?jk={jk}"
+
+        # LinkedIn: strip trailing tracking paths
+        if "linkedin." in netloc and "/jobs/view/" in parsed.path:
+            clean_path = parsed.path.rstrip("/")
+            return f"{parsed.scheme}://{parsed.netloc}{clean_path}"
+
+        # General tracking removal
+        tracking_keys = {
+            "ref", "source", "trk", "tracking", "fbclid", "gclid", "from",
+            "refid", "trackingid", "vjs", "tk", "advn", "xkcb", "cmp", "spm"
+        }
         filtered = [
             (k, v) for k, v in query_params
-            if not k.lower().startswith("utm_") and k.lower() not in ("ref", "source", "trk", "tracking", "fbclid")
+            if not k.lower().startswith("utm_") and k.lower() not in tracking_keys
         ]
         new_query = urllib.parse.urlencode(filtered)
-        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, ""))
+        clean_path = parsed.path.rstrip("/") if parsed.path != "/" else "/"
+        return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, clean_path, parsed.params, new_query, ""))
     except Exception:
         return str(url).strip()
 
@@ -177,7 +196,7 @@ class Job:
         self.title = str(self.title or "").strip()
         self.company = str(self.company or "").strip()
         self.location = str(self.location or "Philippines / Remote").strip()
-        self.job_url = str(self.job_url or "").strip()
+        self.job_url = clean_url(str(self.job_url or "").strip())
         if not self.dedup_hash:
             self.dedup_hash = hash_job(self.platform, self.company, self.title, self.job_url)
         if self.date_posted:

@@ -14,7 +14,7 @@ from src.connectors.remote_feed import (
     ContraConnector,
     FlexJobsConnector
 )
-from src.connectors.ph_jobs import KalibrrConnector, BossjobConnector, JobStreetConnector, OnlineJobsConnector
+from src.connectors.ph_jobs import KalibrrConnector, BossjobConnector, JobStreetCatalogConnector, OnlineJobsConnector
 from src.connectors.jobspy_adapter import JobSpyAdapter
 from src.database import insert_jobs, get_user_setting, set_user_setting, acquire_sync_lease, release_sync_lease
 from src.classifier import is_relevant_opportunity
@@ -49,35 +49,6 @@ DEFAULT_QUERIES = [
     "virtual assistant", "cyberbacker", "athena", "virtudesk", "pineapple staffing"
 ]
 
-def compact_search_queries(search_queries: List[str], max_queries: int = 20) -> List[str]:
-    cleaned = list(dict.fromkeys(q.strip() for q in search_queries if isinstance(q, str) and q.strip()))
-    if len(cleaned) <= max_queries:
-        return cleaned
-    prefer = [q for q in cleaned if "/" not in q] or cleaned
-    jr_q = [q for q in prefer if any(j in q.lower() for j in ["junior", "jr", "entry", "intern", "associate", "grad"])]
-    mob_q = [q for q in prefer if any(m in q.lower() for m in ["android", "mobile", "kotlin", "flutter", "react native", "ios"])]
-    qa_q = [q for q in prefer if any(k in q.lower() for k in ["qa", "test", "sdet", "quality", "support", "devops", "data", "ai "])]
-    va_q = [q for q in prefer if any(v in q.lower() for v in ["virtual assistant", "executive assistant", "administrative assistant", "remote assistant", "cyberbacker", "athena", "virtudesk", "pineapple staffing"])]
-    used = {q.lower() for group in (jr_q, mob_q, qa_q, va_q) for q in group}
-    tech_q = [q for q in prefer if q.lower() not in used]
-
-    active_queries = []
-    active_queries.extend(jr_q[:2] if jr_q else ["junior developer"])
-    active_queries.extend(mob_q[:2] if mob_q else ["android developer"])
-    active_queries.extend(tech_q[:2] if tech_q else ["software developer"])
-    active_queries.extend(qa_q[:2])
-    active_queries.extend(va_q[:2] if va_q else ["virtual assistant"])
-
-    seen_q = set()
-    final_queries = []
-    for q in active_queries:
-        ql = q.lower().strip()
-        if ql not in seen_q:
-            seen_q.add(ql)
-            final_queries.append(q)
-    return final_queries
-
-
 def get_default_connectors() -> List[BaseConnector]:
     return [
         # Tier 1 — Core PH & High-Yield Direct Client Boards
@@ -85,7 +56,7 @@ def get_default_connectors() -> List[BaseConnector]:
         JobSpyAdapter("Indeed", "indeed", tier=1),
         JobSpyAdapter("Glassdoor", "glassdoor", tier=1),
         JobSpyAdapter("ZipRecruiter", "zip_recruiter", tier=2),
-        JobStreetConnector(),
+        JobStreetCatalogConnector(),
         OnlineJobsConnector(),
         KalibrrConnector(),
 
@@ -194,16 +165,21 @@ class Aggregator:
         thread.start()
         return True
 
-    def run_sync(self, queries: Optional[List[str]] = None, force: bool = False, budget_seconds: Optional[float] = None, cycle_id=None, resume=False) -> Dict[str, Any]:
+    def run_sync(self, queries: Optional[List[str]] = None, force: bool = False, budget_seconds: Optional[float] = None, cycle_id=None, resume=False, restart=False) -> Dict[str, Any]:
         if queries is None:
             saved_stack = get_user_setting(self.db_path, "target_stack", "")
             saved_queries = list(dict.fromkeys(q.strip() for q in saved_stack.split(",") if q.strip()))
             if saved_queries:
                 queries = saved_queries
-        effective_queries = compact_search_queries(queries if queries is not None else DEFAULT_QUERIES)
+        search_queries = list(dict.fromkeys(
+            q.strip() for q in (queries if queries is not None else DEFAULT_QUERIES)
+            if isinstance(q, str) and q.strip()
+        ))
+        if budget_seconds is None and any(getattr(conn, "checkpointed_feed", False) is True for conn in self.connectors):
+            budget_seconds = 150
         if budget_seconds is not None:
             from src.sync_batches import run_batch
-            return run_batch(self, effective_queries, budget_seconds=budget_seconds, cycle_id=cycle_id, resume=resume)
+            return run_batch(self, search_queries, budget_seconds=budget_seconds, cycle_id=cycle_id, resume=resume, restart=restart)
         # Guard against concurrent duplicate runs / spamming
         acquired = self._sync_lock.acquire(blocking=False)
         if not acquired:
@@ -230,7 +206,6 @@ class Aggregator:
             raise
         all_jobs: List[Job] = []
         platform_reports: Dict[str, int] = {}
-        search_queries = queries if queries is not None else DEFAULT_QUERIES
 
         try:
             set_user_setting(self.db_path, "sync_status", json.dumps({"is_syncing": True, "total_boards": len(self.connectors), "last_result": {"status": "running"}, "logs": [], "telemetry": {}}))
@@ -283,13 +258,16 @@ class Aggregator:
                             "timestamp": time.strftime("%H:%M:%S")
                         }
                 else:
-                    final_queries = effective_queries
+                    final_queries = search_queries
 
-                    for q in final_queries:
+                    group_size = conn.query_group_size
+                    for start in range(0, len(final_queries), group_size):
+                        group = final_queries[start:start + group_size]
+                        q = " OR ".join(group)
                         try:
                             conn.last_error = ""
                             self.log_event(f"[{conn.platform}] Querying '{q}'...")
-                            jobs = conn.fetch(query=q)
+                            jobs = conn.fetch_group(group) if len(group) > 1 else conn.fetch(query=group[0])
                             if isinstance(getattr(conn, "last_error", None), str) and conn.last_error:
                                 errors.append(conn.last_error)
                             results.extend(jobs)

@@ -1,6 +1,7 @@
 import logging
 import io
 import math
+import re
 import time
 import urllib.request
 from email.utils import parsedate_to_datetime
@@ -14,6 +15,58 @@ class BaseConnector(ABC):
     platform: str = "Unknown"
     tier: int = 1
     db_path = None
+    query_group_size = 1
+
+    def fetch_group_step(self, queries):
+        """Probe once; the scheduler saves results before scheduling individual coverage."""
+        expression = " OR ".join(f"({query})" for query in queries)
+        safe = len(expression) <= 250 and all(
+            re.fullmatch(r"[\w .+#/-]+", query) and not re.search(r"\b(?:AND|OR|NOT)\b", query)
+            for query in queries
+        )
+        self.last_group_incomplete = True
+        self.last_fetch_mode = "individual searches queued"
+        self.last_error = ""
+        if not safe:
+            return []
+        self.bounded_group_probe = True
+        try:
+            jobs = self.fetch(query=expression, group_size=len(queries))
+        finally:
+            self.bounded_group_probe = False
+        rejected = any(code in self.last_error.lower() for code in (
+            "http 400", "http 414", "http 422", "invalid query", "unsupported boolean"))
+        if rejected:
+            self.last_error = ""
+        elif self.last_error:
+            self.last_group_incomplete = False
+        elif getattr(self, "last_search_complete", False) and self.last_raw_count:
+            self.last_group_incomplete = False
+        self.last_fetch_mode = "group probe; individual searches queued" if self.last_group_incomplete else "grouped"
+        return jobs
+
+    def fetch_group(self, queries):
+        expression = " OR ".join(f"({query})" for query in queries)
+        safe = len(expression) <= 250 and all(
+            re.fullmatch(r"[\w .+#/-]+", query) and not re.search(r"\b(?:AND|OR|NOT)\b", query)
+            for query in queries
+        )
+        self.last_fetch_mode = "individual fallback"
+        if safe:
+            jobs = self.fetch(query=expression, group_size=len(queries))
+            rejected = any(code in self.last_error.lower() for code in ("http 400", "http 414", "http 422", "invalid query", "unsupported boolean"))
+            if (self.last_error and not rejected) or (not self.last_error and getattr(self, "last_search_complete", False) and self.last_raw_count):
+                self.last_fetch_mode = "grouped"
+                return jobs
+        # A capped/empty OR search cannot establish coverage of every member.
+        jobs = []
+        for index, query in enumerate(queries):
+            if index or safe:
+                time.sleep(2)
+            jobs.extend(self.fetch(query=query))
+            if self.last_error:
+                break
+        return jobs
 
     def check_challenge(self, content):
         if isinstance(content, bytes):

@@ -15,13 +15,15 @@ class _JobSpyErrors(logging.Handler):
 
 
 class JobSpyAdapter(BaseConnector):
-    revision = 3
+    revision = 4
+    supports_group_steps = True
 
     def __init__(self, platform_name: str, site_name: str, tier: int):
         self.platform = platform_name
         self.site_name = site_name
         self.tier = tier
         self.is_feed = (site_name == "zip_recruiter")
+        self.query_group_size = 5 if site_name in ("linkedin", "indeed") else 1
         self.last_error = ""
 
     def _fetch_ziprecruiter_ldjson(self) -> List[Job]:
@@ -62,8 +64,10 @@ class JobSpyAdapter(BaseConnector):
                         ))
         return jobs
 
-    def fetch(self, query: str = "software engineer", location: str = "Philippines") -> List[Job]:
+    def fetch(self, query: str = "software engineer", location: str = "Philippines", *, group_size=1) -> List[Job]:
         self.last_error = ""
+        self.last_search_complete = False
+        self.last_raw_count = 0
         jobs: List[Job] = []
         try:
             import importlib
@@ -74,6 +78,8 @@ class JobSpyAdapter(BaseConnector):
             search_loc = "Remote" if self.site_name == "glassdoor" and location.lower() == "philippines" else location
             country = "philippines" if self.site_name == "indeed" else ("usa" if self.site_name == "glassdoor" else None)
             wanted = 15 if self.site_name == "linkedin" else 35
+            if group_size > 1:
+                wanted = wanted + 1 if getattr(self, "bounded_group_probe", False) else wanted * group_size + 1
             def send(proxy):
                 errors_log = _JobSpyErrors()
                 scraper_logger = logging.getLogger("JobSpy:" + self.platform)
@@ -99,7 +105,9 @@ class JobSpyAdapter(BaseConnector):
                 return frame
             df = self.request_with_fallback(send)
             errors = getattr(df, "attrs", {}).get("errors")
-            if errors and df.empty:
+            self.last_raw_count = len(df)
+            self.last_search_complete = not errors and len(df) < wanted
+            if errors and (df.empty or group_size > 1):
                 from src.proxy_manager import redact_proxy_error
                 self.last_error = redact_proxy_error(errors, self.db_path)
             if df.empty and self.site_name == "zip_recruiter" and getattr(jobspy, "__file__", None):

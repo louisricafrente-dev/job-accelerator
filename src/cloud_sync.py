@@ -45,6 +45,31 @@ async def publish(run_id, step, delay=0):
                       idempotency_key=f"{run_id}:{step}", delay=delay, retention=RUN_SECONDS)
 
 
+def pause_run(db_path):
+    current = read_run(db_path)
+    if current.get("status") in ACTIVE:
+        current.update(status="paused", updated_at=time.time(), pause_reason="user_paused")
+        set_user_setting(db_path, RUN_KEY, json.dumps(current))
+    from src.database import release_sync_lease
+    for key in ("sync_lease", "cloud_sync_worker_lease", "cloud_sync_start_lease"):
+        lease = get_user_setting(db_path, key, "0|")
+        if lease:
+            release_sync_lease(db_path, lease, key=key)
+    return {"status": "paused", "is_syncing": False, "cloud_run": public_run(current)}
+
+
+def stop_run(db_path):
+    current = read_run(db_path)
+    current.update(status="stopped", updated_at=time.time(), stop_reason="user_stopped")
+    set_user_setting(db_path, RUN_KEY, json.dumps(current))
+    from src.database import release_sync_lease
+    for key in ("sync_lease", "cloud_sync_worker_lease", "cloud_sync_start_lease"):
+        lease = get_user_setting(db_path, key, "0|")
+        if lease:
+            release_sync_lease(db_path, lease, key=key)
+    return {"status": "stopped", "is_syncing": False, "cloud_run": public_run(current)}
+
+
 def start_run(db_path, queries=None, automatic=False, resume=False):
     lease = f"{int(time.time()) + 30}|queue-start-{uuid.uuid4().hex}"
     if not acquire_sync_lease(db_path, lease, int(time.time()), key="cloud_sync_start_lease"):
@@ -136,13 +161,13 @@ async def _process_message(db_path, payload, aggregator):
         return
     now = time.time()
     if now >= run["expires_at"]:
-        run.update(status="partial", completed_at=now, error="One-hour cycle limit reached; unfinished searches remain saved")
+        run.update(status="partial", completed_at=now, error="Two-hour cycle limit reached; unfinished searches remain saved")
     elif run.get("automatic") and await asyncio.to_thread(get_user_setting, db_path, "auto_sync_enabled", "1") in ("0", "false"):
         run.update(status="paused")
     else:
         run.update(status="running", updated_at=now, deployment_id=os.environ.get("VERCEL_DEPLOYMENT_ID"))
         await asyncio.to_thread(set_user_setting, db_path, RUN_KEY, json.dumps(run))
-        result = await asyncio.to_thread(aggregator.run_sync, queries=run["queries"], budget_seconds=120, cycle_id=run.get("cycle_id", run["id"]), resume=run.get("resume", False))
+        result = await asyncio.to_thread(aggregator.run_sync, queries=run["queries"], budget_seconds=min(120, max(0, run["expires_at"] - time.time())), cycle_id=run.get("cycle_id", run["id"]), resume=run.get("resume", False))
         if result.get("status") != "already_syncing":
             totals = run.setdefault("totals", {"added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}})
             for key in ("added", "skipped", "total_fetched"):
@@ -167,7 +192,7 @@ async def _process_message(db_path, payload, aggregator):
             delay = continuation_delay(progress, time.time())
         if delay is not None:
             if time.time() + delay >= run["expires_at"]:
-                run.update(status="partial", completed_at=time.time(), error="One-hour cycle limit reached; unfinished searches remain saved")
+                run.update(status="partial", completed_at=time.time(), error="Two-hour cycle limit reached; unfinished searches remain saved")
             else:
                 # Publish before advancing step: an interrupted send is retried with the same key.
                 await publish(run["id"], step + 1, delay)
