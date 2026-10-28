@@ -62,7 +62,7 @@ async function main() {
   assert.equal(h.reads(), 1);
   h.setState({ is_syncing: true });
   h.context.startSyncPoller();
-  await settle();
+  await tick(h);
   assert.equal(h.timers.size, 1);
   assert.equal([...h.timers.values()][0].delay, 5000);
   h.setState({ is_syncing: false, last_result: { added: 3, skipped: 2 } });
@@ -75,11 +75,11 @@ async function main() {
 
   h.setState({ is_syncing: false, last_result: { status: 'error', error: 'failed ingestion' } });
   h.context.startSyncPoller();
-  await settle();
+  await tick(h);
   assert.equal(h.toasts.at(-1), 'Sync failed: failed ingestion');
   h.setState({ is_syncing: false, last_result: { status: 'partial' } });
   h.context.startSyncPoller();
-  await settle();
+  await tick(h);
   assert.match(h.toasts.at(-1), /Some sites were unavailable/);
 
   h.visibility('hidden');
@@ -103,6 +103,18 @@ async function main() {
   release();
   await settle();
   assert.equal(h.timers.size, 1, 'overlapping callers schedule one timer');
+
+  h = harness();
+  h.setResponse(new Promise(resolve => release = resolve));
+  h.context.startTelemetryPolling();
+  h.context.startSyncPoller();
+  release();
+  await settle();
+  assert.equal(h.toasts.length, 0, 'a pre-command status response cannot report completion');
+  assert.equal([...h.timers.values()][0].delay, 5000);
+  h.setState({ is_syncing: true });
+  await tick(h);
+  assert.equal(h.toasts.length, 0);
 
   h = harness();
   h.setResponse(new Promise(resolve => release = resolve));

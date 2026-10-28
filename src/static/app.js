@@ -2514,7 +2514,11 @@ async function triggerSync(action = 'restart') {
 
 function startSyncPoller() {
   syncCompletionPending = true;
-  startTelemetryPolling();
+  clearTimeout(telemetryTimer);
+  ++telemetryPollGeneration;
+  if (currentUserRole && document.visibilityState !== 'hidden') {
+    telemetryTimer = setTimeout(startTelemetryPolling, 5000);
+  }
 }
 
 function checkSyncCompletion(data) {
