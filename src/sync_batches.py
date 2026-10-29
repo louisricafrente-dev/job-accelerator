@@ -7,7 +7,7 @@ import uuid
 
 from src.classifier import is_relevant_opportunity
 from src.database import acquire_sync_lease, release_sync_lease, get_user_setting, set_sync_checkpoint, insert_jobs
-from src.models import is_within_15_days
+from src.models import is_today_or_yesterday
 
 PROGRESS_KEY = "sync_batch_progress"
 QUERY_DELAY_SECONDS = 2
@@ -227,7 +227,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 for future in done:
                     connector, indices = pending.pop(future)
                     jobs, error, fetch_seconds = future.result()
-                    relevant = [job for job in jobs if is_within_15_days(job.date_posted)
+                    relevant = [job for job in jobs if is_today_or_yesterday(job.date_posted)
                                 and is_relevant_opportunity(job.title, job.description, allow_va_training=True)]
                     completed.append((connector, indices, jobs, error, fetch_seconds, relevant))
                     combined_jobs.extend(relevant)
