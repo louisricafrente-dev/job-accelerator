@@ -1,0 +1,29 @@
+name: Gmail inbox and daily digest
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Existing authenticated Gmail scan request
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: gmail-inbox
+  cancel-in-progress: false
+jobs:
+  inbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install libsql-client beautifulsoup4 requests
+      - run: python scripts/gmail_sync.py --request-id "$REQUEST_ID"
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}

@@ -58,14 +58,11 @@ class TestRegressions(unittest.TestCase):
         result = self.app._handle(env)
         self.assertIn("Forbidden", "".join(result))
 
-    def test_real_cron_secret_accepted_without_dispatch(self):
-        import sys
-        import types
-        sender = types.ModuleType("scripts.daily_notifier")
-        sender.send_daily_email = lambda path: {"success": True, "mocked": True}
-        with patch.dict(os.environ, {"CRON_SECRET": "review-cron"}), patch.dict(sys.modules, {"scripts.daily_notifier": sender}):
+    def test_real_cron_secret_accepted_for_cloud_digest(self):
+        with patch.dict(os.environ, {"CRON_SECRET": "review-cron"}), patch("src.execution_dispatch.dispatch") as dispatch:
             result = self.app._handle({"REQUEST_METHOD": "GET", "PATH_INFO": "/api/notify/daily", "QUERY_STRING": "", "wsgi.input": None, "HTTP_AUTHORIZATION": "Bearer review-cron"})
-            self.assertTrue(json.loads("".join(result))["mocked"])
+            self.assertTrue(json.loads("".join(result))["success"])
+            dispatch.assert_called_once()
 
     def test_distinct_same_board_requisitions_survive(self):
         insert_jobs(self.db, [self.job(date_posted="2026-10-10"), self.job("https://example.com/2", date_posted="2026-10-16"), self.job("https://example.com/3", "Cebu", date_posted="2026-10-10")])

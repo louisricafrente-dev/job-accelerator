@@ -26,6 +26,7 @@ def main():
         test_auth_and_isolation()
         test_full_auth_and_guest_isolation()
     for command in (["node", "--check", "src/static/app.js"],
+                    ["node", "--check", "src/static/gmail-hub.js"],
                     ["node", "tests/frontend_regressions.cjs"],
                     ["node", "tests/workflow_regressions.cjs"],
                     ["node", "tests/settings_regressions.cjs"],

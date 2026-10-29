@@ -21,6 +21,8 @@ from src.auth import (
 
 def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False) -> bottle.Bottle:
     app = bottle.Bottle()
+    from src.gmail_hub import init_hub
+    init_hub(db_path)
     aggregator = Aggregator(db_path=db_path)
     from src.execution_dispatch import enabled as database_execution
 
@@ -341,69 +343,74 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         return json.dumps({"success": success})
 
 
+    def gmail_admin():
+        session = get_current_session()
+        if not session or session.get("role") != "admin":
+            bottle.response.status = 403
+            return {"error": "Gmail Hub is private to the admin account."}
+        return None
+
     @app.route("/api/gmail/messages", method=["GET", "OPTIONS"])
     def api_get_gmail_messages():
         if bottle.request.method == "OPTIONS":
             return ""
-        auth_err = require_auth()
-        if auth_err:
-            return auth_err
+        denied = gmail_admin()
+        if denied:
+            return denied
+        from src.gmail_hub import messages
+        try:
+            limit = max(1, min(100, int(bottle.request.query.get("limit", "40"))))
+            offset = max(0, min(100000, int(bottle.request.query.get("offset", "0"))))
+        except ValueError:
+            bottle.response.status = 400
+            return {"error": "Invalid pagination"}
+        return messages(db_path, limit, offset, category=bottle.request.query.get("category", ""),
+                        read=bottle.request.query.get("read", ""), match=bottle.request.query.get("match", ""),
+                        search=bottle.request.query.get("search", ""), summary=bottle.request.query.get("summary") == "1")
 
-        data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "gmail_messages.json")
-        data = None
-        if os.path.exists(data_path):
-            try:
-                with open(data_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                pass
-        if not data:
-            try:
-                from src.gmail_data import GMAIL_PAYLOAD
-                data = GMAIL_PAYLOAD
-            except Exception:
-                data = {"account": "michael18ricafrente@gmail.com", "messages": [], "stats": {}}
+    @app.route("/api/gmail/messages/<message_id:re:[0-9a-f]+>", method="GET")
+    def api_gmail_detail(message_id):
+        denied = gmail_admin()
+        if denied:
+            return denied
+        from src.gmail_hub import detail
+        message = detail(db_path, message_id)
+        if not message:
+            bottle.response.status = 404
+            return {"error": "Message not found"}
+        return message
 
-        bottle.response.content_type = "application/json"
-        if bottle.request.query.get("summary") == "1":
-            return {"stats": {"total": data.get("stats", {}).get("total", len(data.get("messages", [])))}}
-        return json.dumps(data)
+    @app.route("/api/gmail/messages/<message_id:re:[0-9a-f]+>/read", method="POST")
+    def api_gmail_read(message_id):
+        denied = gmail_admin()
+        if denied:
+            return denied
+        from src.gmail_hub import mark_read
+        value = (bottle.request.json or {}).get("is_read")
+        if not isinstance(value, bool):
+            bottle.response.status = 400
+            return {"error": "is_read must be true or false"}
+        mark_read(db_path, message_id, value)
+        return {"success": True, "is_read": value}
 
     @app.route("/api/gmail/scan", method=["POST", "OPTIONS"])
     def api_post_gmail_scan():
         if bottle.request.method == "OPTIONS":
             return ""
-        auth_err = require_auth()
-        if auth_err:
-            return auth_err
-
-        import subprocess
-        script_path = r"C:\Users\PC\Documents\antigravity\resilient-pasteur\scripts\check_job_application_emails.py"
-        if os.path.exists(script_path):
-            try:
-                subprocess.run([sys.executable, script_path], capture_output=True, timeout=25)
-            except Exception:
-                pass
-
-        data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "gmail_messages.json")
-        data = None
-        if os.path.exists(data_path):
-            try:
-                with open(data_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                pass
-        if not data:
-            try:
-                from src.gmail_data import GMAIL_PAYLOAD
-                data = GMAIL_PAYLOAD
-            except Exception:
-                data = {"success": True, "messages": [], "stats": {}}
-        data["ok"] = True
-        data["found"] = len(data.get("messages", []))
-
-        bottle.response.content_type = "application/json"
-        return json.dumps(data)
+        denied = gmail_admin()
+        if denied:
+            return denied
+        from src.gmail_hub import request_scan
+        try:
+            result = request_scan(db_path, (bottle.request.json or {}).get("window", "24h"))
+            bottle.response.status = 429 if result.get("status") == "cooldown" else 202
+            return result
+        except ValueError as error:
+            bottle.response.status = 400
+            return {"error": str(error)}
+        except Exception:
+            bottle.response.status = 503
+            return {"error": "Cloud scan could not be queued. Retry later."}
 
     @app.route("/api/stats", method="GET")
     def api_get_stats():
@@ -583,11 +590,11 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                 "error": "Forbidden: Only Admin can trigger email digests to michael18ricafrente@gmail.com."
             })
         try:
-            from scripts.daily_notifier import send_daily_email
-            from src.daily_schedule import send_digest
-            result = send_digest(db_path, send_daily_email)
-        except Exception as e:
-            result = {"success": False, "error": str(e)}
+            from src.gmail_hub import request_scan
+            result = request_scan(db_path, "24h", digest=True)
+        except Exception:
+            bottle.response.status = 503
+            result = {"success": False, "error": "Gmail scan and digest could not be queued; retry later."}
         bottle.response.content_type = "application/json"
         return json.dumps(result)
 
