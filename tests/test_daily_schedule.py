@@ -160,9 +160,11 @@ class DailyApiTests(unittest.TestCase):
             self.assertEqual(code, 200)
             self.assertTrue(result["success"])
             self.call("/api/notify/daily", admin=True)
-        send.assert_called_once_with(self.db)
+        send.assert_not_called()
         scrape.assert_not_called()
-        dispatch.assert_not_called()
+        dispatch.assert_called_once()
+        self.assertEqual(result["scan"]["window"], "24h")
+        self.assertTrue(result["scan"]["digest"])
 
     def test_midnight_api_preserves_resume_cycle_and_schedules_only_once(self):
         set_user_setting(self.db, "sync_status", json.dumps({"progress": {"unfinished": True}}))

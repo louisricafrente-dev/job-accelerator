@@ -65,15 +65,12 @@ class TestSelectedFixes(unittest.TestCase):
         for revisions in ([], {"view_filters": True}, {"view_filters": -1}, {"view_filters": "200"}):
             self.assertEqual(wsgi_request(self.app, "POST", "/api/settings", {"view_filters": "invalid", "__revisions": revisions}, cookie=self.admin)["status"], 400)
 
-    def test_digest_failure_is_reported_separately_from_scraping(self):
-        import sys
-        from types import ModuleType
-        notifier = ModuleType("scripts.daily_notifier")
-        notifier.send_daily_email = lambda *args, **kwargs: {"success": False, "error": "mock email failure"}
-        with patch.dict(sys.modules, {"scripts.daily_notifier": notifier}), patch("src.server.Aggregator.run_sync", return_value={"status": "ok", "added": 1}):
+    def test_digest_dispatch_failure_is_reported_separately_from_scraping(self):
+        with patch("src.execution_dispatch.dispatch", side_effect=RuntimeError("dispatch failed")), patch("src.server.Aggregator.run_sync") as scrape:
             response = wsgi_request(self.app, "GET", "/api/notify/daily", cookie=self.admin)
             self.assertFalse(response["json"]["success"])
-            self.assertEqual(response["json"]["error"], "mock email failure")
+            self.assertEqual(response["status"], 503)
+            scrape.assert_not_called()
 
 
 class TestLauncher(unittest.TestCase):

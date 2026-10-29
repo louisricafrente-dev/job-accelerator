@@ -12,15 +12,15 @@ def enabled():
     return os.environ.get("JOB_EXECUTOR") == "database"
 
 
-def dispatch(command_id):
+def dispatch(command_id, workflow="scraper-worker.yml", inputs=None):
     token = os.environ.get("GITHUB_ACTIONS_TOKEN", "")
     if not token:
         raise RuntimeError("GitHub Actions dispatch token is not configured")
     repository = os.environ.get("GITHUB_SCRAPER_REPOSITORY", "louisricafrente-dev/job-accelerator")
     ref = os.environ.get("GITHUB_SCRAPER_REF", "master")
     request = urllib.request.Request(
-        "https://api.github.com/repos/" + repository + "/actions/workflows/scraper-worker.yml/dispatches",
-        data=json.dumps({"ref": ref, "inputs": {"command_id": command_id}}).encode(), method="POST",
+        "https://api.github.com/repos/" + repository + "/actions/workflows/" + workflow + "/dispatches",
+        data=json.dumps({"ref": ref, "inputs": inputs or {"command_id": command_id}}).encode(), method="POST",
         headers={"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
                  "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28"})
     try:

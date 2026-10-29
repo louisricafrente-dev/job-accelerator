@@ -10,7 +10,8 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="shortcut icon" href="/static/favicon.ico">
   <meta name="theme-color" content="#080c14">
-  <link rel="stylesheet" href="/static/style.css?v=20261025-ui-filters">
+  <link rel="stylesheet" href="/static/style.css?v=20261029-gmail-hub">
+  <link rel="stylesheet" href="/static/gmail-hub.css?v=20261029-gmail-hub">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -484,74 +485,33 @@
       </div>
     </section>
 
-    <!-- Centralized Gmail Application Hub Container -->
-    <section id="gmail-hub-container" class="gmail-hub-container" style="display: none;">
+    <section id="gmail-hub-container" class="gmail-hub-container" style="display:none" aria-labelledby="gmail-hub-title">
       <div class="gmail-hub-banner">
-        <div class="gmail-banner-left">
-          <div class="gmail-title-row">
-            <h2 class="gmail-title">Gmail Application Inbox</h2>
-            <span class="gmail-badge-connected" title="Connected to Gmail IMAP">
-              <span class="status-dot-pulse"></span> michael18ricafrente@gmail.com
-            </span>
-          </div>
-          <p class="gmail-subtitle">Centralized tracker for employer requirements, interview bookings, coding tests, and status updates.</p>
+        <div>
+          <p class="gh-eyebrow">APPLICATION CORRESPONDENCE</p>
+          <h2 id="gmail-hub-title">Gmail Hub</h2>
+          <p class="gh-muted">Your messages, together with the application they belong to.</p>
+          <p class="gh-muted">Daily at 10 AM Manila: last 24 hours, then your digest. Uncertain matches leave the Pipeline unchanged.</p>
         </div>
-        <div class="gmail-banner-right">
-          <button type="button" id="btn-gmail-scan" class="btn-gmail-refresh" onclick="triggerGmailScan(this)">
-            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="23 4 23 10 17 10"/>
-              <polyline points="1 20 1 14 7 14"/>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-            </svg>
-            <span id="gmail-scan-btn-text">Refresh Inbox</span>
-          </button>
+        <div class="gh-scan-controls">
+          <label for="gmail-scan-window">Manual scan range</label>
+          <select id="gmail-scan-window"><option value="today">Today (Manila)</option><option value="24h" selected>Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option></select>
+          <button type="button" id="btn-gmail-scan" class="btn-gmail-refresh" onclick="triggerGmailScan(this)">Scan Gmail</button>
         </div>
       </div>
-
-      <!-- Quick Stats Metrics -->
-      <div class="gmail-stats-strip" id="gmail-stats-strip">
-        <div class="gmail-stat-card card-action" onclick="filterGmailCategory('action_required', this)">
-          <span class="gmail-stat-num" id="gmail-stat-action">0</span>
-          <span class="gmail-stat-lbl">🚨 Action Required</span>
-        </div>
-        <div class="gmail-stat-card card-interview" onclick="filterGmailCategory('INTERVIEW', this)">
-          <span class="gmail-stat-num" id="gmail-stat-interview">0</span>
-          <span class="gmail-stat-lbl">📅 Interviews</span>
-        </div>
-        <div class="gmail-stat-card card-requirement" onclick="filterGmailCategory('REQUIREMENT', this)">
-          <span class="gmail-stat-num" id="gmail-stat-requirement">0</span>
-          <span class="gmail-stat-lbl">📝 Requirements &amp; Forms</span>
-        </div>
-        <div class="gmail-stat-card card-rejection" onclick="filterGmailCategory('REJECTED', this)">
-          <span class="gmail-stat-num" id="gmail-stat-rejection">0</span>
-          <span class="gmail-stat-lbl">❌ Rejections</span>
-        </div>
-        <div class="gmail-stat-card card-total active" onclick="filterGmailCategory('ALL', this)">
-          <span class="gmail-stat-num" id="gmail-stat-total">0</span>
-          <span class="gmail-stat-lbl">📬 All Messages</span>
-        </div>
+      <div id="gmail-scan-status" class="gh-status" role="status" aria-live="polite">Loading scan status...</div>
+      <div class="gh-status-actions"><button type="button" onclick="loadGmailHub()">Reload saved inbox</button><span class="gh-muted">No continuous mailbox polling. Cloud scans may take a few minutes to start.</span></div>
+      <div class="gh-metrics" id="gmail-stats-strip" aria-label="Inbox totals"></div>
+      <div class="gh-filters">
+        <label for="gmail-search-input">Search subject or sender<input type="search" id="gmail-search-input" oninput="handleGmailSearch(this.value)" placeholder="Company, recruiter, or subject"></label>
+        <label for="gmail-category-filter">Message type<select id="gmail-category-filter" onchange="filterGmailCategory(this.value)"><option value="">All messages</option><option value="action_required">Needs action</option><option value="INTERVIEW">Interview</option><option value="ASSESSMENT">Assessment</option><option value="REQUIREMENT">Documents / forms</option><option value="OFFER">Offer</option><option value="REJECTED">Rejection</option><option value="RECEIVED">Acknowledgment</option><option value="OTHER">Other / unclear</option></select></label>
+        <label for="gmail-read-filter">Hub read state<select id="gmail-read-filter" onchange="loadGmailHub()"><option value="">Read and unread</option><option value="unread">Unread</option><option value="read">Read</option></select></label>
+        <label for="gmail-match-filter">Pipeline result<select id="gmail-match-filter" onchange="loadGmailHub()"><option value="">All results</option><option value="updated">Pipeline updated</option><option value="review">Unchanged / review</option></select></label>
       </div>
-
-      <!-- Gmail Category Filter Pills & Search -->
-      <div class="gmail-controls-bar">
-        <div class="gmail-category-chips" id="gmail-category-chips">
-          <button type="button" class="gmail-chip active" data-cat="ALL" onclick="filterGmailCategory('ALL', this)">All Updates</button>
-          <button type="button" class="gmail-chip chip-action" data-cat="action_required" onclick="filterGmailCategory('action_required', this)">🚨 Needs Action</button>
-          <button type="button" class="gmail-chip" data-cat="INTERVIEW" onclick="filterGmailCategory('INTERVIEW', this)">📅 Interviews</button>
-          <button type="button" class="gmail-chip" data-cat="REQUIREMENT" onclick="filterGmailCategory('REQUIREMENT', this)">📝 Requirements</button>
-          <button type="button" class="gmail-chip" data-cat="REJECTED" onclick="filterGmailCategory('REJECTED', this)">❌ Rejections</button>
-        </div>
-        <div class="gmail-search-box">
-          <input type="text" id="gmail-search-input" placeholder="Search emails by company, subject, keyword..." oninput="handleGmailSearch(this.value)">
-        </div>
-      </div>
-
-      <!-- Messages Feed -->
-      <div class="gmail-messages-feed" id="gmail-messages-feed">
-        <div class="feed-empty-state">
-          <p>Loading Gmail application updates...</p>
-        </div>
-      </div>
+      <details class="gh-legend"><summary>Message color legend &amp; read behavior</summary><div class="gh-legend-items"><span class="gh-tag gh-interview">Blue · Interview</span><span class="gh-tag gh-assessment">Purple · Assessment</span><span class="gh-tag gh-requirement">Amber · Documents / forms</span><span class="gh-tag gh-offer">Green · Offer</span><span class="gh-tag gh-rejected">Rose · Rejection</span><span class="gh-tag gh-other">Gray · Acknowledgment / other</span></div><p>Opening a message marks it read in this Hub. Mark unread to return to it later. These controls do not change Gmail read flags. All scanned received messages remain here, even when no Pipeline update is made. Spam, Trash, attachments, and sent messages are not imported.</p></details>
+      <p id="gmail-result-count" class="gh-muted" role="status" aria-live="polite"></p>
+      <div class="gmail-messages-feed" id="gmail-messages-feed" aria-busy="false"></div>
+      <button type="button" id="gmail-load-more" onclick="loadGmailHub(true)" hidden>Load more messages</button>
     </section>
 
   <!-- Background sync activity -->
@@ -745,14 +705,14 @@
             <span>Next</span>
             <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
           </button>
-          <span class="gmail-viewer-counter" id="gmail-viewer-counter">1 of 21</span>
+          <span class="gmail-viewer-counter" id="gmail-viewer-counter">Message viewer</span>
         </div>
         <div class="gmail-viewer-toolbar-right">
           <button type="button" class="btn-viewer-tool" onclick="copyCurrentGmailMessage()" title="Copy email text">
             <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             <span>Copy Text</span>
           </button>
-          <button type="button" class="btn-viewer-close" onclick="closeGmailMessageViewer()" title="Close viewer (ESC)">
+          <button type="button" class="btn-viewer-close" onclick="closeGmailMessageViewer()" title="Close viewer (ESC)" aria-label="Close message viewer">
             <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             <kbd class="kbd-esc">ESC</kbd>
           </button>
@@ -876,7 +836,8 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261025-ui-filters"></script>
+  <script src="/static/app.js?v=20261029-gmail-hub"></script>
+  <script src="/static/gmail-hub.js?v=20261029-gmail-hub"></script>
 </body>
 </html>
 

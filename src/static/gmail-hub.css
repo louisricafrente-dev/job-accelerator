@@ -1,0 +1,70 @@
+#gmail-hub-container { --gh-muted: #b0bfd2; --gh-rose: #fda4af; color: var(--text-primary); }
+#gmail-hub-container h2 { font-size: clamp(1.7rem, 3vw, 2.3rem); margin: 4px 0 12px; }
+.gh-eyebrow { color: var(--accent-cyan); font-size: .75rem; letter-spacing: .12em; font-weight: 700; }
+.gh-muted, .gh-sender { color: var(--gh-muted, #b0bfd2); line-height: 1.6; }
+.gmail-hub-banner { gap: 24px; flex-wrap: wrap; align-items: start; }
+.gh-scan-controls { display: grid; gap: 8px; min-width: 210px; }
+#gmail-hub-container label { display: grid; gap: 8px; font-size: .85rem; color: var(--text-primary); }
+#gmail-hub-container input, #gmail-hub-container select { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-surface-elevated); color: var(--text-primary); font: inherit; }
+#gmail-hub-container button, .gh-message-actions a, .gh-reader button { min-height: 44px; padding: 10px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--bg-surface-elevated); font: inherit; cursor: pointer; text-decoration: none; }
+#gmail-hub-container button:hover, .gh-message-actions a:hover { border-color: var(--accent-cyan); background: var(--bg-surface-active); }
+#gmail-hub-container :focus-visible, #gmail-message-modal :focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 3px; }
+#gmail-hub-container button:disabled { opacity: .6; cursor: wait; }
+.gh-status { border-left: 3px solid var(--accent-cyan); background: var(--bg-surface-elevated); padding: 14px 16px; line-height: 1.6; margin-top: 20px; }
+.gh-status[data-state="error"] { border-color: var(--gh-rose); }
+.gh-status-actions { display: flex; align-items: center; gap: 12px; margin: 12px 0 24px; flex-wrap: wrap; font-size: .85rem; }
+.gh-metrics { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); border-block: 1px solid var(--border-default); margin-bottom: 24px; }
+.gh-metrics > div { display: grid; gap: 6px; padding: 18px 14px; }
+.gh-metrics strong { font-size: 1.6rem; font-family: var(--font-mono); }
+.gh-metrics span { color: var(--gh-muted); font-size: .8rem; }
+.gh-filters { display: grid; grid-template-columns: 2fr repeat(3,1fr); align-items: end; gap: 12px; margin-bottom: 18px; }
+.gh-legend { color: var(--gh-muted); border: 1px solid var(--border-default); padding: 12px 16px; border-radius: var(--radius-md); line-height: 1.6; }
+.gh-legend summary { cursor: pointer; min-height: 24px; color: var(--text-primary); }
+.gh-legend-items { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 14px; }
+.gh-tag { display: inline-block; padding: 4px 9px; border-radius: var(--radius-xs); background: var(--bg-surface-active); color: #cbd5e1; font-size: .78rem; font-weight: 600; }
+.gh-interview { background: var(--accent-cyan-bg); color: var(--accent-cyan); }
+.gh-assessment { background: var(--accent-purple-bg); color: var(--accent-purple); }
+.gh-requirement { background: var(--accent-amber-bg); color: var(--accent-amber-bright); }
+.gh-offer { background: var(--accent-emerald-bg); color: var(--accent-emerald-bright); }
+.gh-rejected { background: var(--accent-rose-bg); color: var(--gh-rose, #fda4af); }
+#gmail-result-count { margin-block: 20px 12px; font-size: .85rem; }
+.gh-message { padding: 20px; border: 1px solid var(--border-default); border-left: 3px solid transparent; border-radius: var(--radius-md); background: var(--bg-surface); min-width: 0; }
+.gh-message.is-unread { border-left-color: var(--accent-cyan); background: var(--bg-surface-elevated); }
+.gh-message-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: .78rem; color: var(--gh-muted); }
+.gh-message-meta time { margin-left: auto; }
+.gh-read-label { font-weight: 700; }
+.is-unread .gh-read-label { color: var(--accent-cyan); }
+.gh-message h3 { margin: 8px 0 0; }
+#gmail-hub-container .gh-subject { text-align: left; padding: 4px 0; background: transparent; border: none; font-size: 1.05rem; line-height: 1.5; overflow-wrap: anywhere; }
+.gh-sender { font-size: .85rem; overflow-wrap: anywhere; margin: 4px 0 10px; }
+.gh-preview { color: var(--gh-muted); line-height: 1.6; font-size: .9rem; overflow-wrap: anywhere; }
+.gh-message-bottom { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.gh-pipeline { color: var(--gh-muted); font-size: .8rem; line-height: 1.6; }
+.gh-updated { color: var(--accent-emerald-bright); }
+.gh-message-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: .85rem; }
+.gh-message-actions a { display: inline-flex; align-items: center; color: var(--accent-cyan); }
+.gh-empty { padding: 36px 20px; text-align: center; color: var(--gh-muted); line-height: 1.6; }
+#gmail-load-more { margin-top: 20px; width: 100%; }
+.gh-reader { padding: 24px; color: var(--text-primary); line-height: 1.65; }
+.gh-reader h2 { margin-block: 16px 12px; font-size: 1.5rem; overflow-wrap: anywhere; }
+.gh-reader p { overflow-wrap: anywhere; }
+.gh-reader-result { border-left: 3px solid var(--accent-cyan); padding: 12px 16px; margin-block: 20px; background: var(--bg-surface-elevated); }
+.gh-body { font-family: var(--font-sans); font-size: 1rem; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; padding-top: 16px; border-top: 1px solid var(--border-default); }
+.gh-reader .gh-message-actions { margin-bottom: 18px; }
+.gh-body a { color: var(--accent-cyan); text-decoration: underline; }
+@media (prefers-reduced-motion: reduce) {
+  #gmail-message-modal, #gmail-message-modal .gmail-viewer-card { animation: none; transition: none; }
+}
+@media (max-width: 900px) { .gh-filters { grid-template-columns: 1fr 1fr; } .gh-metrics { grid-template-columns: repeat(3,1fr); } }
+@media (max-width: 540px) {
+  .gh-filters { grid-template-columns: 1fr; }
+  .gh-metrics { grid-template-columns: 1fr 1fr; }
+  .gh-scan-controls { width: 100%; min-width: 0; }
+  .gh-message { padding: 16px; }
+  .gh-message-meta time { margin-left: 0; width: 100%; }
+  .gh-message-actions { width: 100%; }
+  .gh-message-actions > * { flex: 1; justify-content: center; text-align: center; }
+  .gh-reader { padding: 16px; }
+  #gmail-message-modal { padding: 8px; }
+  .gmail-viewer-toolbar { flex-wrap: wrap; gap: 8px; }
+}

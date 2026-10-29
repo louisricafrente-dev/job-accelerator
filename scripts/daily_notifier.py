@@ -7,6 +7,9 @@ import os
 import sys
 import smtplib
 import datetime
+from html import escape
+import json
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -36,7 +39,7 @@ if os.path.exists(env_file):
     except Exception:
         pass
 
-from src.database import get_jobs, get_stats, init_db
+from src.database import get_jobs, get_stats, init_db, get_user_setting, get_db_connection
 
 RECIPIENT_EMAIL = "michael18ricafrente@gmail.com"
 SENDER_EMAIL = os.environ.get("SMTP_USER", "michael18ricafrente@gmail.com")
@@ -76,12 +79,23 @@ def generate_digest_data(db_path: str = "data/jobs.db"):
     if len(top_matches) < 5:
         top_matches = recent_jobs[:8]
 
+    gmail = {"available": False}
+    conn = get_db_connection(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*),COALESCE(SUM(action_required),0),COALESCE(SUM(stage_applied),0) FROM gmail_messages WHERE received_at>=?", (time.time() - 86400,)).fetchone()
+        scan = json.loads(get_user_setting(db_path, "gmail_daily_scan_v1", "{}") or "{}")
+        gmail = {"available": True, "total": row[0], "action": row[1], "updated": row[2], "scan_status": scan.get("status", "not_run")}
+    except Exception:
+        pass
+    finally:
+        conn.close()
     return {
         "stats": stats,
         "recent_count": len(recent_jobs),
         "platform_counts": platform_counts,
         "top_matches": top_matches,
-        "date_str": today_str
+        "date_str": today_str,
+        "gmail": gmail
     }
 
 def build_html_content(data: dict, dashboard_url: str = "") -> str:
@@ -92,7 +106,16 @@ def build_html_content(data: dict, dashboard_url: str = "") -> str:
     top_matches = data["top_matches"]
     date_str = data["date_str"]
 
-    dash_link = dashboard_url or "http://localhost:8000"
+    dash_link = dashboard_url or "https://job-accelerator.vercel.app"
+    gmail = data.get("gmail", {})
+    gmail_section = ""
+    if gmail.get("available"):
+        state = "Mailbox scan completed" if gmail.get("scan_status") == "complete" else "Mailbox scan did not complete; messages may be out of date"
+        gmail_section = f'''<section style="padding:20px 28px;border-bottom:1px solid #e2e8f0;color:#1e293b">
+          <h2 style="font-size:18px">Gmail · last 24 hours</h2><p>{state}</p>
+          <p>{int(gmail['total'])} messages · {int(gmail['action'])} may need action · {int(gmail['updated'])} Pipeline updates</p>
+          <p>Uncertain matches leave the Pipeline unchanged. Review the full original messages in your Hub.</p>
+          <a href="{escape(dash_link, quote=True)}?view=gmail">Open Gmail Hub</a></section>'''
 
     platform_rows = ""
     for plat, count in sorted(platform_counts.items(), key=lambda x: x[1], reverse=True):
@@ -142,6 +165,7 @@ def build_html_content(data: dict, dashboard_url: str = "") -> str:
                 <p style="margin: 0; font-size: 13px; color: #94a3b8;">Report Date: {date_str} &bull; Connected job sites searched</p>
             </div>
 
+            {gmail_section}
             <!-- Stats Highlight Grid -->
             <div style="padding: 24px 28px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0;">
                 <table width="100%" cellpadding="0" cellspacing="0" style="table-layout: fixed;">
