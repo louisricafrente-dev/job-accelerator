@@ -4,7 +4,7 @@ import urllib.error
 import urllib.request
 
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity
-from src.models import Job
+from src.models import Job, is_today_or_yesterday
 
 ENDPOINT = "https://mcp.lite.flconsole.com/mcp"
 QUERY = "(react OR kotlin OR php) AND (developer OR development)"
@@ -41,6 +41,8 @@ def fetch_jobs(connector, limit=30):
             uid = str(item.get("upwork_id", ""))
             title, description = item.get("title", ""), item.get("description", "")
             if not uid.isdigit() or not title or not is_relevant_opportunity(title, description):
+                continue
+            if not is_today_or_yesterday(item.get("publish_at", "")):
                 continue
             if item.get("job_type") == "hourly":
                 low, high = item.get("hourly_rate_from"), item.get("hourly_rate_to")

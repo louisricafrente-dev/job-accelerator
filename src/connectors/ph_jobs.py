@@ -3,7 +3,7 @@ import urllib.request
 import urllib.parse
 from typing import List
 from src.connectors.base import BaseConnector, logger
-from src.models import Job, is_within_15_days, is_within_14_days
+from src.models import Job, is_today_or_yesterday
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 import time
@@ -53,7 +53,7 @@ class KalibrrConnector(BaseConnector):
                 loc = ", ".join(filter(None, [address.get("city"), address.get("country")])) or "Location unverified"
                 if item.get("is_work_from_home"):
                     loc += " (Remote)"
-                if not is_within_15_days(date) or not is_relevant_opportunity(title, desc, location=loc, platform=self.platform):
+                if not is_today_or_yesterday(date) or not is_relevant_opportunity(title, desc, location=loc, platform=self.platform):
                     continue
                 company = item.get("company_info") or item.get("company") or {}
                 code = company.get("code") or item.get("company_code")
@@ -103,7 +103,7 @@ class BossjobConnector(BaseConnector):
                     if not is_relevant_opportunity(title, ""):
                         continue
                     pub_date = (item.get("published_at") or "")[:10]
-                    if not is_within_15_days(pub_date):
+                    if not is_today_or_yesterday(pub_date):
                         continue
                     company = item.get("company_name", "")
                     link = urllib.parse.urljoin("https://bossjob.ph", ("/en" + item["job_url"]) if item.get("job_url", "").startswith("/job/") else item.get("job_url", ""))
@@ -153,7 +153,7 @@ class JobStreetConnector(BaseConnector):
             if not title or not is_relevant_opportunity(title, desc):
                 continue
             date_val = (item.get("listingDate") or "")[:10]
-            if not is_within_15_days(date_val):
+            if not is_today_or_yesterday(date_val):
                 continue
             comp = (item.get("advertiser") or {}).get("description") or "Company Confidential"
             locs = item.get("locations") or []
@@ -192,7 +192,7 @@ class JobStreetConnector(BaseConnector):
                     "page": page,
                     "pageSize": 50,
                     "sortmode": "ListedDate",
-                    "daterange": 14,
+                    "daterange": 2,
                 })
                 url = f"https://ph.jobstreet.com/api/jobsearch/v5/search?{params}"
                 resp = self.get_url(url, impersonate="chrome120", timeout=12)
@@ -234,7 +234,6 @@ class JobStreetCatalogConnector(JobStreetConnector):
     PAGE_SIZE = 100
 
     def fetch(self, query="", location="philippines"):
-        import math
         self.last_fetch_mode = "catalogue"
         self.last_error = ""
         self.has_more = False
@@ -242,10 +241,12 @@ class JobStreetCatalogConnector(JobStreetConnector):
         self.next_feed_state = state
         page = state.get("page", 1)
         now = time.time()
+        if state.get("days") != 2:
+            page = 1
+            state.update(page=1, previous_page="")
+        state["days"] = 2
         if page == 1:
-            full = not state.get("full_at") or now - state["full_at"] >= 7 * 86400
-            state.update(days=14 if full else min(14, max(1, math.ceil((max(0, now - state.get("last_completed", 0)) + 6 * 3600) / 86400))),
-                         cycle_started=now, full=full)
+            state.update(cycle_started=now, full=False)
         try:
             params = urllib.parse.urlencode({"siteKey": "PH-Main", "keywords": "", "page": page,
                                              "pageSize": self.PAGE_SIZE, "sortmode": "ListedDate", "daterange": state["days"]})
@@ -320,7 +321,7 @@ class OnlineJobsConnector(BaseConnector):
                                     if "Posted on " in raw_t:
                                         date_val = raw_t.replace("Posted on ", "")[:10]
 
-                            if not is_within_15_days(date_val):
+                            if not is_today_or_yesterday(date_val):
                                 continue
                             page_valid_dates += 1
 
@@ -367,7 +368,7 @@ class OnlineJobsConnector(BaseConnector):
                                 date_posted=date_val
                             ))
                         if not page_valid_dates and cards:
-                            # OnlineJobs listings are sorted newest first; if entire page is >14 days, stop paginating
+                            # OnlineJobs listings are sorted newest first; if entire page is older than yesterday, stop paginating
                             break
                     # Polite anti-ban delay between pages
                     time.sleep(random.uniform(0.4, 0.7))

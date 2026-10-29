@@ -6,6 +6,9 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 
+MANILA = timezone(timedelta(hours=8))
+
+
 def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
     """Normalize raw date strings/timestamps into ISO 'YYYY-MM-DD'.
     Handles:
@@ -23,19 +26,25 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
 
     # Check if already ISO format (YYYY-MM-DD...)
     if re.match(r"^\d{4}-\d{2}-\d{2}", s):
+        try:
+            parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if parsed.tzinfo:
+                return parsed.astimezone(MANILA).date().isoformat()
+        except ValueError:
+            pass
         return s[:10]
 
     # Check relative dates ('3d ago', 'yesterday', 'today', '2w ago', 'recently', 'just posted', etc.)
     s_lower = s.lower()
     if isinstance(ref_date, datetime):
-        now_utc = ref_date.astimezone(timezone.utc) if ref_date.tzinfo else ref_date.replace(tzinfo=timezone.utc)
+        now_utc = ref_date if ref_date.tzinfo else ref_date.replace(tzinfo=MANILA)
     elif ref_date is not None:
         try:
             now_utc = datetime.combine(ref_date, datetime.min.time(), tzinfo=timezone.utc)
         except Exception:
-            now_utc = datetime.now(timezone.utc)
+            now_utc = datetime.now(MANILA)
     else:
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(MANILA)
 
     relative_time = re.fullmatch(r"(?:posted\s+)?(\d+)\s*(hours?|hrs?|h|minutes?|mins?)(?:\s+ago)?", s_lower)
     if relative_time:
@@ -66,7 +75,7 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
         if len(s) >= 12:
             val = val // 1000
         try:
-            return datetime.fromtimestamp(val, tz=timezone.utc).strftime("%Y-%m-%d")
+            return datetime.fromtimestamp(val, tz=MANILA).strftime("%Y-%m-%d")
         except Exception:
             pass
 
@@ -74,7 +83,7 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
     try:
         parsed_dt = email.utils.parsedate_to_datetime(s)
         if parsed_dt:
-            return parsed_dt.strftime("%Y-%m-%d")
+            return (parsed_dt.astimezone(MANILA) if parsed_dt.tzinfo else parsed_dt).strftime("%Y-%m-%d")
     except Exception:
         pass
 
@@ -96,6 +105,20 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
 
     return ""
 
+def is_today_or_yesterday(raw: Any, ref_date: Optional[Any] = None) -> bool:
+    """Accept only the current and previous Philippine calendar dates."""
+    if isinstance(ref_date, datetime):
+        now = ref_date.astimezone(MANILA) if ref_date.tzinfo else ref_date.replace(tzinfo=MANILA)
+    elif ref_date is not None:
+        now = datetime.combine(ref_date, datetime.min.time(), tzinfo=MANILA)
+    else:
+        now = datetime.now(MANILA)
+    if str(raw).strip().lower() in ("recently", "recent", "posted recently", "posted recent", "new", "active today"):
+        return False
+    normalized = normalize_date(raw, ref_date=now)
+    return normalized in (now.date().isoformat(), (now.date() - timedelta(days=1)).isoformat())
+
+
 def is_within_15_days(raw_or_norm: Any, max_days: int = 15, ref_date: Optional[Any] = None) -> bool:
     """Returns True if raw_or_norm represents a date between (ref_date - max_days) and (ref_date + 1 day).
     Empty, missing, or unparseable dates return False.
@@ -111,7 +134,7 @@ def is_within_15_days(raw_or_norm: Any, max_days: int = 15, ref_date: Optional[A
         return False
 
     if ref_date is None:
-        now_utc = datetime.now(timezone.utc).date()
+        now_utc = datetime.now(MANILA).date()
     elif isinstance(ref_date, datetime):
         now_utc = ref_date.date()
     else:
@@ -200,4 +223,6 @@ class Job:
         if not self.dedup_hash:
             self.dedup_hash = hash_job(self.platform, self.company, self.title, self.job_url)
         if self.date_posted:
-            self.date_posted = normalize_date(self.date_posted)
+            self.date_posted = ("" if str(self.date_posted).strip().lower() in
+                                ("recently", "recent", "posted recently", "posted recent", "new", "active today")
+                                else normalize_date(self.date_posted))

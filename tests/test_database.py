@@ -175,7 +175,7 @@ class TestDatabase(unittest.TestCase):
             platform="Indeed",
             tier=1,
             job_url="https://indeed.com/view/accenture-go",
-            salary="₱90k-₱120k",
+            salary="â‚±90k-â‚±120k",
             date_posted="2026-10-08"
         )
         job2 = Job(
@@ -185,7 +185,7 @@ class TestDatabase(unittest.TestCase):
             platform="Glassdoor",
             tier=1,
             job_url="https://glassdoor.com/view/accenture-go",
-            salary="₱95k-₱130k",
+            salary="â‚±95k-â‚±130k",
             date_posted="2026-10-09"
         )
 
@@ -249,7 +249,7 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(results[0]["company"], "Acme Corp")
 
     def test_filter_has_salary(self):
-        job1 = Job(title="Dev 1", company="A", location="PH", platform="LinkedIn", tier=1, job_url="https://j1", salary="₱50,000")
+        job1 = Job(title="Dev 1", company="A", location="PH", platform="LinkedIn", tier=1, job_url="https://j1", salary="â‚±50,000")
         job2 = Job(title="Dev 2", company="B", location="PH", platform="LinkedIn", tier=1, job_url="https://j2", salary="")
         insert_jobs(self.db_path, [job1, job2])
         res = get_jobs(self.db_path, has_salary=True)
@@ -640,8 +640,8 @@ class TestDatabase(unittest.TestCase):
         self.assertIn("Dev 15d", titles_15d)
         self.assertNotIn("Dev 16d", titles_15d)
 
-    def test_recently_detected_and_saved(self):
-        """Terms like 'Posted recently' or 'Recently' should be normalized and retained within 15 days."""
+    def test_ambiguous_recently_date_is_not_claimed_as_today(self):
+        """An unknown publication date cannot qualify for today/yesterday scraping."""
         job_recent = Job(
             title="Junior Cloud Engineer",
             company="CloudTech",
@@ -653,8 +653,7 @@ class TestDatabase(unittest.TestCase):
         )
         insert_jobs(self.db_path, [job_recent])
         jobs = get_jobs(self.db_path, search="CloudTech", date_filter="15days")
-        self.assertEqual(len(jobs), 1)
-        self.assertTrue(bool(jobs[0]["date_posted"]))
+        self.assertEqual(len(jobs), 0)
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,7 +21,7 @@ from src.classifier import is_relevant_opportunity
 import time
 import json
 import uuid
-from src.models import Job, is_within_15_days, is_within_14_days
+from src.models import Job, is_today_or_yesterday
 
 DEFAULT_QUERIES = [
     # Priority 1: Core Titles & Junior/Entry (Highest Priority)
@@ -316,12 +316,12 @@ class Aggregator:
             try:
                 relevant_jobs = [
                     j for j in all_jobs
-                    if is_within_15_days(getattr(j, "date_posted", ""))
+                    if is_today_or_yesterday(getattr(j, "date_posted", ""))
                     and is_relevant_opportunity(getattr(j, "title", "") or "", getattr(j, "description", "") or "", allow_va_training=True)
                 ]
                 dropped_cnt = len(all_jobs) - len(relevant_jobs)
                 if dropped_cnt > 0:
-                    self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} stale (>15d) or non-matrix listings; verified {len(relevant_jobs)} matching 15-day opportunities.")
+                    self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} outside today/yesterday (Asia/Manila) or non-matrix listings; verified {len(relevant_jobs)} matching today/yesterday opportunities.")
                 added, skipped = insert_jobs(self.db_path, relevant_jobs)
                 self.log_event(f"[Database] Synchronized {len(relevant_jobs)} listings: +{added} new opportunities, {skipped} existing/cross-board merged.")
             except Exception as e:

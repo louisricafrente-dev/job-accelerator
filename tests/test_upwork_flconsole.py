@@ -1,5 +1,7 @@
 import os
 import unittest
+from datetime import datetime
+from src.models import MANILA
 from unittest.mock import patch
 
 from src.connectors.remote_feed import UpworkConnector
@@ -9,7 +11,7 @@ class UpworkFlconsoleTests(unittest.TestCase):
     def test_maps_provider_job_to_canonical_upwork_link(self):
         record = {"upwork_id": "022114011265936675730", "title": "PHP Web Developer",
                   "description": "Build PHP and MySQL web applications", "job_type": "hourly",
-                  "hourly_rate_from": 20, "hourly_rate_to": 30, "publish_at": "2026-10-24T15:08:59Z"}
+                  "hourly_rate_from": 20, "hourly_rate_to": 30, "publish_at": datetime.now(MANILA).isoformat()}
         with patch.dict(os.environ, {"FLCONSOLE_MCP_TOKEN": "test"}), patch(
                 "src.connectors.upwork_flconsole.rpc", return_value={"jobs": [record]}) as rpc:
             connector = UpworkConnector()
@@ -17,7 +19,7 @@ class UpworkFlconsoleTests(unittest.TestCase):
         self.assertTrue(connector.is_feed)
         self.assertEqual(jobs[0].job_url, "https://www.upwork.com/jobs/~022114011265936675730")
         self.assertEqual(jobs[0].salary, "USD 20-30/hr")
-        self.assertEqual(jobs[0].date_posted, "2026-10-24")
+        self.assertEqual(jobs[0].date_posted, datetime.now(MANILA).date().isoformat())
         self.assertEqual(rpc.call_args.args[1]["limit"], 30)
 
     def test_failure_is_not_reported_as_successful_empty_feed_or_leaked(self):
