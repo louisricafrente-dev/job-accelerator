@@ -3269,15 +3269,12 @@ async function triggerEmailDigest() {
   }
   const btn = document.getElementById('btn-daily-digest');
   if (btn) btn.disabled = true;
-  showToast('Compiling and dispatching daily job digest to michael18ricafrente@gmail.com...');
+  showToast('Queuing the last-24-hour Gmail scan and daily digest...');
   try {
     const res = await fetch('/api/notify/daily', { method: 'POST' });
     const data = await res.json();
-    if (data.success) {
-      showToast(`Daily digest dispatched to ${data.recipient}! (${data.new_jobs} new jobs summarized)`);
-    } else {
-      showToast(data.message || `Digest compiled (${data.new_jobs || 0} jobs)! Check server logs.`);
-    }
+    if (!res.ok || !data.success) throw new Error(data.error || 'Digest could not be queued.');
+    showToast(data.status === 'already_sent' ? 'Today’s digest was already sent.' : 'Cloud Gmail scan and digest queued. Check Gmail Hub for scan status.');
   } catch (err) {
     showToast(`Digest error: ${err.message}`);
   } finally {
