@@ -806,6 +806,7 @@ async function bootstrapDashboard() {
   updateActiveSkillsBadge();
   const isTelemetryCollapsed = localStorage.getItem('job_accel_telemetry_collapsed') !== '0';
   toggleTelemetryCollapse(isTelemetryCollapsed);
+  loadPortfolioViews();
   await loadStats();
   await loadJobs();
   if (new URLSearchParams(location.search).get('view') === 'gmail') {
@@ -2589,6 +2590,14 @@ function stopSyncIndicator() {
 // Keyboard navigation
 function setupKeyboardNavigation() {
   document.addEventListener('keydown', (e) => {
+    const pvModal = document.getElementById('portfolio-views-modal');
+    if (pvModal && pvModal.style.display !== 'none') {
+      if (e.key === 'Escape') {
+        togglePortfolioViewsModal();
+      }
+      return;
+    }
+
     // Check if Gmail Message Viewer modal is open
     const gmailModal = document.getElementById('gmail-message-modal');
     if (gmailModal && gmailModal.style.display !== 'none') {
@@ -3320,6 +3329,112 @@ async function triggerEmailDigest() {
   }
 }
 
+
+// --------------------------------------------------------------------------
+// IN-APP PORTFOLIO TRAFFIC & LIVE VIEWS MONITOR
+// --------------------------------------------------------------------------
+
+function togglePortfolioViewsModal() {
+  const modal = document.getElementById('portfolio-views-modal');
+  if (!modal) return;
+  const isHidden = modal.style.display === 'none';
+  modal.style.display = isHidden ? 'flex' : 'none';
+  if (isHidden) {
+    loadPortfolioViews(false);
+  }
+}
+
+function handlePortfolioViewsOverlayClick(event) {
+  if (event.target === document.getElementById('portfolio-views-modal')) {
+    togglePortfolioViewsModal();
+  }
+}
+
+async function loadPortfolioViews(forceRefresh = false) {
+  const btn = document.getElementById('btn-refresh-portfolio-views');
+  const btnTxt = document.getElementById('btn-refresh-portfolio-views-text');
+  const listEl = document.getElementById('portfolio-days-list');
+  if (forceRefresh) {
+    if (btn) btn.disabled = true;
+    if (btnTxt) btnTxt.textContent = 'Refreshing...';
+  }
+  try {
+    const res = await fetch(forceRefresh ? '/api/portfolio/views?refresh=1' : '/api/portfolio/views');
+    const data = await res.json();
+    if (!res.ok || data.status !== 'ok') {
+      throw new Error(data.error || 'Could not load portfolio views');
+    }
+
+    const total = Number(data.total || 0);
+    const monthly = Number(data.monthly || 0);
+    const todayVal = Number(data.today || 0);
+    const todayDay = data.today_day || '';
+    const peak = data.peak || { day: '', value: 0 };
+    const days = Array.isArray(data.days) ? data.days : [];
+
+    const navBadge = document.getElementById('portfolio-views-badge');
+    if (navBadge) navBadge.textContent = String(total);
+
+    const telemBtn = document.getElementById('telemetry-portfolio-views-btn');
+    if (telemBtn) telemBtn.textContent = `${total} total · ${monthly}/30d`;
+
+    const modalBadge = document.getElementById('portfolio-modal-badge');
+    if (modalBadge) modalBadge.textContent = `${total} Total Views`;
+
+    const elTotal = document.getElementById('pv-stat-total');
+    if (elTotal) elTotal.textContent = total.toLocaleString();
+
+    const elMonthly = document.getElementById('pv-stat-monthly');
+    if (elMonthly) elMonthly.textContent = monthly.toLocaleString();
+
+    const elToday = document.getElementById('pv-stat-today');
+    if (elToday) elToday.textContent = todayVal.toLocaleString();
+    const elTodayLabel = document.getElementById('pv-stat-today-label');
+    if (elTodayLabel) elTodayLabel.textContent = todayDay ? `Latest (${todayDay.slice(5)})` : 'Latest Day';
+
+    const elPeak = document.getElementById('pv-stat-peak');
+    if (elPeak) elPeak.textContent = Number(peak.value || 0).toLocaleString();
+    const elPeakLabel = document.getElementById('pv-stat-peak-label');
+    if (elPeakLabel) elPeakLabel.textContent = peak.day ? `Peak (${String(peak.day).slice(5)})` : 'Peak Day';
+
+    const summaryEl = document.getElementById('pv-days-summary');
+    if (summaryEl) summaryEl.textContent = `${days.length} recorded days`;
+
+    const updatedEl = document.getElementById('portfolio-views-updated');
+    if (updatedEl && data.fetched_at) {
+      const dt = new Date(data.fetched_at * 1000);
+      updatedEl.textContent = `Synced inside Job Accelerator at ${dt.toLocaleTimeString()} (read-only, does not increment counter)`;
+    }
+
+    if (listEl) {
+      if (!days.length) {
+        listEl.innerHTML = '<div class="test-empty-state">No daily traffic records returned yet.</div>';
+      } else {
+        const maxVal = Math.max(1, ...days.map(d => Number(d.value || 0)));
+        listEl.innerHTML = days.map(d => {
+          const val = Number(d.value || 0);
+          const pct = Math.max(4, Math.round((val / maxVal) * 100));
+          return `
+            <div style="display: grid; grid-template-columns: 96px 1fr 64px; align-items: center; gap: 10px; padding: 6px 10px; background: #0d131f; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.78rem;">
+              <span style="color: var(--text-secondary);">${escapeHtml(String(d.day || ''))}</span>
+              <div style="height: 8px; background: rgba(255,255,255,0.05); border-radius: 999px; overflow: hidden;">
+                <div style="width: ${pct}%; height: 100%; background: var(--accent-cyan); border-radius: 999px;"></div>
+              </div>
+              <span style="text-align: right; font-weight: 700; color: var(--text-primary);">${val} ${val === 1 ? 'view' : 'views'}</span>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+  } catch (err) {
+    if (listEl && forceRefresh) {
+      listEl.innerHTML = `<div class="test-empty-state" style="color:#ef4444;">${escapeHtml(err.message)}</div>`;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+    if (btnTxt) btnTxt.textContent = 'Refresh';
+  }
+}
 
 // --------------------------------------------------------------------------
 // RESIDENTIAL PROXY & HYBRID ROUTING MANAGER
