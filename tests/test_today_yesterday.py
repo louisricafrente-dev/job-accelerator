@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
-from src.models import MANILA, Job, is_today_or_yesterday, normalize_date
+from src.models import MANILA, Job, is_today_or_yesterday, normalize_date, scrape_request_hours
 from src.aggregator import Aggregator
 from src.connectors.base import BaseConnector
 from src.connectors.ph_jobs import JobStreetCatalogConnector
@@ -72,5 +72,5 @@ class TestTodayYesterday(unittest.TestCase):
         scrape = MagicMock(return_value=pd.DataFrame(records))
         with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=scrape)}):
             jobs = JobSpyAdapter("Indeed", "indeed", 1).fetch()
-        self.assertEqual(scrape.call_args.kwargs["hours_old"], 48)
+        self.assertEqual(scrape.call_args.kwargs["hours_old"], scrape_request_hours())
         self.assertEqual(len(jobs), 2)

@@ -3,7 +3,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from typing import List
 from src.connectors.base import BaseConnector, logger
-from src.models import Job, is_today_or_yesterday, normalize_date
+from src.models import Job, is_today_or_yesterday, normalize_date, scrape_date_window
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -27,7 +27,7 @@ class RemoteOKConnector(BaseConnector):
                     title = item.get("position", "")
                     if not title or not is_relevant_opportunity(title, ""):
                         continue
-                    pub_date = item.get("date", "")[:10]
+                    pub_date = normalize_date(item.get("date", ""))
                     if not is_today_or_yesterday(pub_date):
                         continue
                     company = item.get("company", "")
@@ -172,6 +172,7 @@ class RemotiveConnector(BaseConnector):
     platform = "Remotive"
     tier = 3
     is_feed = True
+    revision = 2
 
     def fetch(self, query: str = "software-dev", location: str = "remote") -> List[Job]:
         self.last_error = ""
@@ -180,7 +181,8 @@ class RemotiveConnector(BaseConnector):
         seen_urls = set()
         for cat in categories:
             try:
-                url = "https://remotive.com/api/remote-jobs"
+                # The public API has no date-range parameter; it returns newest first.
+                url = "https://remotive.com/api/remote-jobs?limit=100"
                 req = urllib.request.Request(url, headers=HEADERS)
                 with self.open_url(req, timeout=12) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
@@ -193,7 +195,7 @@ class RemotiveConnector(BaseConnector):
                         if link in seen_urls:
                             continue
                         seen_urls.add(link)
-                        pub = str(item.get("publication_date", ""))[:10]
+                        pub = normalize_date(item.get("publication_date", ""))
                         if not is_today_or_yesterday(pub):
                             continue
                         company = item.get("company_name", "Remote Tech")
@@ -221,12 +223,13 @@ class HimalayasConnector(BaseConnector):
     platform = "Himalayas"
     tier = 3
     is_feed = True
+    revision = 2
 
     def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
         self.last_error = ""
         jobs: List[Job] = []
         try:
-            url = "https://himalayas.app/jobs/api?limit=100"
+            url = "https://himalayas.app/jobs/api/search?sort=recent&page=1"
             req = urllib.request.Request(url, headers=HEADERS)
             with self.open_url(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -235,7 +238,7 @@ class HimalayasConnector(BaseConnector):
                     desc = item.get("excerpt", "") or item.get("description", "")
                     if not title or not is_relevant_opportunity(title, desc):
                         continue
-                    pub = str(item.get("pubDate", ""))[:10]
+                    pub = normalize_date(item.get("pubDate", ""))
                     if not is_today_or_yesterday(pub):
                         continue
                     company = item.get("companyName", "Tech Enterprise")
@@ -246,7 +249,8 @@ class HimalayasConnector(BaseConnector):
                     jobs.append(Job(
                         title=title,
                         company=company,
-                        location=", ".join(item.get("locationRestrictions") or []) or "Remote (location unverified)",
+                        location=", ".join(str(loc.get("name") or loc.get("country") or "") if isinstance(loc, dict) else str(loc)
+                                           for loc in (item.get("locationRestrictions") or [])) or "Remote (location unverified)",
                         platform=self.platform,
                         tier=self.tier,
                         job_url=link,
@@ -320,14 +324,17 @@ class JobicyConnector(BaseConnector):
 class FreelancerConnector(BaseConnector):
     platform = "Freelancer"
     tier = 2
+    revision = 2
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""
         import datetime
         jobs: List[Job] = []
         try:
-            q_enc = urllib.parse.quote(query.strip())
-            url = f"https://www.freelancer.com/api/projects/0.1/projects/active?query={q_enc}&compact=true&limit=25"
+            start, end = scrape_date_window()
+            params = urllib.parse.urlencode({"query": query.strip(), "compact": "true", "limit": 25,
+                                             "from_time": int(start.timestamp()), "to_time": int(end.timestamp()) - 1})
+            url = f"https://www.freelancer.com/api/projects/0.1/projects/active?{params}"
             req = urllib.request.Request(url, headers=HEADERS)
             with self.open_url(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -587,49 +594,9 @@ class FlexJobsConnector(BaseConnector):
     platform = "FlexJobs"
     tier = 2
     is_feed = True
-    revision = 2
+    revision = 3
     _cached_jobs = None
     _last_fetch = 0
-    GJW_SITEMAP_URL = "https://www.flexjobs.com/sitemap-for-gjw-jobs.xml"
-
-    def _fetch_gjw_sitemap(self) -> List[Job]:
-        jobs: List[Job] = []
-        resp = self.get_url(
-            self.GJW_SITEMAP_URL,
-            headers={"Accept": "application/xml,text/xml,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.9"},
-            impersonate="chrome124",
-            timeout=12,
-        )
-        if resp.status_code == 200 and resp.content:
-            tree = ET.fromstring(resp.content)
-            seen = set()
-            for loc_el in tree.iter():
-                if not (loc_el.tag.endswith("loc") and loc_el.text and "/gjw/" in loc_el.text):
-                    continue
-                link = loc_el.text.strip()
-                if link in seen:
-                    continue
-                seen.add(link)
-                parts = link.split("/gjw/", 1)[1].split("/")
-                if len(parts) < 2:
-                    continue
-                comp = parts[0].replace("_", " ").replace("-", " ").title() or "Screened Tech Client"
-                title = parts[1].replace("-", " ").replace("_", " ").title()
-                if not title or not is_relevant_opportunity(title, ""):
-                    continue
-                jobs.append(Job(
-                    title=title,
-                    company=comp,
-                    location="Remote (location unverified)",
-                    platform=self.platform,
-                    tier=self.tier,
-                    job_url=link,
-                    salary="",
-                    role_category=classify_role(title),
-                    experience_level=classify_experience_level(title),
-                    date_posted=""
-                ))
-        return jobs
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -674,19 +641,12 @@ class FlexJobsConnector(BaseConnector):
                         date_posted=(item.select_one("time").get("datetime", "") if item.select_one("time") else "")
                     ))
             elif resp.status_code == 403:
-                if not custom_feed:
-                    jobs = self._fetch_gjw_sitemap()
-                else:
-                    self.last_error = "Cloudflare Protected (HTTP 403)"
-        except Exception as e:
-            if not custom_feed and ("403" in str(e) or "cloudflare" in str(e).lower()):
-                try:
-                    jobs = self._fetch_gjw_sitemap()
-                except Exception as fallback_e:
-                    self.last_error = str(fallback_e) or type(fallback_e).__name__
+                self.last_error = "Cloudflare Protected (HTTP 403); no undated sitemap fallback"
             else:
-                self.last_error = str(e) or type(e).__name__
-                logger.warning(f"[{self.platform}] fetch notice: {e}")
+                self.last_error = f"FlexJobs HTTP {resp.status_code}"
+        except Exception as e:
+            self.last_error = str(e) or type(e).__name__
+            logger.warning(f"[{self.platform}] fetch notice: {e}")
 
         FlexJobsConnector._cached_jobs = jobs
         FlexJobsConnector._last_fetch = now if not self.last_error else 0
