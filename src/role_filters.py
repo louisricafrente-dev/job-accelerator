@@ -80,6 +80,8 @@ def role_predicate(role):
     exclusions = []
     if role in ("IT Support", "DevOps / Cloud"):
         exclusions = ["Technical Support"]
+    if role == "AI / ML":
+        exclusions = ["AI Development"]
     if role == "Frontend":
         exclusions = ["Mobile", "QA / Testing"]
     elif role == "Backend":
