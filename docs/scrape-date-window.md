@@ -1,6 +1,6 @@
 # Source retrieval and publication-date coverage
 
-All automatic/manual local/cloud collection accepts only today and yesterday in Asia/Manila. Existing stored jobs and Pipeline history are preserved. Unknown dates are never invented. A successful network request does not establish complete jobsite coverage.
+Automatic/manual local/cloud collection accepts only today and yesterday in Asia/Manila for existing job families. The separately authorized Video Editor streams accept today plus the previous six Philippine dates, only from OnlineJobs.ph, Freelancer, Indeed and JobStreet; see [video discovery](video-editor-discovery.md). Existing stored jobs and Pipeline history are preserved. Unknown dates are never invented. A successful network request does not establish complete jobsite coverage.
 
 ## Collection protocol
 

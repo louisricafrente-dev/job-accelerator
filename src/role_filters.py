@@ -38,7 +38,16 @@ ALIASES = {
 
 
 def role_predicate(role):
+    sql, params = _role_predicate(role)
+    if role != "Video Editor":
+        sql = f"({sql} AND role_category != 'Video Editor')"
+    return sql, params
+
+
+def _role_predicate(role):
     role = ALIASES.get(role, role)
+    if role == "Video Editor":
+        return "(role_category = ?)", [role]
     if role == "Virtual Assistant":
         members = ["Administrative Support", "Executive Assistance", "Customer Support", "Technical Support", "Data Entry"]
         parts = [role_predicate(member) for member in members]

@@ -366,9 +366,10 @@ class FreelancerConnector(BaseConnector):
         state = self.page_state(query)
         offset = state.get("offset", 0)
         try:
-            start, end = scrape_date_window()
+            start, end = self.date_window()
             params = urllib.parse.urlencode({"query": query.strip(), "compact": "true", "limit": 25,
                                              "offset": offset,
+                                             **({"full_description": "true"} if self.video_editor_mode else {}),
                                              "from_time": int(start.timestamp()), "to_time": int(end.timestamp()) - 1})
             url = f"https://www.freelancer.com/api/projects/0.1/projects/active?{params}"
             req = urllib.request.Request(url, headers=HEADERS)
@@ -385,12 +386,12 @@ class FreelancerConnector(BaseConnector):
                 state["offset"] = offset + 25 if more else 0
                 for p in items:
                     title = p.get("title", "")
-                    desc = p.get("preview_description", "")
-                    if not title or not is_relevant_opportunity(title, desc):
+                    desc = (p.get("description") or "") if self.video_editor_mode else p.get("preview_description", "")
+                    if not title or not self.accepts_opportunity(title, desc):
                         continue
                     sub_date = p.get("submitdate")
                     pub_date = normalize_date(int(sub_date)) if sub_date else ""
-                    if not is_today_or_yesterday(pub_date):
+                    if not self.accepts_date(pub_date):
                         continue
                     b = p.get("budget", {})
                     min_b = b.get("minimum")
@@ -405,7 +406,7 @@ class FreelancerConnector(BaseConnector):
                         tier=self.tier,
                         job_url=link,
                         salary=sal,
-                        role_category=classify_role(title, desc),
+                        role_category=self.job_role(title, desc),
                         experience_level=classify_experience_level(title, desc),
                         description=desc,
                         date_posted=pub_date

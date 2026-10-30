@@ -183,10 +183,10 @@ class JobStreetConnector(BaseConnector):
             title = (item.get("title") or "").strip()
             bullets = item.get("bulletPoints") or []
             desc = " ".join(filter(None, [item.get("teaser", ""), " ".join(str(b) for b in bullets)]))
-            if not title or not is_relevant_opportunity(title, desc):
+            if not title or not self.accepts_opportunity(title, desc):
                 continue
             date_val = normalize_date(item.get("listingDate") or "")
-            if not is_today_or_yesterday(date_val):
+            if not self.accepts_date(date_val):
                 continue
             comp = (item.get("advertiser") or {}).get("description") or "Company Confidential"
             locs = item.get("locations") or []
@@ -203,7 +203,7 @@ class JobStreetConnector(BaseConnector):
                 tier=self.tier,
                 job_url=href,
                 salary=sal,
-                role_category=classify_role(title, desc),
+                role_category=self.job_role(title, desc),
                 experience_level=classify_experience_level(title, desc),
                 description=desc,
                 date_posted=date_val
@@ -267,6 +267,7 @@ class JobStreetCatalogConnector(JobStreetConnector):
     revision = 8
     checkpointed_feed = True
     PAGE_SIZE = 100
+    search_query = ""
 
     def fetch(self, query="", location="philippines"):
         self.last_fetch_mode = "catalogue"
@@ -276,17 +277,18 @@ class JobStreetCatalogConnector(JobStreetConnector):
         self.next_feed_state = state
         page = state.get("page", 1)
         now = time.time()
-        start, _ = scrape_date_window()
+        start, _ = self.date_window()
         window_start = start.date().isoformat()
-        if state.get("days") != 2 or state.get("window_start") != window_start:
+        if state.get("days") != self.window_days or state.get("window_start") != window_start or state.get("query", "") != self.search_query:
             page = 1
             state.update(page=1, previous_page="")
-        state["days"] = 2
+        state["days"] = self.window_days
+        state["query"] = self.search_query
         state["window_start"] = window_start
         if page == 1:
             state.update(cycle_started=now, full=False)
         try:
-            params = urllib.parse.urlencode({"siteKey": "PH-Main", "keywords": "", "page": page,
+            params = urllib.parse.urlencode({"siteKey": "PH-Main", "keywords": self.search_query, "page": page,
                                              "pageSize": self.PAGE_SIZE, "sortmode": "ListedDate", "daterange": state["days"]})
             response = self.get_url(f"https://ph.jobstreet.com/api/jobsearch/v5/search?{params}", impersonate="chrome120", timeout=12)
             if response.status_code != 200:
@@ -350,7 +352,7 @@ class OnlineJobsConnector(BaseConnector):
             self.finish_page(state, links, dates, has_next, ordered=True)
             state["offset"] = next_offset if self.has_more else 0
             for card, link, raw_date in zip(cards, links, dates):
-                if not is_today_or_yesterday(raw_date):
+                if not self.accepts_date(raw_date):
                     continue
                 h4 = card.select_one("h4")
                 if not h4:
@@ -360,7 +362,7 @@ class OnlineJobsConnector(BaseConnector):
                 title = h4.get_text(strip=True)
                 desc = card.select_one(".desc")
                 description = desc.get_text() if desc else ""
-                if not title or not is_relevant_opportunity(title, description):
+                if not title or not self.accepts_opportunity(title, description):
                     continue
                 company = "Direct Client (OnlineJobs.ph)"
                 for prefix in ("Company:", "About Us:", "Client:"):
@@ -373,7 +375,7 @@ class OnlineJobsConnector(BaseConnector):
                 jobs.append(Job(title=title, company=company, location="Philippines (Remote / Direct Client)",
                                 platform=self.platform, tier=self.tier, job_url=link,
                                 salary=salary.get_text(strip=True) if salary else "",
-                                role_category=classify_role(title), experience_level=classify_experience_level(title, description),
+                                role_category=self.job_role(title), experience_level=classify_experience_level(title, description),
                                 description=description, date_posted=raw_date))
         except Exception as exc:
             self.last_error = str(exc) or type(exc).__name__
