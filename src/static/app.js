@@ -21,6 +21,7 @@ const ROLE_OPTIONS = {
     ['Backend', 'Backend development'], ['Full Stack', 'Full-stack development'], ['Mobile', 'Mobile development'],
     ['AI Development', 'AI development']],
   'QA / Testing': [],
+  'Video Editor': [],
   'IT / Cloud / Infrastructure': [['IT Support', 'IT support & infrastructure'], ['DevOps / Cloud', 'DevOps & cloud']],
   'Cybersecurity': [],
   'Data/AI/ML': [['Data Analyst', 'Data analyst & business intelligence'], ['Data Science', 'Data science'],
@@ -31,7 +32,7 @@ const ROLE_OPTIONS = {
 };
 const ROLE_LABELS = {All: 'All jobs', 'Web/Software Dev': 'Software Development', 'Data/AI/ML': 'Data & Analytics',
   'QA / Testing': 'QA & Testing', 'IT / Cloud / Infrastructure': 'IT, Cloud & Infrastructure',
-  'Cybersecurity': 'Cybersecurity', 'Virtual Assistant': 'VA & Admin'};
+  'Cybersecurity': 'Cybersecurity', 'Virtual Assistant': 'VA & Admin', 'Video Editor': 'Video Editor'};
 
 function roleFamily(role) {
   if (role === 'Software Development') return 'Web/Software Dev';
@@ -45,6 +46,10 @@ function roleLabel(role) {
 function syncRoleControls() {
   const activeRole = currentViewMode === 'va' ? 'Virtual Assistant' : currentRole;
   const family = roleFamily(activeRole);
+  const help = document.getElementById('role-filter-help');
+  if (help) help.textContent = family === 'Video Editor'
+    ? 'Basic CapCut edits from OLJ, Freelancer, Indeed and JobStreet. Collected over the latest 7 days; review workload and samples.'
+    : 'Optional. Narrow the category to a specific role.';
   document.querySelectorAll('#role-group .filter-chip').forEach(chip => {
     const active = chip.dataset.val === family;
     chip.classList.toggle('active', active);
@@ -1354,7 +1359,7 @@ async function loadJobs() {
 
     // Client-side Filter by Selected Skills
     if (filterBySkillsOnly && userStack.trim()) {
-      jobs = jobs.filter(j => getSkillsMatch(j).count > 0);
+      jobs = jobs.filter(j => j.role_category === 'Video Editor' || getSkillsMatch(j).count > 0);
     }
 
     const applicationFilter = document.getElementById('application-filter')?.value || 'all';
@@ -1735,6 +1740,9 @@ function getDaysSince(dateStr) {
 
 // 1-Click Tailored Pitch Generator (Strictly Anti-Slop: No generic buzzwords, no em dashes)
 function generateTailoredPitch(job) {
+  if (job.role_category === 'Video Editor') {
+    return `Hi ${job.company} Team,\n\nI am interested in the ${job.title} role. I use CapCut for simple short-form video edits. My editing portfolio is https://louisricafrente-studio.vercel.app/ . I would be happy to discuss your reference style, footage, workload and turnaround requirements.\n\nBest regards,\nLouis Michael Ricafrente`;
+  }
   const match = getSkillsMatch(job);
   const techTokens = match.matched.filter(t => !/^(junior|senior|mid|entry|lead|intern|full stack|developer|engineer)$/i.test(t));
   const titleLower = (job.title || '').toLowerCase();
@@ -2615,6 +2623,8 @@ function setupKeyboardNavigation() {
       return;
     }
 
+    if (tag === 'button' || tag === 'a' || document.activeElement?.isContentEditable) return;
+
     if (e.key === '/') {
       e.preventDefault();
       const s = document.getElementById('search-input');
@@ -2899,6 +2909,7 @@ function safeJobUrl(value) {
 // TELEMETRY & SYNC LOGS MODAL ENGINE
 // --------------------------------------------------------------------------
 const MONITORED_BOARDS = [
+  ...['OnlineJobs.ph', 'Freelancer', 'Indeed', 'JobStreet'].map(source => ({key: `${source} (Video Editor)`, label: `${source} - Video Editor`, domain: source, type: 'Basic CapCut / 7 days'})),
   { key: 'JobStreet', label: 'JobStreet PH', domain: 'jobstreet.com.ph', type: 'HTML/Live' },
   { key: 'OnlineJobs.ph', label: 'OnlineJobs.ph', domain: 'onlinejobs.ph', type: 'Direct Client PH' },
   { key: 'Indeed', label: 'Indeed PH', domain: 'ph.indeed.com', type: 'Live Feed' },
@@ -3111,7 +3122,7 @@ function renderTelemetry(data) {
           stateBadge.textContent = 'SYNCING';
           stateBadge.className = 'progress-state-badge';
           pulseDot.className = 'pulse-indicator';
-          headline.textContent = `Scraping across ${data.total_boards || 14} job platforms (${compS}/${totalS} searches)...`;
+          headline.textContent = `Scraping across ${data.total_boards || 14} source streams (${compS}/${totalS} searches)...`;
         } else if (isPaused) {
           stateBadge.textContent = 'PAUSED';
           stateBadge.className = 'progress-state-badge paused';

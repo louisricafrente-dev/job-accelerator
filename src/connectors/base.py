@@ -22,6 +22,32 @@ class BaseConnector(ABC):
     coverage_warning = ""
     coverage_limit = ""
     MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+    window_days = 2
+    video_editor_mode = False
+
+    def date_window(self):
+        return scrape_date_window(days=self.window_days)
+
+    def accepts_date(self, raw):
+        from src.models import is_today_or_yesterday, normalize_date
+        if self.window_days == 2:
+            return is_today_or_yesterday(raw)
+        start, end = self.date_window()
+        value = normalize_date(raw)
+        return bool(value) and start.date().isoformat() <= value < end.date().isoformat()
+
+    def accepts_opportunity(self, title, description="", **kwargs):
+        if self.video_editor_mode:
+            from src.video_editor import is_video_candidate
+            return is_video_candidate(title, description)
+        from src.classifier import is_relevant_opportunity
+        return is_relevant_opportunity(title, description, **kwargs)
+
+    def job_role(self, title, description=""):
+        if self.video_editor_mode:
+            return "Video Editor"
+        from src.classifier import classify_role
+        return classify_role(title, description)
 
     def _bounded_get(self, session, url, **kwargs):
         body = bytearray()
@@ -44,7 +70,7 @@ class BaseConnector(ABC):
         return response
 
     def page_state(self, query=""):
-        start, _ = scrape_date_window()
+        start, _ = self.date_window()
         window = start.date().isoformat()
         saved = getattr(self, "feed_state" if getattr(self, "is_feed", False) else "query_state", {})
         state = dict(saved) if isinstance(saved, dict) else {}

@@ -22,6 +22,8 @@ import time
 import json
 import uuid
 from src.models import Job, is_today_or_yesterday
+from src.video_editor import collectable_job
+from src.connectors.video_editor import video_connectors
 
 DEFAULT_QUERIES = [
     # Priority 1: Core Titles & Junior/Entry (Highest Priority)
@@ -74,6 +76,7 @@ def get_default_connectors() -> List[BaseConnector]:
         ArcConnector(),
         FreelancerConnector(),
         UpworkConnector(),
+        *video_connectors(),
     ]
 
 import collections
@@ -325,12 +328,11 @@ class Aggregator:
             try:
                 relevant_jobs = [
                     j for j in all_jobs
-                    if is_today_or_yesterday(getattr(j, "date_posted", ""))
-                    and is_relevant_opportunity(getattr(j, "title", "") or "", getattr(j, "description", "") or "", allow_va_training=True)
+                    if collectable_job(j)
                 ]
                 dropped_cnt = len(all_jobs) - len(relevant_jobs)
                 if dropped_cnt > 0:
-                    self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} outside today/yesterday (Asia/Manila) or non-matrix listings; verified {len(relevant_jobs)} matching today/yesterday opportunities.")
+                    self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} outside the role's date window or relevance rules; verified {len(relevant_jobs)} opportunities (video: 7 dates; other jobs: today/yesterday, Asia/Manila).")
                 added, skipped = insert_jobs(self.db_path, relevant_jobs)
                 self.log_event(f"[Database] Synchronized {len(relevant_jobs)} listings: +{added} new opportunities, {skipped} existing/cross-board merged.")
             except Exception as e:

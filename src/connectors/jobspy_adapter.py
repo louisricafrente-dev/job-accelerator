@@ -103,7 +103,7 @@ class JobSpyAdapter(BaseConnector):
                         results_wanted=wanted,
                         offset=offset,
                         country_indeed=country,
-                        hours_old=scrape_request_hours(),
+                        hours_old=scrape_request_hours(days=self.window_days),
                         proxies=[proxy] if proxy else None
                     )
                 finally:
@@ -155,7 +155,7 @@ class JobSpyAdapter(BaseConnector):
                 loc = search_loc if pd.isna(raw_loc) or str(raw_loc).lower() in ("nan", "none", "") else str(raw_loc).strip()
                 if not is_work_authorized_location(loc, title, self.platform, description):
                     continue
-                if not is_relevant_opportunity(title, description, allow_va_training=True, location=loc, platform=self.platform):
+                if not self.accepts_opportunity(title, description, allow_va_training=True, location=loc, platform=self.platform):
                     continue
                 if company.lower() in ("nan", "none", "null", ""):
                     company = "Direct Employer"
@@ -163,7 +163,7 @@ class JobSpyAdapter(BaseConnector):
                 salary = "" if pd.isna(raw_sal) or str(raw_sal).lower() in ("nan", "none", "") else str(raw_sal).strip()
                 raw_date = row.get("date_posted")
                 date_str = "" if pd.isna(raw_date) or str(raw_date).lower() in ("nan", "none", "") else str(raw_date).strip()
-                if not is_today_or_yesterday(date_str):
+                if not self.accepts_date(date_str):
                     continue
                 jobs.append(Job(
                     title=title,
@@ -173,7 +173,7 @@ class JobSpyAdapter(BaseConnector):
                     tier=self.tier,
                     job_url=url,
                     salary=salary,
-                    role_category=classify_role(title),
+                    role_category=self.job_role(title),
                     experience_level=classify_experience_level(title, description),
                     date_posted=date_str,
                     description=description

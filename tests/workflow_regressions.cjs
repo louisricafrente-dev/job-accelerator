@@ -88,6 +88,10 @@ eval(harness + `
   assert.equal(context.roleFamily('QA / Testing'), 'QA / Testing');
   assert.equal(context.roleFamily('DevOps / Cloud'), 'IT / Cloud / Infrastructure');
   assert.equal(context.roleFamily('Cybersecurity'), 'Cybersecurity');
+  assert.equal(context.roleFamily('Video Editor'), 'Video Editor');
+  context.setRole('Video Editor');
+  assert.equal(context.currentStatus, 'saved');
+  assert.equal(context.currentDateFilter, '3days');
   context.escapeHtml = value => String(value);
   context.currentRole = 'Mobile'; context.syncRoleControls();
   assert.match(elements.get('role-specialty-select').innerHTML, /Mobile development/);
