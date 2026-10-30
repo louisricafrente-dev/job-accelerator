@@ -144,6 +144,40 @@ class TestSyncBatches(unittest.TestCase):
         self.run_batch(["a", "b"], budget=10)
         self.assertEqual(self.board.calls, ["a", "b", "a"])
 
+    def test_explicit_restart_preserves_provider_cooldown_and_success_clears_block(self):
+        from src.sync_batches import run_batch
+        original = self.board.fetch
+        def fetch(query="", location=""):
+            self.board.retry_after = 30000
+            return original(query, location)
+        self.board.error = "HTTP 429"
+        with patch.object(self.board, "fetch", side_effect=fetch):
+            first = run_batch(Aggregator(self.db, [self.board]), ["a"], workers=1)
+        blocked_until = first["progress"]["boards"][self.board.platform]["blocked_until"]
+        self.board.error = ""
+        second = run_batch(Aggregator(self.db, [self.board]), ["a"], workers=1, restart=True)
+        self.assertEqual(self.board.calls, ["a"])
+        self.assertEqual(second["progress"]["boards"][self.board.platform]["blocked_until"], blocked_until)
+        self.clock.value += 30001
+        recovered = run_batch(Aggregator(self.db, [self.board]), ["a"], workers=1, resume=True)
+        self.assertEqual(self.board.calls, ["a", "a"])
+        state = recovered["progress"]["boards"][self.board.platform]
+        self.assertEqual(state["blocked_until"], 0)
+        self.assertFalse(state["deferred"])
+        self.assertEqual(state["last_error"], "")
+
+    def test_coverage_warning_is_separate_from_network_error_on_fetch_and_resume(self):
+        from src.sync_batches import run_batch
+        self.board.coverage_limit = "Coverage limited: public feed snapshot"
+        first = run_batch(Aggregator(self.db, [self.board]), ["a"], workers=1, cycle_id="coverage")
+        second = run_batch(Aggregator(self.db, [self.board]), ["a"], workers=1, cycle_id="coverage")
+        for result in (first, second):
+            item = result["telemetry"][self.board.platform]
+            self.assertEqual(item["error"], "")
+            self.assertEqual(item["coverage_warning"], self.board.coverage_limit)
+            self.assertEqual(result["status"], "partial")
+            self.assertEqual(result["progress"]["deferred_boards"], [])
+
     def test_cooldown_does_not_advance_last_success_and_survives_restart(self):
         self.run_batch(["a", "b", "c", "d"])
         last_success = json.loads(get_user_setting(self.db, "sync_status"))["last_sync_time"]

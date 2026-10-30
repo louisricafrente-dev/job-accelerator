@@ -2667,6 +2667,8 @@ a {
 
 .board-header-row {
   display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
   justify-content: space-between;
   align-items: center;
 }
@@ -2708,6 +2710,12 @@ a {
   background-color: rgba(255, 255, 255, 0.05);
   color: var(--text-tertiary);
   border: 1px solid var(--border-subtle);
+}
+
+.status-limited {
+  color: var(--accent-amber-bright);
+  background: var(--accent-amber-bg);
+  border: 1px solid var(--accent-amber-border);
 }
 
 .status-error {

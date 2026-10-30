@@ -3011,7 +3011,7 @@ function renderTelemetry(data) {
     } else if (data.cloud_run?.status === 'stalled') {
       syncStateEl.textContent += ' · Cloud stalled - click Sync to resume';
     } else if (data.cloud_run?.status === 'partial' && !data.is_syncing) {
-      syncStateEl.textContent += ' · Cloud cycle finished (Partial)';
+      syncStateEl.textContent += ' · Cycle finished (Partial)';
     }
     if (runTotals) syncStateEl.textContent += ` · ${runTotals.total_fetched || 0} fetched · ${runTotals.sent || 0} uploaded · ${runTotals.added || 0} new`;
     if (data.local_worker?.online && data.local_worker.heartbeat_at) syncStateEl.textContent += ` · Worker heartbeat ${retryTime(data.local_worker.heartbeat_at)}`;
@@ -3121,7 +3121,13 @@ function renderTelemetry(data) {
           stateBadge.textContent = 'COMPLETED';
           stateBadge.className = 'progress-state-badge completed';
           pulseDot.className = 'pulse-indicator completed';
-          headline.textContent = `All ${totalS} matrix searches completed successfully!`;
+          headline.textContent = progress.coverage_issues?.length
+            ? `Searches finished with limited coverage on ${progress.coverage_issues.length} source(s). See source details below.`
+            : `All ${totalS} matrix searches completed successfully!`;
+          if (progress.coverage_issues?.length) {
+            stateBadge.textContent = 'PARTIAL COVERAGE';
+            stateBadge.className = 'progress-state-badge paused';
+          }
         } else {
           stateBadge.textContent = 'READY';
           stateBadge.className = 'progress-state-badge';
@@ -3162,18 +3168,28 @@ function renderTelemetry(data) {
     grid.innerHTML = MONITORED_BOARDS.map(b => {
       const boardInfo = telem[b.key] || telem[b.label] || {};
       const boardProgress = progress?.boards?.[b.key] || progress?.boards?.[b.label] || {};
-      const boardError = boardInfo.error || boardProgress.last_error || '';
+      const reportedError = boardInfo.error || boardProgress.last_error || '';
+      // Older workers stored coverage warnings in the error field.
+      const legacyWarning = /^(Coverage limited:|Some source publication dates)/i.test(reportedError);
+      const boardError = legacyWarning ? '' : reportedError;
+      const coverageWarning = boardInfo.coverage_warning || boardProgress.coverage_warning || (legacyWarning ? reportedError : '');
+      const needsSetup = boardError.startsWith('Configuration required:');
+      const verification = /cloudflare|captcha|requires verification/i.test(boardError);
+      const accessBlocked = verification || /\b(403|404|407|410)\b|forbidden/i.test(boardError);
       const count = platformCounts[b.key] !== undefined ? platformCounts[b.key] : (boardInfo.count || 0);
       const isRunning = data.is_syncing;
 
       let badgeClass = 'status-idle';
       let badgeLabel = 'READY';
-      if (boardError || boardInfo.status === 'error') {
-        badgeClass = 'status-error';
-        badgeLabel = boardError.startsWith('Configuration required:') ? 'SETUP REQUIRED' : 'DEFERRED';
-      } else if (isRunning && boardInfo.status === 'fetching') {
+      if (isRunning && boardInfo.status === 'fetching') {
         badgeClass = 'status-running';
         badgeLabel = 'SCANNING';
+      } else if (boardError || (boardInfo.status === 'error' && !legacyWarning)) {
+        badgeClass = 'status-error';
+        badgeLabel = needsSetup ? 'SETUP REQUIRED' : verification ? 'VERIFY ACCESS' : accessBlocked ? 'BLOCKED' : 'RETRY LATER';
+      } else if (coverageWarning) {
+        badgeClass = 'status-limited';
+        badgeLabel = 'LIMITED COVERAGE';
       } else if (boardInfo.status === 'complete') {
         badgeClass = 'status-success';
         badgeLabel = 'DONE';
@@ -3185,19 +3201,22 @@ function renderTelemetry(data) {
         badgeClass = isFeed ? 'status-synced' : 'status-idle';
         badgeLabel = isFeed ? 'SYNCED' : 'STANDBY';
       }
-      const nextRetry = boardError.startsWith('Configuration required:') ? 'Configure this source before syncing' : boardError && boardProgress.next_at > Date.now() / 1000 ? `Eligible after ${retryTime(boardProgress.next_at)}` : boardError ? 'Eligible next cycle' : '';
+      const retryAt = boardProgress.blocked_until || boardProgress.next_at;
+      const nextRetry = needsSetup ? 'Configure this source before syncing'
+        : boardError ? `${retryAt > Date.now() / 1000 ? `Retry allowed after ${retryTime(retryAt)}` : 'Retry allowed next cycle'}${verification ? '; browser verification may be needed. Scraper access must be checked separately.' : accessBlocked ? '; access may remain blocked after cooldown.' : ''}` : '';
+      const detail = boardError ? `${boardError} · ${nextRetry}` : coverageWarning;
 
       return `
         <div class="telemetry-board-card">
           <div class="board-header-row">
             <span class="board-name" title="${escapeHtml(b.domain)}">${escapeHtml(b.label)}</span>
-            <span class="board-status-badge ${badgeClass}" title="${escapeHtml(boardError)}">${badgeLabel}</span>
+            <span class="board-status-badge ${badgeClass}" title="${escapeHtml(boardError || coverageWarning)}">${badgeLabel}</span>
           </div>
           <div class="board-meta-row">
             <span>${escapeHtml(b.type)}${boardInfo.route ? ` · ${escapeHtml(boardInfo.route)}${boardInfo.connection_retries ? ' (fallback)' : ''}` : ''}</span>
             <span class="board-count-pill">${count} fetched</span>
           </div>
-          ${boardError ? `<div class="board-error" role="status">${escapeHtml(boardError)} · ${escapeHtml(nextRetry)}</div>` : ''}
+          ${detail ? `<div class="board-error" role="status">${escapeHtml(detail)}</div>` : ''}
         </div>
       `;
     }).join('');
