@@ -110,13 +110,14 @@
             <span class="btn-text">Digest</span>
           </button>
 
-          <a id="btn-portfolio-views" class="btn-subtle" href="https://hits.sh/louisricafrente-dev.vercel.app/" target="_blank" rel="noopener noreferrer" title="Monitor portfolio page views (read-only hits.sh dashboard, does not increment counter)">
+          <button type="button" id="btn-portfolio-views" class="btn-subtle" onclick="togglePortfolioViewsModal()" title="View live portfolio page views and daily traffic inside Job Accelerator">
             <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
               <circle cx="12" cy="12" r="3"/>
             </svg>
             <span class="btn-text">Portfolio Views</span>
-          </a>
+            <span class="active-skills-count" id="portfolio-views-badge" title="Total portfolio page views">-</span>
+          </button>
           <label class="auto-sync-control" title="Automatically refresh job listings every 6 hours while this app is open">
             <input type="checkbox" id="auto-sync-checkbox" checked onchange="toggleAutoSync(this)">
             <span>Auto</span>
@@ -582,7 +583,7 @@
         </div>
         <div class="telemetry-stat-tile">
           <span class="telemetry-stat-label">Portfolio Analytics</span>
-          <span class="telemetry-stat-val"><a href="https://hits.sh/louisricafrente-dev.vercel.app/" target="_blank" rel="noopener noreferrer" style="color: var(--accent-cyan); text-decoration: underline;">View Live Stats</a></span>
+          <span class="telemetry-stat-val"><button type="button" id="telemetry-portfolio-views-btn" class="btn-text-action" onclick="togglePortfolioViewsModal()" style="color: var(--accent-cyan); font-family: var(--font-mono); font-size: 0.98rem; font-weight: 700; padding: 0; text-decoration: underline;">View Live Stats</button></span>
         </div>
       </div>
 
@@ -702,6 +703,75 @@
         <div class="footer-actions-right">
           <button type="button" class="btn-secondary" onclick="toggleProxyModal()">Cancel</button>
           <button type="button" id="btn-save-proxy-config" class="btn-primary" onclick="saveProxyConfiguration()">Save Settings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- In-App Portfolio Views & Traffic Modal -->
+  <div id="portfolio-views-modal" class="modal-overlay" style="display: none;" onclick="handlePortfolioViewsOverlayClick(event)" role="dialog" aria-modal="true" aria-labelledby="portfolio-views-modal-title">
+    <div class="modal-card proxy-modal-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-title-row">
+            <h2 class="modal-title" id="portfolio-views-modal-title">Portfolio Traffic &amp; Live Views</h2>
+            <span class="active-badge-pill" id="portfolio-modal-badge">Read-Only Sync</span>
+          </div>
+          <p class="modal-subtitle">Live page-view telemetry for <code>louisricafrente-dev.vercel.app</code> inside Job Accelerator (viewing or refreshing here never increments the counter).</p>
+        </div>
+        <div class="modal-actions-group">
+          <button type="button" id="btn-refresh-portfolio-views" class="btn-subtle btn-telemetry-action" onclick="loadPortfolioViews(true)" title="Refresh live portfolio view stats">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+            <span id="btn-refresh-portfolio-views-text">Refresh</span>
+          </button>
+          <button type="button" class="btn-close-modal" onclick="togglePortfolioViewsModal()" aria-label="Close modal">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="modal-body proxy-modal-body">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 10px;">
+          <div class="telemetry-board-card" style="padding: 10px 12px;">
+            <span class="telemetry-stat-label">Total Views</span>
+            <span class="telemetry-stat-val highlight-cyan" id="pv-stat-total" style="font-size: 1.35rem;">-</span>
+          </div>
+          <div class="telemetry-board-card" style="padding: 10px 12px;">
+            <span class="telemetry-stat-label">Last 30 Days</span>
+            <span class="telemetry-stat-val" id="pv-stat-monthly" style="font-size: 1.35rem;">-</span>
+          </div>
+          <div class="telemetry-board-card" style="padding: 10px 12px;">
+            <span class="telemetry-stat-label" id="pv-stat-today-label">Latest Day</span>
+            <span class="telemetry-stat-val" id="pv-stat-today" style="font-size: 1.35rem;">-</span>
+          </div>
+          <div class="telemetry-board-card" style="padding: 10px 12px;">
+            <span class="telemetry-stat-label" id="pv-stat-peak-label">Peak Day</span>
+            <span class="telemetry-stat-val" id="pv-stat-peak" style="font-size: 1.35rem;">-</span>
+          </div>
+        </div>
+
+        <div class="proxy-test-section">
+          <div class="test-header-row">
+            <span class="test-heading">Daily Traffic Breakdown (Recent 30 Active Days)</span>
+            <span class="telemetry-section-sub" id="pv-days-summary">Loading...</span>
+          </div>
+          <div id="portfolio-days-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 290px; overflow-y: auto; padding-right: 4px;">
+            <div class="test-empty-state">Loading live portfolio traffic...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer proxy-modal-footer">
+        <span id="portfolio-views-updated" class="telemetry-footer-hint">Source: hits.sh read-only API</span>
+        <div class="footer-actions-right">
+          <button type="button" class="btn-secondary" onclick="togglePortfolioViewsModal()">Close</button>
         </div>
       </div>
     </div>

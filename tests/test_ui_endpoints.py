@@ -169,6 +169,29 @@ class TestUIEndpoints(unittest.TestCase):
         self.assertEqual(len(data["jobs"]), 1)
         self.assertEqual(data["jobs"][0]["pipeline_stage"], "offer")
 
+    def test_portfolio_views_in_app_modal_and_endpoint(self):
+        import json
+        env_html = {"REQUEST_METHOD": "GET", "PATH_INFO": "/", "QUERY_STRING": "", "wsgi.input": None}
+        res_html = self.app._handle(env_html)
+        body_html = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res_html)
+        if hasattr(res_html, "close"):
+            res_html.close()
+        self.assertIn('id="btn-portfolio-views"', body_html)
+        self.assertIn('onclick="togglePortfolioViewsModal()"', body_html)
+        self.assertIn('id="portfolio-views-modal"', body_html)
+        self.assertNotIn('href="https://hits.sh/louisricafrente-dev.vercel.app/"', body_html)
+
+        env_api = {"REQUEST_METHOD": "GET", "PATH_INFO": "/api/portfolio/views", "QUERY_STRING": "", "wsgi.input": None}
+        res_api = self.app._handle(env_api)
+        body_api = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res_api)
+        if hasattr(res_api, "close"):
+            res_api.close()
+        data = json.loads(body_api)
+        self.assertEqual(data.get("status"), "ok")
+        self.assertEqual(data.get("domain"), "louisricafrente-dev.vercel.app")
+        self.assertGreater(int(data.get("total", 0)), 0)
+        self.assertIsInstance(data.get("days"), list)
+
 if __name__ == "__main__":
     unittest.main()
 

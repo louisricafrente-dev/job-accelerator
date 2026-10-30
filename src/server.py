@@ -4,8 +4,11 @@ import json
 import uuid
 import hashlib
 import hmac
+import urllib.request
 import bottle
 bottle.BaseRequest.MEMFILE_MAX = 2 * 1024 * 1024
+
+_portfolio_views_cache = {"ts": 0.0, "payload": None}
 from src.database import (
     get_jobs, update_job_status, get_stats, export_jobs_csv, insert_jobs,
     get_user_setting, set_user_setting, get_all_user_settings
@@ -1032,6 +1035,52 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
 
         bottle.response.content_type = "application/json"
         return json.dumps({"status": "ok", "results": results})
+
+    @app.route("/api/portfolio/views", method="GET")
+    def api_portfolio_views():
+        bottle.response.content_type = "application/json"
+        force_refresh = str(bottle.request.query.get("refresh", "")).strip() in ("1", "true")
+        now = time.time()
+        if not force_refresh and _portfolio_views_cache["payload"] and (now - _portfolio_views_cache["ts"] < 60):
+            return json.dumps(_portfolio_views_cache["payload"])
+
+        url = "https://hits.sh/api/urns/louisricafrente-dev.vercel.app"
+        req = urllib.request.Request(url, headers={"User-Agent": "JobAccelerator/1.0", "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                raw = json.loads(resp.read().decode("utf-8"))
+            items = raw.get("items") or []
+            raw_days = (items[0].get("data") if items and isinstance(items[0], dict) else None) or []
+            days = [
+                {"day": str(entry.get("day", "")), "value": int(entry.get("value") or 0)}
+                for entry in raw_days
+                if isinstance(entry, dict) and entry.get("day")
+            ]
+            days.sort(key=lambda x: x["day"], reverse=True)
+            total = int(raw.get("total") or 0)
+            monthly = int(raw.get("monthly") or 0)
+            today_val = days[0]["value"] if days else 0
+            today_day = days[0]["day"] if days else ""
+            peak = max(days, key=lambda x: x["value"]) if days else {"day": "", "value": 0}
+            payload = {
+                "status": "ok",
+                "domain": "louisricafrente-dev.vercel.app",
+                "total": total,
+                "monthly": monthly,
+                "today": today_val,
+                "today_day": today_day,
+                "peak": peak,
+                "days": days[:30],
+                "fetched_at": int(now),
+            }
+            _portfolio_views_cache["ts"] = now
+            _portfolio_views_cache["payload"] = payload
+            return json.dumps(payload)
+        except Exception as exc:
+            if _portfolio_views_cache["payload"]:
+                return json.dumps(_portfolio_views_cache["payload"])
+            bottle.response.status = 502
+            return json.dumps({"status": "error", "error": f"Could not fetch portfolio views: {exc}"})
 
     @app.route("/api/health", method="GET")
     def api_health():
