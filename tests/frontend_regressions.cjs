@@ -32,7 +32,7 @@ async function main() {
   context.escapeHtml = value => String(value);
   vm.runInContext(code.slice(code.indexOf('function renderTelemetry(data)'), code.indexOf('function copySyncLogs()')), context);
   context.renderTelemetry({is_syncing: true, progress: {completed_searches: 10, total_searches: 100}, telemetry: {LinkedIn: {status: 'error', error: 'HTTP 429', count: 5}}});
-  assert.match(elements.get('telemetry-boards-grid').innerHTML, /DEFERRED/);
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /RETRY LATER/);
   assert.doesNotMatch(elements.get('telemetry-boards-grid').innerHTML, /SCANNING/);
   assert.match(elements.get('telemetry-sync-state').textContent, /10\/100/);
   context.renderTelemetry({is_syncing: true,
@@ -44,13 +44,31 @@ async function main() {
   assert.match(elements.get('telemetry-sync-state').textContent, /Waiting for retry.*Resumes automatically/);
   assert.match(elements.get('telemetry-sync-state').textContent, /42 fetched.*20 uploaded.*5 new/);
   assert.doesNotMatch(elements.get('telemetry-sync-state').textContent, /Syncing/);
-  assert.match(elements.get('telemetry-boards-grid').innerHTML, /HTTP 403.*Eligible after/);
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /HTTP 403.*Retry allowed after/);
   assert.match(elements.get('telemetry-boards-grid').innerHTML, /42 fetched/);
   assert.match(elements.get('telemetry-boards-grid').innerHTML, /WEBSHARE \(fallback\)/);
   assert.doesNotMatch(elements.get('telemetry-boards-grid').innerHTML, /STANDBY|SYNCED|Ready/);
   context.renderTelemetry({is_syncing: false, progress: {completed_searches: 10, total_searches: 100, has_more: true}});
   assert.equal(elements.get('sync-text').textContent, 'Sync now');
   assert.equal(elements.get('resume-sync-btn').hidden, false);
+
+  for (const legacy of [false, true]) {
+    const warning = 'Coverage limited: public feed only';
+    context.renderTelemetry({is_syncing: false, progress: {completed_searches: 100, total_searches: 100, unfinished: false, has_more: false,
+      coverage_issues: [{platform: 'LinkedIn', reason: warning}], boards: {'LinkedIn': {next_at: Date.now()/1000+3600}}},
+      telemetry: {'LinkedIn': legacy ? {error: warning, status: 'error'} : {coverage_warning: warning, error: ''}}});
+    const cards = elements.get('telemetry-boards-grid').innerHTML;
+    assert.match(cards, /LIMITED COVERAGE/);
+    assert.doesNotMatch(cards, /Eligible after|Retry allowed|DEFERRED/);
+    assert.match(elements.get('progress-headline').textContent, /limited coverage/);
+  }
+  for (const [error, label] of [['HTTP 403', 'BLOCKED'], ['Cloudflare challenge; requires verification', 'VERIFY ACCESS'],
+    ['HTTP 429', 'RETRY LATER'], ['Configuration required: authorized feed', 'SETUP REQUIRED']]) {
+    context.renderTelemetry({is_syncing: false, telemetry: {'LinkedIn': {error, status: 'error'}}});
+    assert.ok(elements.get('telemetry-boards-grid').innerHTML.includes(label), label);
+  }
+  context.renderTelemetry({is_syncing: true, telemetry: {'LinkedIn': {error: 'HTTP 403', status: 'fetching'}}});
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /SCANNING/);
 
   for (const title of ['Software Engineer III', 'Senior Software Engineer, Backend (Identity International)']) {
     assert.equal(context.getSkillsMatch({ title, experience_level: 'Senior / Lead' }).count, 0);
