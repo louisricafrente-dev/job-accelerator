@@ -659,7 +659,7 @@ def get_jobs(
             params.extend(role_params)
 
         is_explicit_unspecified = experience_level and any(u in experience_level for u in ("Unspecified", "Other", "Others", "Unspecified / Other"))
-        va_roles = ("VIRTUAL ASSISTANT", "VA", "VA (WITH TRAINING)", "ADMINISTRATIVE SUPPORT", "EXECUTIVE ASSISTANCE", "CUSTOMER SUPPORT", "DATA ENTRY")
+        va_roles = ("VIRTUAL ASSISTANT", "VA", "VA & ADMIN", "VA (WITH TRAINING)", "ADMINISTRATIVE SUPPORT", "EXECUTIVE ASSISTANCE", "CUSTOMER SUPPORT", "TECHNICAL SUPPORT", "DATA ENTRY")
         if not include_va and not is_explicit_unspecified and (not role_category or role_category.strip().upper() not in va_roles):
             clauses.append("(role_category != 'Virtual Assistant' AND lower(title) NOT LIKE '%virtual assistant%' AND lower(title) NOT LIKE '%administrative assistant%')")
         if experience_level and experience_level != "All":

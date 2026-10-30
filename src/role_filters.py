@@ -8,8 +8,10 @@ PATTERNS = {
     "Backend": ["* backend *", "* back end *", "* node *", "* nodejs *", "* django *", "* fastapi *", "* golang *", "* go developer *", "* java *", "* net *", "* c# *", "* php *", "* laravel *", "* ruby *", "* api developer *", "* python developer *"],
     "Full Stack": ["* full stack *", "* fullstack *"],
     "DevOps / Cloud": ["* devops *", "* cloud engineer *", "* cloud architect *", "* aws engineer *", "* azure engineer *", "* sre *", "* site reliability *", "* platform engineer *", "* infrastructure engineer *"],
-    "QA / Testing": ["* qa *", "* quality assurance *", "* software test*", "* tester *", "* test automation *", "* automation test*", "* sdet *"],
-    "IT Support": ["* it support *", "* technical support *", "* helpdesk *", "* help desk *", "* service desk *", "* desktop support *", "* systems administrator *", "* system administrator *", "* systems engineer *", "* it engineer *", "* network engineer *", "* network administrator *", "* database administrator *", "* dba *", "* it specialist *"],
+    "QA / Testing": ["* qa *", "* quality assurance *", "* software test*", "* tester *", "* test automation *", "* automation test*", "* sdet *", "* software development engineer in test *"],
+    "IT Support": ["* it support *", "* helpdesk *", "* help desk *", "* service desk *", "* desktop support *", "* systems administrator *", "* system administrator *", "* systems engineer *", "* it engineer *", "* network engineer *", "* network administrator *", "* database administrator *", "* dba *", "* it specialist *"],
+    "Technical Support": ["* technical support *", "* tech support *"],
+    "AI Development": ["* ai developer *", "* ai development *", "* ai engineer *", "* ai software *", "* ai application *", "* artificial intelligence developer *", "* artificial intelligence engineer *", "* llm developer *", "* llm engineer *", "* generative ai engineer *", "* genai developer *", "* genai engineer *", "* ai agent developer *", "* ai agent engineer *"],
     "Cybersecurity": ["* cybersecurity *", "* cyber security *", "* security engineer *", "* security analyst *", "* soc analyst *", "* penetration test*", "* information security *"],
     "Data Analyst": ["* data analyst *", "* data analytics *", "* analytics analyst *", "* reporting analyst *", "* business intelligence *", "* bi analyst *", "* bi developer *", "* power bi *", "* tableau *"],
     "Analyst": ["* analyst *"],
@@ -27,6 +29,8 @@ PATTERNS = {
 ALIASES = {
     "Data & AI": "Data/AI/ML", "Data & Analytics": "Data/AI/ML",
     "Tech & IT": "Web/Software Dev", "Technology & IT": "Web/Software Dev",
+    "IT, Cloud & Infrastructure": "IT / Cloud / Infrastructure", "VA & Admin": "Virtual Assistant",
+    "QA & Testing": "QA / Testing",
     "DevOps": "DevOps / Cloud", "Cloud": "DevOps / Cloud",
     "QA": "QA / Testing", "Testing": "QA / Testing",
     "VA": "Virtual Assistant", "VA (with training)": "Virtual Assistant",
@@ -36,13 +40,13 @@ ALIASES = {
 def role_predicate(role):
     role = ALIASES.get(role, role)
     if role == "Virtual Assistant":
-        members = ["Administrative Support", "Executive Assistance", "Customer Support", "Data Entry"]
+        members = ["Administrative Support", "Executive Assistance", "Customer Support", "Technical Support", "Data Entry"]
         parts = [role_predicate(member) for member in members]
         sql = "(role_category = ?" + "".join(f" OR {TITLE} GLOB ?" for _ in PATTERNS[role])
         sql += " OR " + " OR ".join(part for part, _ in parts) + ")"
         return sql, [role, *PATTERNS[role], *[p for _, params in parts for p in params]]
     if role == "Web/Software Dev":
-        members = ["Software Development", "DevOps / Cloud", "QA / Testing", "IT Support", "Cybersecurity"]
+        members = ["Software Development"]
         parts = [role_predicate(member) for member in members]
         sql = "(" + " OR ".join(sql for sql, _ in parts) + ")"
         params = [p for _, values in parts for p in values]
@@ -50,27 +54,38 @@ def role_predicate(role):
             sql += f" AND NOT {TITLE} GLOB ?"
             params.append(pattern)
         return f"({sql})", params
+    if role == "IT / Cloud / Infrastructure":
+        parts = [role_predicate(member) for member in ("IT Support", "DevOps / Cloud")]
+        support_sql, support_params = role_predicate("Technical Support")
+        return "((" + " OR ".join(sql for sql, _ in parts) + ") AND NOT " + support_sql + ")", [p for _, values in parts for p in values] + support_params
     if role == "Data/AI/ML":
         members = ["Data Analyst", "Data Science", "Data Engineering", "AI / ML", "Business / Systems Analyst", "Analyst"]
         parts = [role_predicate(member) for member in members]
-        return "(" + " OR ".join(sql for sql, _ in parts) + ")", [p for _, params in parts for p in params]
+        ai_sql, ai_params = role_predicate("AI Development")
+        return "((" + " OR ".join(sql for sql, _ in parts) + ") AND NOT " + ai_sql + ")", [p for _, params in parts for p in params] + ai_params
     if role == "Software Development":
-        members = ["Frontend", "Backend", "Full Stack", "Mobile"]
+        members = ["Frontend", "Backend", "Full Stack", "Mobile", "AI Development"]
         parts = [role_predicate(member) for member in members]
         sql = "(" + " OR ".join(s for s, _ in parts) + f" OR {TITLE} GLOB ? OR {TITLE} GLOB ? OR {TITLE} GLOB ? OR {TITLE} GLOB ? OR {TITLE} GLOB ?)"
         params = [p for _, values in parts for p in values] + ["* software engineer *", "* software developer *", "* web developer *", "* programmer *", "* developer *"]
-        return sql, params
+        for excluded in ("QA / Testing", "IT Support", "Technical Support", "DevOps / Cloud", "Cybersecurity", "Data Science", "Data Engineering", "Virtual Assistant", "Data Analyst", "Business / Systems Analyst"):
+            negative, values = role_predicate(excluded)
+            sql += f" AND NOT {negative}"
+            params.extend(values)
+        return f"({sql})", params
     patterns = PATTERNS.get(role, [])
     sql = "(role_category = ?" + "".join(f" OR {TITLE} GLOB ?" for _ in patterns) + ")"
     params = [role, *patterns]
     # Language keywords alone do not make mobile/testing/data jobs backend roles.
     exclusions = []
+    if role in ("IT Support", "DevOps / Cloud"):
+        exclusions = ["Technical Support"]
     if role == "Frontend":
         exclusions = ["Mobile", "QA / Testing"]
     elif role == "Backend":
         exclusions = ["Mobile", "QA / Testing", "Data Science", "Data Engineering", "AI / ML"]
     elif role in ("Data Analyst", "Analyst"):
-        exclusions = ["QA / Testing", "IT Support", "Cybersecurity", "Business / Systems Analyst"]
+        exclusions = ["QA / Testing", "IT Support", "Technical Support", "Cybersecurity", "Business / Systems Analyst", "AI Development"]
     for excluded in exclusions:
         negative, values = role_predicate(excluded)
         sql += f" AND NOT {negative}"

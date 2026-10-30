@@ -320,7 +320,29 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(len(get_jobs(self.db_path, role_category="DevOps / Cloud")), 1)
         self.assertEqual(len(get_jobs(self.db_path, role_category="QA / Testing")), 1)
         self.assertEqual(len(get_jobs(self.db_path, role_category="Data/AI/ML")), 1)
-        self.assertEqual(len(get_jobs(self.db_path, role_category="Web/Software Dev")), 6)
+        self.assertEqual(len(get_jobs(self.db_path, role_category="Web/Software Dev")), 4)
+
+    def test_six_category_grouping_preserves_saved_and_pipeline(self):
+        groups = {
+            "Web/Software Dev": ["Android Developer", "Full Stack Developer", "AI Developer", "AI Engineer", "LLM Engineer"],
+            "QA / Testing": ["Software Development Engineer in Test", "QA Automation Developer"],
+            "IT / Cloud / Infrastructure": ["Cloud Engineer", "System Administrator", "IT Support Analyst"],
+            "Cybersecurity": ["Security Analyst"],
+            "Data/AI/ML": ["Data Scientist", "Data Engineer", "Business Analyst", "BI Developer"],
+            "Virtual Assistant": ["Technical Support Engineer", "Technical Support Analyst", "Data Entry Clerk", "Executive Assistant"],
+        }
+        for index, title in enumerate(title for titles in groups.values() for title in titles):
+            insert_jobs(self.db_path, [Job(title=title, company="Example", location="Philippines", platform="Indeed",
+                tier=1, job_url=f"https://example.com/category/{index}", role_category="Both")])
+        for status in ("saved", "applied"):
+            for row in get_jobs(self.db_path, include_va=True):
+                update_job_status(self.db_path, row["id"], status=status, notes="Preserve this note")
+            for category, titles in groups.items():
+                rows = get_jobs(self.db_path, status=status, role_category=category, include_va=True, with_total=True)
+                self.assertEqual({row["title"] for row in rows}, set(titles), (status, category))
+                self.assertEqual(rows[0]["matching_total"], len(titles))
+                self.assertTrue(all(row["notes"] == "Preserve this note" for row in rows))
+        self.assertEqual(len(get_jobs(self.db_path, status="applied", role_category="Technical Support")), 2)
 
     def test_role_filters_do_not_treat_both_as_every_specialty(self):
         titles = ["React Native Developer", "Frontend JavaScript Developer", "Data Scientist",
