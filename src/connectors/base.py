@@ -21,6 +21,27 @@ class BaseConnector(ABC):
     query_group_size = 1
     coverage_warning = ""
     coverage_limit = ""
+    MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+    def _bounded_get(self, session, url, **kwargs):
+        body = bytearray()
+        oversized = False
+
+        def receive(chunk):
+            nonlocal oversized
+            if len(body) + len(chunk) > self.MAX_RESPONSE_BYTES:
+                oversized = True
+                raise ValueError("Source response exceeds safety size limit")
+            body.extend(chunk)
+            return len(chunk)
+
+        try:
+            response = session.get(url, content_callback=receive, **kwargs)
+        finally:
+            if oversized:
+                raise ValueError("Source response exceeds safety size limit") from None
+        response.content = bytes(body)
+        return response
 
     def page_state(self, query=""):
         start, _ = scrape_date_window()
@@ -180,11 +201,13 @@ class BaseConnector(ABC):
                 else:
                     response = urllib.request.urlopen(request, timeout=timeout)
                 with response as opened:
-                    body = opened.read()
+                    body = opened.read(self.MAX_RESPONSE_BYTES + 1)
+                    if len(body) > self.MAX_RESPONSE_BYTES:
+                        raise ValueError("Source response exceeds safety size limit")
                     self.check_challenge(body)
                     return body
             except Exception as exc:
-                err_body = exc.read() if hasattr(exc, "read") else b""
+                err_body = exc.read(self.MAX_RESPONSE_BYTES + 1) if hasattr(exc, "read") else b""
                 if "cloudflare challenge" not in str(exc).lower() and not any(
                     m in err_body for m in (b"/cdn-cgi/challenge-platform", b"cf-chl-")
                 ):
@@ -192,7 +215,7 @@ class BaseConnector(ABC):
                 url = request.full_url if hasattr(request, "full_url") else str(request)
                 from curl_cffi import requests as cffi_requests
                 with cffi_requests.Session(trust_env=False) as session:
-                    resp = session.get(url, proxy=proxy or "", impersonate="chrome120", timeout=timeout)
+                    resp = self._bounded_get(session, url, proxy=proxy or "", impersonate="chrome120", timeout=timeout)
                 resp.raise_for_status()
                 self.check_challenge(resp.text)
                 return resp.content
@@ -202,7 +225,7 @@ class BaseConnector(ABC):
         from curl_cffi import requests
         def send(proxy):
             with requests.Session(trust_env=False) as session:
-                response = session.get(url, proxy=proxy or "", **kwargs)
+                response = self._bounded_get(session, url, proxy=proxy or "", **kwargs)
             response.raise_for_status()
             self.check_challenge(response.text)
             return response

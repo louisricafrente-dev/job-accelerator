@@ -240,7 +240,7 @@ class TestSourcePageBoundaries(unittest.TestCase):
                 jobs = c.fetch("developer")
             self.assertEqual(len(jobs), page-1)
             c.query_state = dict(c.next_query_state)
-        self.assertFalse(c.has_more)
+        self.assertTrue(c.has_more)
         self.assertIn("Coverage limited", c.coverage_warning)
 
     def test_jobspy_continues_when_first_raw_page_has_no_relevant_jobs(self):

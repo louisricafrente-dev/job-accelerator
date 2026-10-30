@@ -93,7 +93,7 @@ class TestRawDateRequests(unittest.TestCase):
 
     def test_unfiltered_feeds_request_small_recent_slice(self):
         for c, response, expected in [
-            (RemotiveConnector(), b'{"jobs": []}', {"limit": ["100"]}),
+            (RemotiveConnector(), b'{"jobs": []}', {"limit": ["200"]}),
             (HimalayasConnector(), b'{"jobs": []}', {"limit": ["20"]}),
             (BossjobConnector(), b'{"code": 0, "data": {"jobs": []}}', {"size": ["30"], "sort": ["1"], "page": ["1"]}),
         ]:

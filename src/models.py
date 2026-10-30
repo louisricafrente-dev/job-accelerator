@@ -48,16 +48,16 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
             if parsed.tzinfo:
                 return parsed.astimezone(MANILA).date().isoformat()
         except ValueError:
-            pass
+            return ""
         return s[:10]
 
     # Check relative dates ('3d ago', 'yesterday', 'today', '2w ago', 'recently', 'just posted', etc.)
     s_lower = s.lower()
     if isinstance(ref_date, datetime):
-        now_utc = ref_date if ref_date.tzinfo else ref_date.replace(tzinfo=MANILA)
+        now_utc = ref_date.astimezone(MANILA) if ref_date.tzinfo else ref_date.replace(tzinfo=MANILA)
     elif ref_date is not None:
         try:
-            now_utc = datetime.combine(ref_date, datetime.min.time(), tzinfo=timezone.utc)
+            now_utc = datetime.combine(ref_date, datetime.min.time(), tzinfo=MANILA)
         except Exception:
             now_utc = datetime.now(MANILA)
     else:
@@ -72,7 +72,7 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
             return (now_utc - delta).strftime("%Y-%m-%d")
         except OverflowError:
             return ""
-    if s_lower in ("today", "just now", "moments ago", "recently", "recent", "posted recently", "posted recent", "just posted", "new", "posted today", "active today"):
+    if s_lower in ("today", "just now", "moments ago", "just posted", "posted today"):
         return now_utc.strftime("%Y-%m-%d")
     if "yesterday" in s_lower:
         return (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")

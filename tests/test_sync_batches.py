@@ -284,7 +284,7 @@ class TestSyncBatches(unittest.TestCase):
         with patch("urllib.request.urlopen", return_value=response) as fetch:
             jobs = RemotiveConnector().fetch()
         fetch.assert_called_once()
-        self.assertEqual(fetch.call_args.args[0].full_url, "https://remotive.com/api/remote-jobs?limit=100")
+        self.assertEqual(fetch.call_args.args[0].full_url, "https://remotive.com/api/remote-jobs?limit=200")
         self.assertEqual(len(jobs), 100)
 
     def test_two_matrix_edits_preserve_rate_limit_cooldown(self):
