@@ -87,12 +87,15 @@ class TestSourceRepairs(unittest.TestCase):
             {'name': 'Junior Web Developer', 'url': 'https://www.ziprecruiter.com/c/example/Job/dev'}]}) + '</script>'
         with patch.object(JobSpyAdapter, 'get_url', return_value=MagicMock(status_code=200, text=html)):
             jobs = JobSpyAdapter('ZipRecruiter', 'zip_recruiter', 2)._fetch_ziprecruiter_ldjson()
-        self.assertEqual(jobs[0].date_posted, '')
-        self.assertFalse(is_within_15_days(jobs[0].date_posted))
-        xml = b'<urlset><url><loc>https://www.flexjobs.com/gjw/example/junior-web-developer/123</loc><lastmod>2026-10-25</lastmod></url></urlset>'
-        with patch.object(FlexJobsConnector, 'get_url', return_value=MagicMock(status_code=200, content=xml)):
-            jobs = FlexJobsConnector()._fetch_gjw_sitemap()
-        self.assertEqual(jobs[0].date_posted, '', 'Sitemap modification is not a publication date')
+        self.assertEqual(jobs, [], 'Undated search cards cannot establish the publication window')
+        FlexJobsConnector._cached_jobs = None
+        with patch.object(FlexJobsConnector, 'get_url', return_value=MagicMock(status_code=403)) as fetch:
+            connector = FlexJobsConnector()
+            jobs = connector.fetch()
+        self.assertEqual(jobs, [])
+        self.assertEqual(fetch.call_count, 1, 'Do not download an undated full sitemap after a block')
+        self.assertIn('403', connector.last_error)
+        FlexJobsConnector._cached_jobs = None
         ContraConnector._cached_jobs = None
         context = {'publicAppConfiguration': {'relayRecordMap': {'1': {
             '__typename': 'Opportunity', 'title': 'Junior Web Developer', 'slug': 'dev', 'datePosted': '2020-01-01'}}}}

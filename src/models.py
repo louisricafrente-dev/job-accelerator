@@ -9,6 +9,23 @@ from typing import Optional, List, Dict, Any
 MANILA = timezone(timedelta(hours=8))
 
 
+def scrape_date_window(now: Optional[datetime] = None):
+    """Philippine publication window, with an exclusive upper bound."""
+    now = now or datetime.now(MANILA)
+    now = now.astimezone(MANILA) if now.tzinfo else now.replace(tzinfo=MANILA)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight - timedelta(days=1), midnight + timedelta(days=1)
+
+
+def scrape_request_hours(now: Optional[datetime] = None) -> int:
+    import math
+    now = now or datetime.now(MANILA)
+    now = now.astimezone(MANILA) if now.tzinfo else now.replace(tzinfo=MANILA)
+    start, _ = scrape_date_window(now)
+    # JobSpy's hour-only filters must round up to keep yesterday's first hour.
+    return max(24, math.ceil((now - start).total_seconds() / 3600))
+
+
 def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
     """Normalize raw date strings/timestamps into ISO 'YYYY-MM-DD'.
     Handles:

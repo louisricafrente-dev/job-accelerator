@@ -3,7 +3,7 @@ import urllib.request
 import urllib.parse
 from typing import List
 from src.connectors.base import BaseConnector, logger
-from src.models import Job, is_today_or_yesterday
+from src.models import Job, is_today_or_yesterday, normalize_date, scrape_date_window
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 import time
@@ -14,21 +14,26 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 class KalibrrConnector(BaseConnector):
     platform = "Kalibrr"
     tier = 1
-    revision = 2
+    revision = 3
     is_feed = True
     checkpointed_feed = True
-    PAGE_SIZE = 100
+    PAGE_SIZE = 50
 
     def fetch(self, query="", location="Philippines"):
         from bs4 import BeautifulSoup
         self.last_error = ""
-        self.last_fetch_mode = "catalogue"
+        self.last_fetch_mode = "newest-first date window"
         self.has_more = False
         state = dict(getattr(self, "feed_state", {}))
+        start, _ = scrape_date_window()
+        window_start = start.date().isoformat()
+        if state.get("window_start") != window_start:
+            state = {"window_start": window_start}
         self.next_feed_state = state
         offset = state.get("offset", 0)
         try:
-            params = urllib.parse.urlencode({"limit": self.PAGE_SIZE, "offset": offset})
+            params = urllib.parse.urlencode({"limit": self.PAGE_SIZE, "offset": offset,
+                                             "sort_field": "activation_date", "sort_direction": "desc"})
             req = urllib.request.Request(f"https://www.kalibrr.com/api/job_board/search?{params}", headers=HEADERS)
             with self.open_url(req, timeout=12) as response:
                 data = json.loads(response.read().decode("utf-8"))
@@ -41,19 +46,24 @@ class KalibrrConnector(BaseConnector):
                 raise RuntimeError("Kalibrr returned a listing without a job ID")
             if offset and items and fingerprint == state.get("previous_page"):
                 raise RuntimeError("Kalibrr repeated a catalogue page; progress retained")
-            self.has_more = offset + len(items) < total
+            dates = [normalize_date(item.get("activation_date") or item.get("published") or item.get("created_at"))
+                     for item in items]
+            reached_old_page = bool(dates) and all(date and date < window_start for date in dates)
+            self.has_more = bool(items) and offset + len(items) < total and not reached_old_page
             if self.has_more and len(items) < self.PAGE_SIZE:
                 raise RuntimeError("Kalibrr catalogue page is truncated; progress retained")
             jobs = []
-            for item, ident in zip(items, ids):
+            self.last_raw_count = len(items)
+            for item, ident, date in zip(items, ids, dates):
+                if not is_today_or_yesterday(date):
+                    continue
                 title = item.get("name", "")
                 desc = BeautifulSoup(" ".join(filter(None, [item.get("description"), item.get("qualifications")])), "html.parser").get_text(" ", strip=True)
-                date = (item.get("published") or item.get("activation_date") or item.get("created_at") or "")[:10]
                 address = (item.get("google_location") or {}).get("address_components") or {}
                 loc = ", ".join(filter(None, [address.get("city"), address.get("country")])) or "Location unverified"
                 if item.get("is_work_from_home"):
                     loc += " (Remote)"
-                if not is_today_or_yesterday(date) or not is_relevant_opportunity(title, desc, location=loc, platform=self.platform):
+                if not is_relevant_opportunity(title, desc, location=loc, platform=self.platform):
                     continue
                 company = item.get("company_info") or item.get("company") or {}
                 code = company.get("code") or item.get("company_code")
@@ -85,13 +95,14 @@ class KalibrrConnector(BaseConnector):
 class BossjobConnector(BaseConnector):
     platform = "Bossjob"
     tier = 2
-    revision = 2
+    revision = 3
 
     def fetch(self, query: str = "developer", location: str = "Philippines") -> List[Job]:
         self.last_error = ""
         jobs: List[Job] = []
         try:
-            params = urllib.parse.urlencode({"query": query, "size": 50, "country_id": 167})
+            params = urllib.parse.urlencode({"query": query, "size": 30, "country_id": 167,
+                                             "sort": 1, "page": 1, "source": "web"})
             url = f"https://bossjob.ph/bossjob-api-server/jobs/search?{params}"
             req = urllib.request.Request(url, headers={**HEADERS, "Accept": "application/json", "Role-Id": "1"})
             with self.open_url(req, timeout=12) as resp:
@@ -229,7 +240,7 @@ class JobStreetConnector(BaseConnector):
 
 class JobStreetCatalogConnector(JobStreetConnector):
     is_feed = True
-    revision = 6
+    revision = 7
     checkpointed_feed = True
     PAGE_SIZE = 100
 
@@ -241,10 +252,13 @@ class JobStreetCatalogConnector(JobStreetConnector):
         self.next_feed_state = state
         page = state.get("page", 1)
         now = time.time()
-        if state.get("days") != 2:
+        start, _ = scrape_date_window()
+        window_start = start.date().isoformat()
+        if state.get("days") != 2 or state.get("window_start") != window_start:
             page = 1
             state.update(page=1, previous_page="")
         state["days"] = 2
+        state["window_start"] = window_start
         if page == 1:
             state.update(cycle_started=now, full=False)
         try:

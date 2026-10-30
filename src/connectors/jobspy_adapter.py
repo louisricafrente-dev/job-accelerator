@@ -2,7 +2,7 @@ import json
 import logging
 from typing import List
 from src.connectors.base import BaseConnector, logger
-from src.models import Job, is_today_or_yesterday
+from src.models import Job, is_today_or_yesterday, scrape_request_hours
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 class _JobSpyErrors(logging.Handler):
@@ -15,7 +15,7 @@ class _JobSpyErrors(logging.Handler):
 
 
 class JobSpyAdapter(BaseConnector):
-    revision = 4
+    revision = 5
     supports_group_steps = True
 
     def __init__(self, platform_name: str, site_name: str, tier: int):
@@ -30,10 +30,14 @@ class JobSpyAdapter(BaseConnector):
         from bs4 import BeautifulSoup
         jobs: List[Job] = []
         seen = set()
-        for url in (
-            "https://www.ziprecruiter.com/Jobs/Remote-Software-Developer",
-            "https://www.ziprecruiter.com/Jobs/Remote-Web-Developer",
+        for term in (
+            "Remote Software Developer",
+            "Remote Web Developer",
         ):
+            from urllib.parse import urlencode
+            import math
+            url = "https://www.ziprecruiter.com/jobs-search?" + urlencode({
+                "search": term, "location": "Remote", "days": math.ceil(scrape_request_hours() / 24)})
             resp = self.get_url(url, impersonate="safari17_0", timeout=12)
             if resp.status_code == 200 and resp.text:
                 soup = BeautifulSoup(resp.text, "html.parser")
@@ -44,7 +48,9 @@ class JobSpyAdapter(BaseConnector):
                     for item in data.get("itemListElement", []):
                         title = str(item.get("name") or "").strip()
                         job_url = str(item.get("url") or "").strip()
-                        if not title or not job_url or job_url in seen or not is_relevant_opportunity(title, ""):
+                        if (not title or not job_url or job_url in seen
+                                or not is_today_or_yesterday(item.get("datePosted", ""))
+                                or not is_relevant_opportunity(title, "")):
                             continue
                         seen.add(job_url)
                         comp = "Direct Employer"
@@ -72,10 +78,9 @@ class JobSpyAdapter(BaseConnector):
         try:
             import importlib
             jobspy = importlib.import_module("jobspy")
-            if self.site_name == "zip_recruiter" and getattr(jobspy, "__file__", None):
-                return self._fetch_ziprecruiter_ldjson()
             scrape_jobs = getattr(jobspy, "scrape_jobs")
-            search_loc = "Remote" if self.site_name == "glassdoor" and location.lower() == "philippines" else location
+            query = query.strip() or "software developer"
+            search_loc = "Remote" if self.site_name in ("glassdoor", "zip_recruiter") and location.lower() == "philippines" else location
             country = "philippines" if self.site_name == "indeed" else ("usa" if self.site_name == "glassdoor" else None)
             wanted = 15 if self.site_name == "linkedin" else 35
             if group_size > 1:
@@ -91,7 +96,7 @@ class JobSpyAdapter(BaseConnector):
                         location=search_loc,
                         results_wanted=wanted,
                         country_indeed=country,
-                        hours_old=48,
+                        hours_old=scrape_request_hours(),
                         proxies=[proxy] if proxy else None
                     )
                 finally:

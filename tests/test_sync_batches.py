@@ -272,20 +272,20 @@ class TestSyncBatches(unittest.TestCase):
         self.run_batch(["a", "b"], budget=10)
         self.assertEqual(len(get_jobs(self.db)), 2, "re-fetch after a crash must not duplicate saved jobs")
 
-    def test_remotive_fetches_one_unfiltered_feed_without_lowering_result_count(self):
+    def test_remotive_fetches_one_bounded_recent_feed(self):
         from src.connectors.remote_feed import RemotiveConnector
         from datetime import datetime, timezone
         from unittest.mock import MagicMock
         data = {"jobs": [{"title": "Junior Android Developer", "url": f"https://remotive.example/{i}",
                            "publication_date": datetime.now(timezone.utc).date().isoformat()}
-                          for i in range(250)]}
+                          for i in range(100)]}
         response = MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps(data).encode()
         with patch("urllib.request.urlopen", return_value=response) as fetch:
             jobs = RemotiveConnector().fetch()
         fetch.assert_called_once()
-        self.assertEqual(fetch.call_args.args[0].full_url, "https://remotive.com/api/remote-jobs")
-        self.assertEqual(len(jobs), 250)
+        self.assertEqual(fetch.call_args.args[0].full_url, "https://remotive.com/api/remote-jobs?limit=100")
+        self.assertEqual(len(jobs), 100)
 
     def test_two_matrix_edits_preserve_rate_limit_cooldown(self):
         self.board.error = "HTTP 429"
