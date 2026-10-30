@@ -57,8 +57,8 @@ class TestSyncErrors(unittest.TestCase):
             self.assertEqual(fetch.call_count, 2)
         with patch("urllib.request.urlopen") as fetch:
             fetch.return_value.__enter__.return_value.read.return_value = b"[]"
-            self.assertEqual(aggregator.run_sync()["status"], "ok")
-            self.assertEqual(aggregator.run_sync()["status"], "ok")
+            self.assertEqual(aggregator.run_sync()["status"], "partial")
+            self.assertEqual(aggregator.run_sync()["status"], "partial")
             self.assertEqual(fetch.call_count, 1)
         self.assertEqual(connector.last_error, "")
 

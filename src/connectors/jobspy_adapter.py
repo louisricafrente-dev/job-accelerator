@@ -15,14 +15,17 @@ class _JobSpyErrors(logging.Handler):
 
 
 class JobSpyAdapter(BaseConnector):
-    revision = 5
+    revision = 6
     supports_group_steps = True
+    checkpointed_query = True
 
     def __init__(self, platform_name: str, site_name: str, tier: int):
         self.platform = platform_name
         self.site_name = site_name
         self.tier = tier
         self.is_feed = (site_name == "zip_recruiter")
+        self.checkpointed_feed = self.is_feed
+        self.checkpointed_query = not self.is_feed
         self.query_group_size = 5 if site_name in ("linkedin", "indeed") else 1
         self.last_error = ""
 
@@ -75,6 +78,9 @@ class JobSpyAdapter(BaseConnector):
         self.last_search_complete = False
         self.last_raw_count = 0
         jobs: List[Job] = []
+        query = query.strip() or "software developer"
+        state = self.page_state(query)
+        offset = state.get("offset", 0)
         try:
             import importlib
             jobspy = importlib.import_module("jobspy")
@@ -95,6 +101,7 @@ class JobSpyAdapter(BaseConnector):
                         search_term=query,
                         location=search_loc,
                         results_wanted=wanted,
+                        offset=offset,
                         country_indeed=country,
                         hours_old=scrape_request_hours(),
                         proxies=[proxy] if proxy else None
@@ -120,10 +127,20 @@ class JobSpyAdapter(BaseConnector):
                     fallback_jobs = self._fetch_ziprecruiter_ldjson()
                     if fallback_jobs:
                         self.last_error = ""
+                        self.finish_page(state, [j.job_url for j in fallback_jobs], [j.date_posted for j in fallback_jobs], False)
+                        self.coverage_warning = "Coverage limited: ZipRecruiter HTML fallback has no verified continuation"
                         return fallback_jobs
                 except Exception as zr_exc:
                     self.last_error = str(zr_exc) or self.last_error
             import pandas as pd
+            rows = df.to_dict("records")
+            more = not errors and len(df) >= wanted
+            if offset + len(df) >= 1000:
+                more = False
+                self.coverage_warning = "Coverage limited: provider search reached its approximately 1000-result ceiling"
+            self.finish_page(state, [str(row.get("job_url") or "") for row in rows],
+                             [row.get("date_posted") for row in rows], more)
+            state["offset"] = offset + wanted if more else 0
             for _, row in df.iterrows():
                 title = str(row.get("title", "")).strip()
                 company = str(row.get("company", "")).strip()

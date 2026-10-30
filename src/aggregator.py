@@ -175,7 +175,8 @@ class Aggregator:
             q.strip() for q in (queries if queries is not None else DEFAULT_QUERIES)
             if isinstance(q, str) and q.strip()
         ))
-        if budget_seconds is None and any(getattr(conn, "checkpointed_feed", False) is True for conn in self.connectors):
+        if budget_seconds is None and any(getattr(conn, "checkpointed_feed", False) is True or
+                                          getattr(conn, "checkpointed_query", False) is True for conn in self.connectors):
             budget_seconds = 150
         if budget_seconds is not None:
             from src.sync_batches import run_batch
@@ -212,6 +213,8 @@ class Aggregator:
             self.log_event(f"[Orchestrator] Multi-board sync cycle started across {len(self.connectors)} platforms.")
             def execute_connector(conn: BaseConnector) -> List[Job]:
                 now = time.time()
+                limit = getattr(conn, "coverage_limit", "")
+                conn.coverage_warning = limit if isinstance(limit, str) else ""
                 # 1. Check connector cache (prevents 429 rate limits & duplicate network overhead)
                 cache_key = (conn.platform, tuple(sorted(str(q).strip().lower() for q in search_queries)))
                 if not force and cache_key in self._cache:
@@ -224,6 +227,9 @@ class Aggregator:
                             "tier": conn.tier,
                             "timestamp": time.strftime("%H:%M:%S")
                         }
+                        if conn.coverage_warning:
+                            self.platform_telemetry[conn.platform].update(coverage_warning=conn.coverage_warning,
+                                                                         error=conn.coverage_warning)
                         return cached_entry["jobs"]
 
                 results: List[Job] = []
@@ -298,6 +304,9 @@ class Aggregator:
                     self._cache.pop(cache_key, None)
                 else:
                     self._cache[cache_key] = {"timestamp": now, "jobs": results}
+                if conn.coverage_warning:
+                    self.platform_telemetry[conn.platform].update(coverage_warning=conn.coverage_warning,
+                                                                 error=conn.coverage_warning)
                 return results
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
@@ -330,7 +339,7 @@ class Aggregator:
                 self.log_event(f"[Database] Ingestion notice: {e}")
 
             summary = {
-                "status": "error" if ingestion_error else ("partial" if any(p.get("status") == "error" for p in self.platform_telemetry.values()) else "ok"),
+                "status": "error" if ingestion_error else ("partial" if any(p.get("status") == "error" or p.get("coverage_warning") for p in self.platform_telemetry.values()) else "ok"),
                 "error": ingestion_error,
                 "is_syncing": False,
                 "total_fetched": len(all_jobs),

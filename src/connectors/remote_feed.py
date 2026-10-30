@@ -12,6 +12,8 @@ class RemoteOKConnector(BaseConnector):
     platform = "Remote OK"
     tier = 3
     is_feed = True
+    revision = 2
+    coverage_limit = "Coverage limited: Remote OK exposes a recent feed without a verified date-range or history cursor"
 
     def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
         self.last_error = ""
@@ -56,6 +58,8 @@ class WeWorkRemotelyConnector(BaseConnector):
     platform = "We Work Remotely"
     tier = 3
     is_feed = True
+    revision = 2
+    coverage_limit = "Coverage limited: category RSS snapshots do not establish complete jobsite date coverage"
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -119,6 +123,8 @@ class ArcConnector(BaseConnector):
     platform = "Arc"
     tier = 3
     is_feed = True
+    revision = 2
+    coverage_limit = "Coverage limited: Arc public landing-page results have no verified date-ordered continuation"
 
     def fetch(self, query: str = "", location: str = "remote") -> List[Job]:
         self.last_error = ""
@@ -172,7 +178,8 @@ class RemotiveConnector(BaseConnector):
     platform = "Remotive"
     tier = 3
     is_feed = True
-    revision = 2
+    revision = 3
+    coverage_limit = "Coverage limited: Remotive public feed is delayed 24 hours and has no verified date-range pagination"
 
     def fetch(self, query: str = "software-dev", location: str = "remote") -> List[Job]:
         self.last_error = ""
@@ -223,17 +230,33 @@ class HimalayasConnector(BaseConnector):
     platform = "Himalayas"
     tier = 3
     is_feed = True
-    revision = 2
+    revision = 3
+    checkpointed_feed = True
 
     def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
         self.last_error = ""
         jobs: List[Job] = []
+        state = self.page_state()
         try:
-            url = "https://himalayas.app/jobs/api/search?sort=recent&page=1"
+            params = {"limit": 20}
+            if state.get("cursor"):
+                params["cursor"] = state["cursor"]
+            url = "https://himalayas.app/jobs/api?" + urllib.parse.urlencode(params)
             req = urllib.request.Request(url, headers=HEADERS)
             with self.open_url(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                for item in data.get("jobs", []):
+                items = data.get("jobs")
+                if not isinstance(items, list):
+                    raise RuntimeError("Himalayas returned an invalid feed")
+                cursor = data.get("nextCursor")
+                if cursor and cursor == state.get("cursor"):
+                    raise RuntimeError("Himalayas repeated its cursor; progress retained")
+                self.finish_page(state, [item.get("guid") or item.get("applicationLink") or "" for item in items],
+                                 [item.get("pubDate") for item in items], bool(cursor), ordered=True)
+                if not cursor and data.get("totalCount", 0) > data.get("offset", 0) + len(items):
+                    self.coverage_warning = "Coverage limited: Himalayas omitted its continuation cursor before the feed ended"
+                state.update(cursor=cursor, total=data.get("totalCount", 0))
+                for item in items:
                     title = item.get("title", "")
                     desc = item.get("excerpt", "") or item.get("description", "")
                     if not title or not is_relevant_opportunity(title, desc):
@@ -269,44 +292,52 @@ class JobicyConnector(BaseConnector):
     platform = "Jobicy"
     tier = 3
     is_feed = True
-    _cached_data = None
-    _last_fetch = 0
-
+    revision = 2
+    checkpointed_feed = True
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""
-        import time
         jobs: List[Job] = []
-        now = time.time()
-        if not JobicyConnector._cached_data or (now - JobicyConnector._last_fetch > 60):
-            try:
-                url = "https://jobicy.com/api/v2/remote-jobs?count=50&tag=dev"
-                req = urllib.request.Request(url, headers=HEADERS)
-                with self.open_url(req, timeout=8) as resp:
-                    JobicyConnector._cached_data = json.loads(resp.read().decode("utf-8")).get("jobs", [])
-                    JobicyConnector._last_fetch = now
-            except urllib.error.HTTPError as e:
-                self.last_error = str(e)
-                if e.code == 429:
-                    logger.warning("[Jobicy] Rate limited by upstream API (HTTP 429). Skipping.")
-                else:
-                    logger.warning(f"[Jobicy] HTTP error: {e}")
-                return []
-            except Exception as e:
-                self.last_error = str(e) or type(e).__name__
-                logger.warning(f"[{self.platform}] fetch failed: {e}")
-                return []
+        state = self.page_state()
+        try:
+            params = {"count": 50}
+            if state.get("cursor"):
+                params["cursor"] = state["cursor"]
+            url = "https://jobicy.com/api/jobs?" + urllib.parse.urlencode(params)
+            with self.open_url(urllib.request.Request(url, headers=HEADERS), timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            raw_list = data.get("jobs")
+            if not isinstance(raw_list, list) or data.get("success") is False:
+                raise RuntimeError("Jobicy returned an invalid feed")
+            cursor = data.get("nextCursor")
+            if data.get("hasMore") and not cursor:
+                raise RuntimeError("Jobicy omitted its continuation cursor")
+            if cursor and cursor == state.get("cursor"):
+                raise RuntimeError("Jobicy repeated its cursor; progress retained")
+            self.finish_page(state, [str(item.get("id") or "") for item in raw_list],
+                             [item.get("pubDate") for item in raw_list], bool(cursor), ordered=True)
+            state["cursor"] = cursor
+        except Exception as exc:
+            self.last_error = str(exc) or type(exc).__name__
+            logger.warning("[%s] fetch failed: %s", self.platform, self.last_error)
+            return []
 
-        raw_list = JobicyConnector._cached_data or []
         for item in raw_list:
             title = item.get("jobTitle", "")
-            if not title or not is_relevant_opportunity(title, ""):
+            description = item.get("jobDescription") or item.get("jobExcerpt") or ""
+            if not title or not is_relevant_opportunity(title, description):
                 continue
             pub_date = str(item.get("pubDate", ""))
             if not is_today_or_yesterday(pub_date):
                 continue
             company = item.get("companyName", "Tech Employer")
             link = item.get("url", "https://jobicy.com")
-            sal = f"{item.get('annualSalaryMin', '')} - {item.get('annualSalaryMax', '')} {item.get('salaryCurrency', '')}".strip()
+            low = item.get("salaryMin", item.get("annualSalaryMin"))
+            high = item.get("salaryMax", item.get("annualSalaryMax"))
+            sal = " - ".join(str(value) for value in (low, high) if value is not None)
+            if sal:
+                sal = f"{sal} {item.get('salaryCurrency') or ''}".strip()
+                if item.get("salaryPeriod"):
+                    sal += f"/{item['salaryPeriod']}"
             jobs.append(Job(
                 title=title,
                 company=company,
@@ -314,9 +345,10 @@ class JobicyConnector(BaseConnector):
                 platform=self.platform,
                 tier=self.tier,
                 job_url=link,
-                salary=sal if sal != "-" else "",
+                salary=sal,
+                description=description,
                 role_category=classify_role(title),
-                experience_level=classify_experience_level(title),
+                experience_level=classify_experience_level(title, description),
                 date_posted=pub_date
             ))
         return jobs
@@ -324,21 +356,34 @@ class JobicyConnector(BaseConnector):
 class FreelancerConnector(BaseConnector):
     platform = "Freelancer"
     tier = 2
-    revision = 2
+    revision = 3
+    checkpointed_query = True
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""
         import datetime
         jobs: List[Job] = []
+        state = self.page_state(query)
+        offset = state.get("offset", 0)
         try:
             start, end = scrape_date_window()
             params = urllib.parse.urlencode({"query": query.strip(), "compact": "true", "limit": 25,
+                                             "offset": offset,
                                              "from_time": int(start.timestamp()), "to_time": int(end.timestamp()) - 1})
             url = f"https://www.freelancer.com/api/projects/0.1/projects/active?{params}"
             req = urllib.request.Request(url, headers=HEADERS)
             with self.open_url(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                for p in data.get("result", {}).get("projects", []):
+                payload = data.get("result", {})
+                items = payload.get("projects")
+                if not isinstance(items, list):
+                    raise RuntimeError("Freelancer returned an invalid search response")
+                total = payload.get("total_count")
+                more = offset + len(items) < total if isinstance(total, int) else len(items) == 25
+                self.finish_page(state, [str(item.get("id") or item.get("seo_url") or "") for item in items],
+                                 [item.get("submitdate") for item in items], more)
+                state["offset"] = offset + 25 if more else 0
+                for p in items:
                     title = p.get("title", "")
                     desc = p.get("preview_description", "")
                     if not title or not is_relevant_opportunity(title, desc):
@@ -374,7 +419,8 @@ class UpworkConnector(BaseConnector):
     platform = "Upwork"
     tier = 2
     is_feed = True
-    revision = 2
+    revision = 3
+    coverage_limit = "Coverage limited: once-daily Upwork/flconsole can return only the last 30 minutes (up to 10 jobs), not two-day backfill"
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -436,6 +482,8 @@ class WellfoundConnector(BaseConnector):
     platform = "Wellfound"
     tier = 2
     is_feed = True
+    revision = 2
+    coverage_limit = "Coverage limited: Wellfound role landing pages do not expose verified publication-date pagination; authenticated access may be required"
     _cached_jobs = None
     _last_fetch = 0
 
@@ -540,6 +588,8 @@ class ContraConnector(BaseConnector):
     platform = "Contra"
     tier = 2
     is_feed = True
+    revision = 2
+    coverage_limit = "Coverage limited: Contra anonymous page does not expose a verified opportunity feed; authenticated source required"
     _cached_jobs = None
     _last_fetch = 0
 
@@ -594,7 +644,8 @@ class FlexJobsConnector(BaseConnector):
     platform = "FlexJobs"
     tier = 2
     is_feed = True
-    revision = 3
+    revision = 4
+    coverage_limit = "Coverage limited: FlexJobs requires an accessible authorized search/feed with publication dates and pagination"
     _cached_jobs = None
     _last_fetch = 0
 

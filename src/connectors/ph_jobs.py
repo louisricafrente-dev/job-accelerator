@@ -14,7 +14,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 class KalibrrConnector(BaseConnector):
     platform = "Kalibrr"
     tier = 1
-    revision = 3
+    revision = 4
     is_feed = True
     checkpointed_feed = True
     PAGE_SIZE = 50
@@ -24,6 +24,7 @@ class KalibrrConnector(BaseConnector):
         self.last_error = ""
         self.last_fetch_mode = "newest-first date window"
         self.has_more = False
+        self.coverage_warning = ""
         state = dict(getattr(self, "feed_state", {}))
         start, _ = scrape_date_window()
         window_start = start.date().isoformat()
@@ -48,8 +49,7 @@ class KalibrrConnector(BaseConnector):
                 raise RuntimeError("Kalibrr repeated a catalogue page; progress retained")
             dates = [normalize_date(item.get("activation_date") or item.get("published") or item.get("created_at"))
                      for item in items]
-            reached_old_page = bool(dates) and all(date and date < window_start for date in dates)
-            self.has_more = bool(items) and offset + len(items) < total and not reached_old_page
+            self.finish_page(state, ids, dates, offset + len(items) < total, ordered=True)
             if self.has_more and len(items) < self.PAGE_SIZE:
                 raise RuntimeError("Kalibrr catalogue page is truncated; progress retained")
             jobs = []
@@ -95,21 +95,33 @@ class KalibrrConnector(BaseConnector):
 class BossjobConnector(BaseConnector):
     platform = "Bossjob"
     tier = 2
-    revision = 3
+    revision = 4
+    checkpointed_query = True
 
     def fetch(self, query: str = "developer", location: str = "Philippines") -> List[Job]:
         self.last_error = ""
         jobs: List[Job] = []
+        state = self.page_state(query)
+        page = state.get("page", 1)
         try:
             params = urllib.parse.urlencode({"query": query, "size": 30, "country_id": 167,
-                                             "sort": 1, "page": 1, "source": "web"})
+                                             "sort": 1, "page": page, "source": "web"})
             url = f"https://bossjob.ph/bossjob-api-server/jobs/search?{params}"
             req = urllib.request.Request(url, headers={**HEADERS, "Accept": "application/json", "Role-Id": "1"})
             with self.open_url(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 if data.get("code") != 0:
                     raise RuntimeError("Bossjob search failed: " + str(data.get("message", "Unknown error")))
-                for item in data.get("data", {}).get("jobs", []):
+                payload = data.get("data", {})
+                items = payload.get("jobs", [])
+                # Latest is ranked by refresh time, not original publication time.
+                # Do not walk the historical catalogue or stop on an old page.
+                more = page < 2 and payload.get("total_pages", page) > page
+                self.finish_page(state, [str(item.get("id") or item.get("job_url") or "") for item in items],
+                                 [item.get("published_at") for item in items], more)
+                state["page"] = page + 1
+                self.coverage_warning = "Coverage limited: Bossjob ranks refreshed posts; publication-date cutoff is unavailable (two recent pages per keyword)"
+                for item in items:
                     title = item.get("job_title", "")
                     if not is_relevant_opportunity(title, ""):
                         continue
@@ -147,7 +159,7 @@ class JobStreetConnector(BaseConnector):
     platform = "JobStreet"
     tier = 1
     is_feed = False
-    revision = 5
+    revision = 6
     query_group_size = 5
     MAX_PAGES = 3
 
@@ -163,7 +175,7 @@ class JobStreetConnector(BaseConnector):
             desc = " ".join(filter(None, [item.get("teaser", ""), " ".join(str(b) for b in bullets)]))
             if not title or not is_relevant_opportunity(title, desc):
                 continue
-            date_val = (item.get("listingDate") or "")[:10]
+            date_val = normalize_date(item.get("listingDate") or "")
             if not is_today_or_yesterday(date_val):
                 continue
             comp = (item.get("advertiser") or {}).get("description") or "Company Confidential"
@@ -235,12 +247,14 @@ class JobStreetConnector(BaseConnector):
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
             logger.error(f"[{self.platform}] fetch failed: {e}")
+        if not self.last_error and not self.last_search_complete:
+            self.coverage_warning = "Coverage limited: legacy JobStreet keyword search ended before provider exhaustion; use the paginated catalogue"
         return jobs
 
 
 class JobStreetCatalogConnector(JobStreetConnector):
     is_feed = True
-    revision = 7
+    revision = 8
     checkpointed_feed = True
     PAGE_SIZE = 100
 
@@ -271,6 +285,7 @@ class JobStreetCatalogConnector(JobStreetConnector):
             items, total = payload.get("data"), payload.get("totalCount")
             if not isinstance(items, list) or type(total) is not int or total < 0:
                 raise RuntimeError("Invalid JobStreet catalogue response")
+            self.last_raw_count = len(items)
             ids = [str(item.get("id", "")) for item in items]
             fingerprint = ",".join(ids)
             if page > 1 and items and fingerprint == state.get("previous_page"):
@@ -294,104 +309,63 @@ class JobStreetCatalogConnector(JobStreetConnector):
 class OnlineJobsConnector(BaseConnector):
     platform = "OnlineJobs.ph"
     tier = 1
+    revision = 2
+    checkpointed_query = True
 
     def fetch(self, query: str = "developer", location: str = "philippines") -> List[Job]:
+        from bs4 import BeautifulSoup
         self.last_error = ""
-        jobs: List[Job] = []
+        jobs = []
+        state = self.page_state(query)
+        offset = state.get("offset", 0)
         try:
-            from bs4 import BeautifulSoup
-
-            clean_q = urllib.parse.quote(query.strip())
-            seen_urls = set()
-
-            for page in range(1, 3):
-                url = f"https://www.onlinejobs.ph/jobseekers/jobsearch?jobkeyword={clean_q}&fullTime=on&partTime=on&freelance=on&page={page}"
-                req = urllib.request.Request(url, headers=HEADERS)
-                try:
-                    with self.open_url(req, timeout=12) as resp:
-                        html = resp.read().decode("utf-8")
-                        soup = BeautifulSoup(html, "html.parser")
-                        cards = soup.select(".jobpost-cat-box")
-                        if not cards:
+            params = urllib.parse.urlencode({"jobkeyword": query.strip(), "fullTime": "on",
+                                             "partTime": "on", "freelance": "on"})
+            path = f"/jobseekers/jobsearch/{offset}" if offset else "/jobseekers/jobsearch"
+            with self.open_url(urllib.request.Request(f"https://www.onlinejobs.ph{path}?{params}", headers=HEADERS), timeout=12) as resp:
+                soup = BeautifulSoup(resp.read().decode("utf-8"), "html.parser")
+            cards = soup.select(".jobpost-cat-box")
+            if not cards and not soup.select("form[action*='jobsearch'], input[name='jobkeyword']"):
+                raise RuntimeError("OnlineJobs returned an unrecognized search page")
+            links, dates = [], []
+            for card in cards:
+                a = card.find("a", href=lambda href: href and "/jobseekers/job/" in href)
+                links.append(urllib.parse.urljoin("https://www.onlinejobs.ph", a["href"]) if a else "")
+                date = card.select_one("p.fs-13")
+                dates.append(date.get("data-temp") or date.get_text(strip=True).replace("Posted on ", "") if date else "")
+            next_offset = offset + len(cards)
+            has_next = any(f"/jobsearch/{next_offset}?" in a.get("href", "") or
+                           a.get("href", "").rstrip("/").endswith(f"/jobsearch/{next_offset}")
+                           for a in soup.select("a[href]"))
+            self.finish_page(state, links, dates, has_next, ordered=True)
+            state["offset"] = next_offset if self.has_more else 0
+            for card, link, raw_date in zip(cards, links, dates):
+                if not is_today_or_yesterday(raw_date):
+                    continue
+                h4 = card.select_one("h4")
+                if not h4:
+                    continue
+                for badge in h4.select(".badge"):
+                    badge.extract()
+                title = h4.get_text(strip=True)
+                desc = card.select_one(".desc")
+                description = desc.get_text() if desc else ""
+                if not title or not is_relevant_opportunity(title, description):
+                    continue
+                company = "Direct Client (OnlineJobs.ph)"
+                for prefix in ("Company:", "About Us:", "Client:"):
+                    if prefix in description:
+                        value = description.split(prefix, 1)[1].strip().split("\n")[0].split(".")[0].strip()
+                        if 2 < len(value) < 40:
+                            company = value
                             break
-                        page_valid_dates = 0
-                        for c in cards:
-                            h4 = c.select_one("h4")
-                            if not h4:
-                                continue
-                            badge = h4.select_one(".badge")
-                            if badge:
-                                badge.extract()
-                            title = h4.get_text(strip=True)
-                            if not title:
-                                continue
-
-                            date_el = c.select_one("p.fs-13")
-                            date_val = ""
-                            if date_el:
-                                date_val = date_el.get("data-temp", "")[:10]
-                                if not date_val:
-                                    raw_t = date_el.get_text(strip=True)
-                                    if "Posted on " in raw_t:
-                                        date_val = raw_t.replace("Posted on ", "")[:10]
-
-                            if not is_today_or_yesterday(date_val):
-                                continue
-                            page_valid_dates += 1
-
-                            a = c.find("a", href=lambda h: h and "/jobseekers/job/" in h)
-                            link = a["href"] if a else ""
-                            if link and not link.startswith("http"):
-                                link = "https://www.onlinejobs.ph" + link
-
-                            if not link or link in seen_urls:
-                                continue
-                            seen_urls.add(link)
-
-                            sal_el = c.select_one("dd.col")
-                            salary = sal_el.get_text(strip=True) if sal_el else ""
-
-                            company = "Direct Client (OnlineJobs.ph)"
-                            desc_el = c.select_one(".desc")
-                            desc_text = ""
-                            if desc_el:
-                                desc_text = desc_el.get_text()
-                                for prefix in ("Company:", "About Us:", "Client:"):
-                                    if prefix in desc_text:
-                                        parts = desc_text.split(prefix)
-                                        if len(parts) > 1:
-                                            first_line = parts[1].strip().split("\n")[0].split(".")[0].strip()
-                                            if 2 < len(first_line) < 40:
-                                                company = first_line
-                                                break
-
-                            if not is_relevant_opportunity(title, desc_text):
-                                continue
-
-                            jobs.append(Job(
-                                title=title,
-                                company=company,
-                                location="Philippines (Remote / Direct Client)",
-                                platform=self.platform,
-                                tier=self.tier,
-                                job_url=link,
-                                salary=salary,
-                                role_category=classify_role(title, desc_text),
-                                experience_level=classify_experience_level(title, desc_text),
-                                description=desc_text,
-                                date_posted=date_val
-                            ))
-                        if not page_valid_dates and cards:
-                            # OnlineJobs listings are sorted newest first; if entire page is older than yesterday, stop paginating
-                            break
-                    # Polite anti-ban delay between pages
-                    time.sleep(random.uniform(0.4, 0.7))
-                except Exception as page_e:
-                    self.last_error = str(page_e) or type(page_e).__name__
-                    logger.warning(f"[{self.platform}] page {page} fetch notice: {page_e}")
-                    break
-        except Exception as e:
-            self.last_error = str(e) or type(e).__name__
-            logger.error(f"[{self.platform}] fetch failed: {e}")
+                salary = card.select_one("dd.col")
+                jobs.append(Job(title=title, company=company, location="Philippines (Remote / Direct Client)",
+                                platform=self.platform, tier=self.tier, job_url=link,
+                                salary=salary.get_text(strip=True) if salary else "",
+                                role_category=classify_role(title), experience_level=classify_experience_level(title, description),
+                                description=description, date_posted=raw_date))
+        except Exception as exc:
+            self.last_error = str(exc) or type(exc).__name__
+            logger.error("[%s] fetch failed: %s", self.platform, self.last_error)
         return jobs
-
