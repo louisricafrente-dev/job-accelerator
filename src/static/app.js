@@ -17,20 +17,24 @@ let selectedLevels = new Set(['All']);
 let currentLevel = 'All';
 let currentRole = 'All';
 const ROLE_OPTIONS = {
-  'Web/Software Dev': [['Software Development', 'Software development'], ['Frontend', 'Frontend development'],
+  'Web/Software Dev': [['Frontend', 'Frontend development'],
     ['Backend', 'Backend development'], ['Full Stack', 'Full-stack development'], ['Mobile', 'Mobile development'],
-    ['DevOps / Cloud', 'DevOps & cloud'], ['QA / Testing', 'QA & testing'], ['IT Support', 'IT support & infrastructure'],
-    ['Cybersecurity', 'Cybersecurity']],
+    ['AI Development', 'AI development']],
+  'QA / Testing': [],
+  'IT / Cloud / Infrastructure': [['IT Support', 'IT support & infrastructure'], ['DevOps / Cloud', 'DevOps & cloud']],
+  'Cybersecurity': [],
   'Data/AI/ML': [['Data Analyst', 'Data analyst & business intelligence'], ['Data Science', 'Data science'],
-    ['Data Engineering', 'Data engineering'], ['AI / ML', 'AI & machine learning'],
+    ['Data Engineering', 'Data engineering'], ['AI / ML', 'Machine learning & research'],
     ['Business / Systems Analyst', 'Business & systems analyst'], ['Analyst', 'Other analyst roles']],
   'Virtual Assistant': [['Administrative Support', 'Administrative support'], ['Executive Assistance', 'Executive assistance'],
-    ['Customer Support', 'Customer support'], ['Data Entry', 'Data entry']],
+    ['Customer Support', 'Customer support'], ['Technical Support', 'Technical support'], ['Data Entry', 'Data entry']],
 };
-const ROLE_LABELS = {All: 'All jobs', 'Web/Software Dev': 'Tech & IT', 'Data/AI/ML': 'Data & Analytics',
-  'Virtual Assistant': 'Virtual Assistance'};
+const ROLE_LABELS = {All: 'All jobs', 'Web/Software Dev': 'Software Development', 'Data/AI/ML': 'Data & Analytics',
+  'QA / Testing': 'QA & Testing', 'IT / Cloud / Infrastructure': 'IT, Cloud & Infrastructure',
+  'Cybersecurity': 'Cybersecurity', 'Virtual Assistant': 'VA & Admin'};
 
 function roleFamily(role) {
+  if (role === 'Software Development') return 'Web/Software Dev';
   return Object.keys(ROLE_OPTIONS).find(family => family === role || ROLE_OPTIONS[family].some(([value]) => value === role)) || 'All';
 }
 
@@ -52,6 +56,10 @@ function syncRoleControls() {
   select.innerHTML = `<option value="${family}">All roles${family === 'All' ? '' : ' in ' + escapeHtml(roleLabel(family))}</option>` +
     families.map(group => `<optgroup label="${escapeHtml(roleLabel(group))}">${ROLE_OPTIONS[group].map(([value, label]) =>
       `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</optgroup>`).join('');
+  if (activeRole === 'Software Development') {
+    select.value = 'Web/Software Dev';
+    return;
+  }
   select.value = activeRole;
 }
 let currentPlatform = 'All';
