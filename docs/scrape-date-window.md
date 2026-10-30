@@ -22,15 +22,15 @@ Date-boundary stopping is used only on verified publication-ordered routes. Unkn
 | Jobicy | Current `/api/jobs`,50/page, opaque cursor, newest publication order | Walks global recent feed so fixed dev tag cannot silently exclude other configured roles. Stop when past yesterday; seven-day upstream availability still applies. |
 | Himalayas | `/jobs/api?limit=20`, opaque browse cursor, verified publication-date order | Search page1 contains mixed promoted results, so it is not used as date-boundary evidence. pubDate is source publication/update date; many fresh source rows can legitimately require many pages. |
 | Freelancer |25/page per keyword with offset and from_time/to_time for Manila yesterday00:00 through tomorrow00:00 exclusive | Continues to provider total/last page; repeated pages report failure. |
-| Bossjob | Latest sort1, at most two30-row sample pages per keyword | Latest is not verified original-publication order; page1 old records do not rule out fresh page2. Full window remains explicitly limited. No full historical catalogue walk. |
-| Remotive | Public recent feed request limit100; strict final date acceptance | Public API24hdelay and no verified date-range/cursor; explicit limited coverage. |
+| Bossjob | Latest sort1, adaptive30-row sample pages per keyword | Latest is not verified original-publication order; page1 old records do not rule out fresh page2. Continue while new eligible job URLs appear, stopping after three consecutive pages without new eligible matches, provider end/repeats, or eight pages (240 raw rows) per keyword. Full window remains explicitly limited. No full historical catalogue walk. |
+| Remotive | Public recent feed request limit200; strict final date acceptance | Public API24hdelay and no verified date-range/cursor; explicit limited coverage. |
 | Remote OK | Read the provider's recent API feed | No verified date-range/history pagination; explicit provider-feed-only coverage. |
 | We Work Remotely | All five configured category RSS feeds | Feed snapshots can include years-old rows and do not establish the entire jobsite window; explicit limited coverage. |
 | Arc | Public initial listing data | No verified date-ordered continuation from this integration; explicit limited coverage. |
 | Wellfound | Four public role landing pages | Ranking/pagination not verified; public access may be blocked; explicit limited coverage. |
 | Contra | Public anonymous page when usable | Anonymous probe exposed no opportunity feed; authenticated account/route needed; explicit limited coverage. |
 | FlexJobs | Existing authorized search/custom-feed path | Public probe403, no complete publication-date/pagination route verified. No undated full sitemap fallback. |
-| Upwork | Existing once/day flconsole request, last30min, limit10 | Provider cannot backfill two days through this interface. Daily low-volume policy unchanged, now explicitly limited. |
+| Upwork | Existing once/day flconsole request, last30min, limit50 | Provider cannot backfill two days through this interface. One request per day unchanged;50 leaves headroom under100/hour provider quota, now explicitly limited. |
 
 The configured19 sources remain enabled. Completing configured source requests is not a claim that every jobsite's full inventory has been enumerated. Relative provider hours/days may overfetch around midnight; invalid/future/old rows remain excluded. A fresh-window source with thousands of real rows requires more small pages; no arbitrary total cap disguises that volume. Existing two-hour execution budget/checkpoints remain, so an unfinished real cycle can require resume.
 
@@ -41,3 +41,9 @@ The configured19 sources remain enabled. Completing configured source requests i
 Bounded actual-source checks: OnlineJobs developer search advanced through30/30/30 raw pages and stopped at old dates; Freelancer advanced25/22 and exhausted; Jobicy advanced through three50-row pages; Himalayas advanced through three20-row cursor pages. These did not ingest production jobs and do not establish a completed real19-source cycle. See the workspace output/source-completion-live-2026-10-30.json.
 
 References: [Jobicy official API](https://github.com/Jobicy/remote-jobs-api), [Himalayas OpenAPI](https://himalayas.app/docs/openapi.json), [JobSpy](https://github.com/speedyapply/jobspy), [Freelancer official SDK filters](https://github.com/freelancer/freelancer-sdk-python/blob/master/freelancersdk/resources/projects/helpers.py), [Remotive API](https://github.com/remotive-com/remote-jobs-api). See [specific remaining-source proposals](source-coverage-proposals.md).
+
+## Safe fallback budgets (2026-10-30)
+
+Shared urllib/curl_cffi source transports stop after8MiB of decoded response data per request, including the challenge fallback. Oversized responses are errors, not empty successful feeds, and do not trigger proxy rotation. This cap does not control JobSpy internal HTTP requests or the separate flconsole RPC transport. Existing request timeouts, provider quota handling, two-hour cycle budget and durable checkpoints still apply.
+
+Ambiguous labels (recently/recent/new/active today) and invalid ISO values remain unknown even when a connector normalizes them before checking dates. Explicit relative dates use the Manila calendar. A larger fallback sample never bypasses publication dates, role/location eligibility or database deduplication. Three no-yield pages and eight-page Bossjob stops are sampling limits, not evidence of full date coverage.

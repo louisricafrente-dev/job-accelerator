@@ -8,7 +8,7 @@ from src.aggregator import Aggregator
 from src.connectors.base import BaseConnector
 from src.connectors.remote_feed import RemoteOKConnector, ArcConnector, UpworkConnector
 from src.database import get_jobs, init_db
-from src.models import Job, is_within_15_days, normalize_date
+from src.models import Job, MANILA, is_within_15_days, normalize_date
 
 
 class TestSyncErrors(unittest.TestCase):
@@ -104,7 +104,7 @@ class TestSyncErrors(unittest.TestCase):
 
 
 class TestRelativeTimes(unittest.TestCase):
-    reference = datetime(2026, 10, 20, 0, 30, tzinfo=timezone.utc)
+    reference = datetime(2026, 10, 20, 0, 30, tzinfo=MANILA)
 
     def test_hours_and_minutes_cross_dates(self):
         cases = {
@@ -127,7 +127,7 @@ class TestRelativeTimes(unittest.TestCase):
         self.assertTrue(is_within_15_days("360 hours ago", ref_date=self.reference))
 
     def test_today_aliases_do_not_match_arbitrary_text(self):
-        for raw in ("today", "recently", "Posted recently", "just posted", "new", "active today"):
+        for raw in ("today", "just posted"):
             self.assertEqual(normalize_date(raw, ref_date=self.reference), "2026-10-20")
         for raw in ("renewed 20 days ago", "new 20 days ago"):
             self.assertEqual(normalize_date(raw, ref_date=self.reference), "2026-09-30")

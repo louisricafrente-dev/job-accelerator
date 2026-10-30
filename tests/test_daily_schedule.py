@@ -91,7 +91,7 @@ class DailyScheduleTests(unittest.TestCase):
         with patch.dict(os.environ, {"FLCONSOLE_MCP_TOKEN": "test"}), patch(
                 "src.connectors.upwork_flconsole.fetch_jobs", return_value=[]) as fetch:
             run_claimed(self.db, command, Aggregator(self.db, [board]))
-        fetch.assert_called_once_with(board, limit=10)
+        fetch.assert_called_once_with(board, limit=50)
 
     def test_upwork_daily_slot_not_consumed_by_manual_sync(self):
         connector = UpworkConnector()
@@ -102,7 +102,7 @@ class DailyScheduleTests(unittest.TestCase):
             connector.daily_sync = True
             connector.fetch()
             connector.fetch()
-        fetch.assert_called_once_with(connector, limit=10)
+        fetch.assert_called_once_with(connector, limit=50)
 
     def test_midnight_during_manual_batch_runs_daily_upwork_before_completion(self):
         from src.aggregator import Aggregator

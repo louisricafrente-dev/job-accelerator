@@ -95,7 +95,7 @@ class KalibrrConnector(BaseConnector):
 class BossjobConnector(BaseConnector):
     platform = "Bossjob"
     tier = 2
-    revision = 4
+    revision = 5
     checkpointed_query = True
 
     def fetch(self, query: str = "developer", location: str = "Philippines") -> List[Job]:
@@ -114,18 +114,11 @@ class BossjobConnector(BaseConnector):
                     raise RuntimeError("Bossjob search failed: " + str(data.get("message", "Unknown error")))
                 payload = data.get("data", {})
                 items = payload.get("jobs", [])
-                # Latest is ranked by refresh time, not original publication time.
-                # Do not walk the historical catalogue or stop on an old page.
-                more = page < 2 and payload.get("total_pages", page) > page
-                self.finish_page(state, [str(item.get("id") or item.get("job_url") or "") for item in items],
-                                 [item.get("published_at") for item in items], more)
-                state["page"] = page + 1
-                self.coverage_warning = "Coverage limited: Bossjob ranks refreshed posts; publication-date cutoff is unavailable (two recent pages per keyword)"
                 for item in items:
                     title = item.get("job_title", "")
                     if not is_relevant_opportunity(title, ""):
                         continue
-                    pub_date = (item.get("published_at") or "")[:10]
+                    pub_date = normalize_date(item.get("published_at"))
                     if not is_today_or_yesterday(pub_date):
                         continue
                     company = item.get("company_name", "")
@@ -150,6 +143,23 @@ class BossjobConnector(BaseConnector):
                         experience_level=classify_experience_level(title),
                         date_posted=pub_date
                     ))
+                seen = set(state.get("useful_urls", []))
+                useful = {job.job_url for job in jobs} - seen
+                state["useful_urls"] = sorted(seen | useful)
+                state["empty_streak"] = 0 if useful else state.get("empty_streak", 0) + 1
+                # Refreshed ranking mixes old and new publication dates.
+                more = bool(items) and payload.get("total_pages", page) > page
+                reason = "provider end"
+                if state["empty_streak"] >= 3:
+                    more, reason = False, "three consecutive pages without new eligible jobs"
+                elif page >= 8:
+                    more, reason = False, "eight-page safety budget per keyword"
+                elif more:
+                    reason = "continuing bounded sample"
+                self.finish_page(state, [str(item.get("id") or item.get("job_url") or "") for item in items],
+                                 [item.get("published_at") for item in items], more)
+                state["page"] = page + 1
+                self.coverage_warning = f"Coverage limited: Bossjob refreshed ranking has no publication cutoff; {reason}"
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
             logger.error(f"[{self.platform}] fetch failed: {e}")

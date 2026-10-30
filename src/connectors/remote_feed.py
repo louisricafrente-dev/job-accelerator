@@ -189,7 +189,7 @@ class RemotiveConnector(BaseConnector):
         for cat in categories:
             try:
                 # The public API has no date-range parameter; it returns newest first.
-                url = "https://remotive.com/api/remote-jobs?limit=100"
+                url = "https://remotive.com/api/remote-jobs?limit=200"
                 req = urllib.request.Request(url, headers=HEADERS)
                 with self.open_url(req, timeout=12) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
@@ -420,7 +420,7 @@ class UpworkConnector(BaseConnector):
     tier = 2
     is_feed = True
     revision = 3
-    coverage_limit = "Coverage limited: once-daily Upwork/flconsole can return only the last 30 minutes (up to 10 jobs), not two-day backfill"
+    coverage_limit = "Coverage limited: once-daily Upwork/flconsole can return only the last 30 minutes (up to 50 jobs), not two-day backfill"
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -435,7 +435,7 @@ class UpworkConnector(BaseConnector):
             if self.db_path:
                 self.last_route = "FLCONSOLE"
             from src.connectors.upwork_flconsole import fetch_jobs
-            return fetch_jobs(self, limit=10) if self.db_path else fetch_jobs(self)
+            return fetch_jobs(self, limit=50) if self.db_path else fetch_jobs(self)
         if not feed_url:
             self.last_error = "Configuration required: Upwork retired public RSS; configure UPWORK_FEED_URL with an authorized feed"
             return []
