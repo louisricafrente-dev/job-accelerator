@@ -94,7 +94,7 @@ class TestRawDateRequests(unittest.TestCase):
     def test_unfiltered_feeds_request_small_recent_slice(self):
         for c, response, expected in [
             (RemotiveConnector(), b'{"jobs": []}', {"limit": ["100"]}),
-            (HimalayasConnector(), b'{"jobs": []}', {"sort": ["recent"], "page": ["1"]}),
+            (HimalayasConnector(), b'{"jobs": []}', {"limit": ["20"]}),
             (BossjobConnector(), b'{"code": 0, "data": {"jobs": []}}', {"size": ["30"], "sort": ["1"], "page": ["1"]}),
         ]:
             with self.subTest(platform=c.platform), patch.object(c, "open_url", return_value=io.BytesIO(response)) as fetch:

@@ -4,10 +4,13 @@ import math
 import re
 import time
 import urllib.request
+import hashlib
+import json
 from email.utils import parsedate_to_datetime
 from abc import ABC, abstractmethod
 from typing import List
-from src.models import Job
+from datetime import date
+from src.models import Job, normalize_date, scrape_date_window
 
 logger = logging.getLogger("connectors")
 
@@ -16,6 +19,57 @@ class BaseConnector(ABC):
     tier: int = 1
     db_path = None
     query_group_size = 1
+    coverage_warning = ""
+    coverage_limit = ""
+
+    def page_state(self, query=""):
+        start, _ = scrape_date_window()
+        window = start.date().isoformat()
+        saved = getattr(self, "feed_state" if getattr(self, "is_feed", False) else "query_state", {})
+        state = dict(saved) if isinstance(saved, dict) else {}
+        if state.get("window_start") != window or state.get("query", "") != query:
+            state = {"window_start": window, "query": query}
+        self.has_more = False
+        self.last_raw_count = 0
+        self.coverage_warning = ""
+        return state
+
+    def finish_page(self, state, ids, dates, more, *, ordered=False):
+        """Publish the next cursor only after validating this source page."""
+        if any(not str(uid or "").strip() for uid in ids):
+            raise ValueError("Source returned a row without an ID; progress retained")
+        fingerprint = hashlib.sha256(json.dumps(ids, default=str).encode()).hexdigest()
+        seen = list(state.get("seen_pages", []))
+        if ids and fingerprint in seen:
+            raise ValueError("Source repeated a page; progress retained")
+        normalized = []
+        for raw in dates:
+            value = normalize_date(raw)
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                value = ""
+            normalized.append(value)
+        known = [date for date in normalized if date]
+        if ordered and (known != sorted(known, reverse=True) or
+                        (known and state.get("last_date") and known[0] > state["last_date"])):
+            raise ValueError("Source publication order changed; date boundary cannot be verified")
+        old = bool(normalized) and all(date and date < state["window_start"] for date in normalized)
+        self.has_more = bool(more) and not (ordered and old)
+        if self.has_more and not ids:
+            raise ValueError("Source returned an empty continuation page; progress retained")
+        if any(not date for date in normalized):
+            self.coverage_warning = "Some source publication dates are missing; date coverage is unverified"
+            if ordered and not known:
+                self.has_more = False
+        if ids:
+            seen.append(fingerprint)
+        state.update(seen_pages=seen, pages_saved=state.get("pages_saved", 0) + 1,
+                     raw_seen=state.get("raw_seen", 0) + len(ids))
+        if known:
+            state["last_date"] = known[-1]
+        self.last_raw_count = len(ids)
+        setattr(self, "next_feed_state" if getattr(self, "is_feed", False) else "next_query_state", state)
 
     def fetch_group_step(self, queries):
         """Probe once; the scheduler saves results before scheduling individual coverage."""

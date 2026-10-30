@@ -127,7 +127,8 @@ class DailyScheduleTests(unittest.TestCase):
             run_claimed(self.db, command, aggregator)
         self.assertEqual(batches, [False, True])
         fetch.assert_called_once()
-        self.assertEqual(inbox.read(self.db)["status"], "complete")
+        self.assertEqual(inbox.read(self.db)["status"], "partial")
+        self.assertIn("30 minutes", inbox.read(self.db)["result"]["progress"]["coverage_issues"][0]["reason"])
         self.assertEqual(start_daily(self.db, Mock())["status"], "already_scheduled")
 
     def test_midnight_reuses_queued_manual_command_without_duplicate_dispatch(self):
