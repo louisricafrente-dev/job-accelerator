@@ -3023,7 +3023,15 @@ const MONITORED_BOARDS = [
   { key: 'Upwork', label: 'Upwork', domain: 'upwork.com', type: 'Direct Contract' },
   { key: 'Wellfound', label: 'Wellfound', domain: 'wellfound.com', type: 'Tech Startups' },
   { key: 'Contra', label: 'Contra', domain: 'contra.com', type: 'Direct Freelance' },
-  { key: 'FlexJobs', label: 'FlexJobs', domain: 'flexjobs.com', type: 'Screened Remote' }
+  { key: 'FlexJobs', label: 'FlexJobs', domain: 'flexjobs.com', type: 'Screened Remote' },
+  { key: 'Foundit.ph', label: 'Foundit PH', domain: 'foundit.com.ph', type: 'PH Job Portal' },
+  { key: 'VirtualStaff.ph', label: 'VirtualStaff.ph', domain: 'virtualstaff.ph', type: 'Direct Client PH' },
+  { key: 'Jobgether', label: 'Jobgether PH', domain: 'jobgether.com', type: 'PH Remote Feed' },
+  { key: 'PhilJobNet', label: 'PhilJobNet DOLE', domain: 'philjobnet.gov.ph', type: 'Gov PH Portal' },
+  { key: 'Working Nomads', label: 'Working Nomads', domain: 'workingnomads.com', type: 'Global Remote API' },
+  { key: 'DailyRemote', label: 'DailyRemote', domain: 'dailyremote.com', type: 'Worldwide Remote' },
+  { key: 'Real Work From Anywhere', label: 'Real Work From Anywhere', domain: 'realworkfromanywhere.com', type: '100% Worldwide' },
+  { key: 'Y Combinator', label: 'Y Combinator', domain: 'workatastartup.com', type: 'YC Startup Remote' }
 ];
 
 let telemetryTimer = null;

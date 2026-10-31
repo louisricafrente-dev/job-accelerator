@@ -490,7 +490,7 @@ class WellfoundConnector(BaseConnector):
     _last_fetch = 0
     _cached_window = 2
 
-    ROLES = ["location/philippines", "r/software-engineer", "r/full-stack-engineer", "r/android-developer", "r/web-developer"]
+    ROLES = ["location/philippines", "location/manila", "r/software-engineer", "r/full-stack-engineer", "r/frontend-engineer", "r/backend-engineer", "r/android-developer", "r/mobile-developer", "r/web-developer", "r/qa-engineer", "r/devops-engineer", "r/data-engineer"]
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -793,14 +793,16 @@ class WorkingNomadsConnector(BaseConnector):
                 if not hasattr(urllib.request.urlopen, '_mock_name'):
                   try:
                     from curl_cffi import requests as cffi_requests
-                    es_size = 200 if self.window_days > 2 else 80
+                    es_size = 250 if self.window_days > 2 else 100
                     es_payload = {
                         "size": es_size,
                         "sort": [{"pub_date": {"order": "desc"}}],
                         "query": {
                             "bool": {
                                 "must": [
-                                    {"terms": {"locations": ["Anywhere", "Asia", "Philippines"]}}
+                                    {"range": {"pub_date": {"gte": f"now-{max(self.window_days, 2) + 1}d/d"}}},
+                                    {"terms": {"category_name.raw": ["Development", "System Administration", "Information Security", "Data", "Customer Success", "Administration"]}},
+                                    {"terms": {"locations": ["Anywhere", "Asia", "Philippines"]}},
                                 ]
                             }
                         },
@@ -874,9 +876,11 @@ class DailyRemoteConnector(BaseConnector):
     is_feed = True
     revision = 1
     CATEGORY_URLS = [
+        "https://dailyremote.com/remote-software-development-jobs?sort_by=time&location=worldwide",
         "https://dailyremote.com/remote-software-development-jobs?sort_by=time",
-        "https://dailyremote.com/remote-support-jobs?sort_by=time",
-        "https://dailyremote.com/remote-data-jobs?sort_by=time",
+        "https://dailyremote.com/remote-qa-jobs?sort_by=time&location=worldwide",
+        "https://dailyremote.com/remote-support-jobs?sort_by=time&location=worldwide",
+        "https://dailyremote.com/remote-data-jobs?sort_by=time&location=worldwide",
     ]
     _cached_jobs = None
     _last_fetch = 0
