@@ -622,7 +622,7 @@ class PhilJobNetConnector(BaseConnector):
     tier = 2
     is_feed = True
     revision = 1
-    SEARCH_TERMS = ["developer", "software", "programmer", "quality assurance", "virtual assistant"]
+    SEARCH_TERMS = ["developer", "software", "programmer", "quality assurance", "virtual assistant", "information technology", "web", "system", "network", "data", "technical support", "computer"]
     _cached_jobs = None
     _last_fetch = 0
     _cached_window = 2
@@ -737,9 +737,13 @@ class JobgetherPHConnector(BaseConnector):
     revision = 1
     URLS = [
         "https://jobgether.com/remote-jobs/philippines",
+        "https://jobgether.com/remote-jobs/philippines?page=2",
         "https://jobgether.com/search-offers?keyword=software%20developer",
+        "https://jobgether.com/search-offers?keyword=web%20developer",
         "https://jobgether.com/search-offers?keyword=mobile%20developer",
         "https://jobgether.com/search-offers?keyword=qa%20engineer",
+        "https://jobgether.com/search-offers?keyword=data%20analyst",
+        "https://jobgether.com/search-offers?keyword=technical%20support",
         "https://jobgether.com/search-offers?keyword=virtual%20assistant",
     ]
     _cached_jobs = None
