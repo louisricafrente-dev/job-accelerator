@@ -11,11 +11,13 @@ REMOTE_KEYWORDS = REMOTE_PATTERNS
 
 DEDICATED_REMOTE_PLATFORMS = {
     "remote ok", "we work remotely", "remotive", "himalayas", "jobicy", "arc",
-    "contra", "flexjobs", "upwork", "freelancer"
+    "contra", "flexjobs", "upwork", "freelancer",
+    "working nomads", "dailyremote", "real work from anywhere", "y combinator"
 }
 
 DEDICATED_PH_PLATFORMS = {
-    "jobstreet", "onlinejobs.ph", "bossjob", "kalibrr"
+    "jobstreet", "onlinejobs.ph", "bossjob", "kalibrr",
+    "foundit.ph", "virtualstaff.ph", "philjobnet", "jobgether"
 }
 
 FOREIGN_BOARDS = {

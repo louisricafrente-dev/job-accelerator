@@ -12,9 +12,22 @@ from src.connectors.remote_feed import (
     UpworkConnector,
     WellfoundConnector,
     ContraConnector,
-    FlexJobsConnector
+    FlexJobsConnector,
+    WorkingNomadsConnector,
+    DailyRemoteConnector,
+    RealWorkFromAnywhereConnector,
+    YCombinatorConnector,
 )
-from src.connectors.ph_jobs import KalibrrConnector, BossjobConnector, JobStreetCatalogConnector, OnlineJobsConnector
+from src.connectors.ph_jobs import (
+    KalibrrConnector,
+    BossjobConnector,
+    JobStreetCatalogConnector,
+    OnlineJobsConnector,
+    FounditPHConnector,
+    VirtualStaffPHConnector,
+    PhilJobNetConnector,
+    JobgetherPHConnector,
+)
 from src.connectors.jobspy_adapter import JobSpyAdapter
 from src.database import insert_jobs, get_user_setting, set_user_setting, acquire_sync_lease, release_sync_lease
 from src.classifier import is_relevant_opportunity
@@ -61,12 +74,20 @@ def get_default_connectors() -> List[BaseConnector]:
         JobStreetCatalogConnector(),
         OnlineJobsConnector(),
         KalibrrConnector(),
+        FounditPHConnector(),
+        VirtualStaffPHConnector(),
+        JobgetherPHConnector(),
 
         # Tier 2 — High Value Startups, Direct Clients & Portals
         BossjobConnector(),
+        PhilJobNetConnector(),
         WellfoundConnector(),
         ContraConnector(),
         FlexJobsConnector(),
+        WorkingNomadsConnector(),
+        DailyRemoteConnector(),
+        RealWorkFromAnywhereConnector(),
+        YCombinatorConnector(),
         # Tier 3 — Global Remote & Direct APIs (High Reliability)
         RemotiveConnector(),
         HimalayasConnector(),

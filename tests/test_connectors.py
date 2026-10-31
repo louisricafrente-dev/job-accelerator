@@ -238,5 +238,82 @@ class TestConnectors(unittest.TestCase):
         self.assertEqual(jobs[0].platform, "FlexJobs")
         self.assertEqual(jobs[0].job_url, "https://www.flexjobs.com/jobs/telecommuting-software-dev-999")
 
+    @patch("urllib.request.urlopen")
+    def test_working_nomads_parsing_and_window(self, mock_urlopen):
+        import json
+        from src.connectors.remote_feed import WorkingNomadsConnector
+        from src.models import normalize_date
+
+        WorkingNomadsConnector._cached_jobs = None
+        WorkingNomadsConnector._last_fetch = 0
+
+        today = normalize_date("today")
+        payload = [
+            {
+                "title": "Full Stack React & Node.js Developer",
+                "company_name": "Global Nomad Tech",
+                "category_name": "Development",
+                "description": "Building web apps with React and TypeScript.",
+                "location": "Anywhere",
+                "pub_date": f"{today}T09:00:00Z",
+                "url": "https://www.workingnomads.com/jobs/full-stack-react-101"
+            },
+            {
+                "title": "Software Engineer",
+                "company_name": "US Locked Co",
+                "category_name": "Development",
+                "description": "Must reside in the United States only.",
+                "location": "United States only",
+                "pub_date": f"{today}T09:00:00Z",
+                "url": "https://www.workingnomads.com/jobs/us-only-102"
+            }
+        ]
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(payload).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        connector = WorkingNomadsConnector()
+        jobs = connector.fetch()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].title, "Full Stack React & Node.js Developer")
+        self.assertEqual(jobs[0].platform, "Working Nomads")
+        self.assertEqual(jobs[0].date_posted, today)
+
+    @patch("urllib.request.urlopen")
+    def test_ycombinator_parsing_and_location_filter(self, mock_urlopen):
+        import json
+        from src.connectors.remote_feed import YCombinatorConnector
+        from src.models import normalize_date
+
+        YCombinatorConnector._cached_jobs = None
+        YCombinatorConnector._last_fetch = 0
+
+        today = normalize_date("today")
+        payload = {
+            "items": [
+                {
+                    "id": "https://news.ycombinator.com/item?id=9001",
+                    "url": "https://news.ycombinator.com/item?id=9001",
+                    "date_published": f"{today}T10:00:00Z",
+                    "content_html": "<p>Acme YC (W26) | Full Stack Software Engineer | Remote (Worldwide) | $100k-$140k</p><p>Hiring React/Python/Kotlin engineers worldwide.</p>"
+                },
+                {
+                    "id": "https://news.ycombinator.com/item?id=9002",
+                    "url": "https://news.ycombinator.com/item?id=9002",
+                    "date_published": f"{today}T10:00:00Z",
+                    "content_html": "<p>USGovCorp | Backend Engineer | REMOTE (US only) | U.S. Citizenship Required</p>"
+                }
+            ]
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(payload).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        connector = YCombinatorConnector()
+        jobs = connector.fetch()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].company, "Acme YC (W26)")
+        self.assertEqual(jobs[0].platform, "Y Combinator")
+
 if __name__ == "__main__":
     unittest.main()
