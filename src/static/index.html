@@ -11,7 +11,7 @@
   <link rel="shortcut icon" href="/static/favicon.ico">
   <meta name="theme-color" content="#080c14">
   <link rel="stylesheet" href="/static/style.css?v=20261031-pro-max">
-  <link rel="stylesheet" href="/static/gmail-hub.css?v=20261029-gmail-hub">
+  <link rel="stylesheet" href="/static/gmail-hub.css?v=20261031-gmail-hub">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -61,7 +61,7 @@
           <span class="tab-label">Archived</span>
           <span class="tab-count" id="stat-ignored">0</span>
         </button>
-        <button class="status-tab" data-val="gmail" onclick="setStatus('gmail', this)" title="Gmail Hub — Centralized Email Updates, Requirements & Interviews">
+        <button class="status-tab" data-val="gmail" onclick="setStatus('gmail', this)" title="Gmail Hub: Action items, requirements, exams, and interviews">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
             <polyline points="22 6 12 13 2 6"/>
@@ -531,10 +531,10 @@
     <section id="gmail-hub-container" class="gmail-hub-container" style="display:none" aria-labelledby="gmail-hub-title">
       <div class="gmail-hub-banner">
         <div>
-          <p class="gh-eyebrow">APPLICATION CORRESPONDENCE</p>
+          <p class="gh-eyebrow">ACTION ITEMS &amp; REQUIREMENTS</p>
           <h2 id="gmail-hub-title">Gmail Hub</h2>
-          <p class="gh-muted">Your messages, together with the application they belong to.</p>
-          <p class="gh-muted">Daily at 10 AM Manila: last 24 hours, then your digest. Uncertain matches leave the Pipeline unchanged.</p>
+          <p class="gh-muted">Only messages that need your action appear here: requirements, incomplete forms, technical exams, interviews, and offers.</p>
+          <p class="gh-muted">Confirmations and rejections update your Pipeline automatically in the background without cluttering this inbox.</p>
         </div>
         <div class="gh-scan-controls">
           <label for="gmail-scan-window">Manual scan range</label>
@@ -547,8 +547,8 @@
       <div class="gh-metrics" id="gmail-stats-strip" aria-label="Inbox totals"></div>
       <div class="gh-filters">
         <label for="gmail-search-input">Search subject or sender<input type="search" id="gmail-search-input" oninput="handleGmailSearch(this.value)" placeholder="Company, recruiter, or subject"></label>
-        <label for="gmail-category-filter">Message type<select id="gmail-category-filter" onchange="filterGmailCategory(this.value)"><option value="">All messages</option><option value="action_required">Needs action</option><option value="INTERVIEW">Interview</option><option value="ASSESSMENT">Assessment</option><option value="REQUIREMENT">Documents / forms</option><option value="OFFER">Offer</option><option value="REJECTED">Rejection</option><option value="RECEIVED">Acknowledgment</option><option value="OTHER">Other / unclear</option></select></label>
-        <label for="gmail-read-filter">Hub read state<select id="gmail-read-filter" onchange="loadGmailHub()"><option value="">Read and unread</option><option value="unread">Unread</option><option value="read">Read</option></select></label>
+        <label for="gmail-category-filter">Action type<select id="gmail-category-filter" onchange="filterGmailCategory(this.value)"><option value="">All action items</option><option value="REQUIREMENT">Requirements &amp; forms</option><option value="INTERVIEW">Interviews</option><option value="ASSESSMENT">Assessments &amp; exams</option><option value="OFFER">Offers</option></select></label>
+        <label for="gmail-read-filter">Action status<select id="gmail-read-filter" onchange="loadGmailHub()"><option value="">All (pending &amp; done)</option><option value="unread">Pending (unread)</option><option value="read">Done (read)</option></select></label>
         <label for="gmail-match-filter">Pipeline result<select id="gmail-match-filter" onchange="loadGmailHub()"><option value="">All results</option><option value="updated">Pipeline updated</option><option value="review">Unchanged / review</option></select></label>
         <div class="gh-filter-actions">
           <button type="button" class="btn-subtle btn-gmail-clear" onclick="clearGmailFilters()" title="Reset Gmail search and filters">
@@ -561,7 +561,7 @@
           </button>
         </div>
       </div>
-      <details class="gh-legend"><summary>Message color legend &amp; read behavior</summary><div class="gh-legend-items"><span class="gh-tag gh-interview">Blue · Interview</span><span class="gh-tag gh-assessment">Purple · Assessment</span><span class="gh-tag gh-requirement">Amber · Documents / forms</span><span class="gh-tag gh-offer">Green · Offer</span><span class="gh-tag gh-rejected">Rose · Rejection</span><span class="gh-tag gh-other">Gray · Acknowledgment / other</span></div><p>Opening a message marks it read in this Hub. Mark unread to return to it later. These controls do not change Gmail read flags. All scanned received messages remain here, even when no Pipeline update is made. Spam, Trash, attachments, and sent messages are not imported.</p></details>
+      <details class="gh-legend"><summary>How Gmail Hub filters your inbox</summary><div class="gh-legend-items"><span class="gh-tag gh-requirement">Amber &middot; Requirement / form</span><span class="gh-tag gh-interview">Blue &middot; Interview</span><span class="gh-tag gh-assessment">Purple &middot; Assessment / exam</span><span class="gh-tag gh-offer">Green &middot; Offer</span></div><p>Only messages that require a next step from you are shown here. Application confirmations and rejections are processed automatically to update your Pipeline status and hidden from this feed. Opening an item or clicking Mark done clears it from your pending count.</p></details>
       <p id="gmail-result-count" class="gh-muted" role="status" aria-live="polite"></p>
       <div class="gmail-messages-feed" id="gmail-messages-feed" aria-busy="false"></div>
       <button type="button" id="gmail-load-more" onclick="loadGmailHub(true)" hidden>Load more messages</button>
@@ -1145,7 +1145,7 @@
   </div>
 
   <script src="/static/app.js?v=20261031-pro-max"></script>
-  <script src="/static/gmail-hub.js?v=20261029-gmail-hub"></script>
+  <script src="/static/gmail-hub.js?v=20261031-gmail-hub"></script>
 </body>
 </html>
 

@@ -21,6 +21,27 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS gmail_messages (
  CREATE INDEX IF NOT EXISTS idx_gmail_job_event ON gmail_messages(job_id,stage_applied,received_at);
 """
 
+NOISE_SENDERS = (
+    "jobalerts-noreply@linkedin.com", "jobs-listings@linkedin.com", "jobs-noreply@linkedin.com",
+    "editors-noreply@linkedin.com", "messages-noreply@linkedin.com", "invitations@linkedin.com",
+    "updates-noreply@linkedin.com", "security-noreply@linkedin.com", "linkedin@e.linkedin.com",
+    "connections@linkedin.com", "Groups-noreply@linkedin.com",
+    "noreply@glassdoor.com", "jobs@glassdoor.com",
+    "alert@indeed.com", "donotreply@jobalert.indeed.com",
+    "Jobstreet Alerts", "Jobstreet Driver Alerts", "Jobstreet Notifications", "Jobstreet Reminders", "siva@jobstreet.com",
+    "no-reply@ashbyhq.com", "notifications@github.com", "noreply@github.com",
+    "registration@vercel.com", "no-reply@accounts.google.com", "google-Workspace-alerts-noreply@google.com",
+    "no-reply@spotify.com", "info@mailer.netflix.com", "noreply@redditmail.com", "notify@x.com",
+    "notification@facebookmail.com", "no-reply@canva.com", "engage@canva.com",
+    "team@hi.Wellfound.com", "daily@daily.dev", "hello@daily.dev", "digest@medium.com",
+    "noreply@medium.com", "no-reply@substack.com", "no-reply@duolingo.com",
+    "no-reply@udemy.com", "no-reply@coursera.org", "noreply@kaggle.com",
+    "noreply@youtube.com", "no-reply@ twitch.tv", "no-reply@discord.com",
+    "no-reply@grammarly.com", "info@ grammarly.com", "hello@ollama.com",
+    "team@supabase.com", "noreply@render.com", "no-reply@railway.app",
+    "Job Accelerator <michael18ricafrente@gmail.com>",
+)
+
 
 def init_hub(db_path):
     conn = get_db_connection(db_path)
@@ -43,26 +64,78 @@ def fresh_text(body):
     return re.split(r"(?im)^\s*(?:On .+wrote:|From:|[-_]{3,}\s*(?:Original Message|Forwarded message))", body)[0]
 
 
-def classify(subject, body):
-    text = (subject + "\n" + fresh_text(body)).lower()
-    if re.search(r"(?:cancel(?:led|ed)|reschedul|not (?:a |an )?(?:offer|interview)|not yet|job alert|recommended jobs)", text):
-        return "OTHER", None, True
+def classify(subject, body, sender=""):
+    sender_low = (sender or "").lower()
+    if any(ns.lower() in sender_low for ns in NOISE_SENDERS):
+        return "OTHER", None, False
+
+    subj_low = re.sub(r"\s+", " ", (subject or "").lower()).strip()
+    fresh_low = re.sub(r"\s+", " ", fresh_text(body or "").lower()).strip()
+    text = subj_low + "\n" + fresh_low
+
+    if re.search(
+        r"(?:job alert|recommended jobs|jobs for you|new jobs? matching|daily job digest|"
+        r"jobs similar to|new jobs similar to|is hiring for|hiring:|apply now to|"
+        r"still accepting applications - don['\u2019]t forget to submit yours|"
+        r"don['\u2019]t forget to complete your application to|"
+        r"wish you luck on your interview.*helpful tips|"
+        r"has viewed your application|your application was viewed by|"
+        r"your application was sent to|job with .* has closed|was closed$|"
+        r"new activity in jobs you applied for|save your searches for matching jobs|"
+        r"your profile is being discovered|your profile is almost there)",
+        subj_low,
+    ):
+        return "OTHER", None, False
+
+    rej_pattern = (
+        r"not (?:be )?moving forward|decided to move forward with (?:other|another) candidate|"
+        r"regret to inform|unsuccessful|position has been filled|"
+        r"decided (?:not to proceed|to pursue other)|unlikely to progress further|"
+        r"application (?:for .* )?was not selected|has not accepted your application|"
+        r"did not align with our (?:certification )?criteria"
+    )
+    if re.search(rej_pattern, text):
+        return "REJECTED", "rejected", False
+
+    if re.search(r"(?:cancel(?:led|ed)|not (?:a |an )?(?:job )?(?:offer|interview)|not yet)", text):
+        return "OTHER", None, False
+
+    req_pattern = (
+        r"candidate nda|nda acceptance|"
+        r"complete (?:your|the|this) (?:application|job application|kooapps application|form|screening form|pre-application form|ai interview)|"
+        r"finish your (?:incomplete |job )?application|(?:job )?application is incomplete|"
+        r"instructions for completing your form|return to the form you recently saved|"
+        r"additional information needed for your application|verify your credentials|"
+        r"candidate home account pending action|submit (?:the following|your) documents|pre.employment|"
+        r"to complete your application and move forward in the process, please apply directly|"
+        r"log in to view and respond to the message|received a message or interview invite from .* respond now"
+    )
+
+    if re.search(
+        r"(?:thanks? for (?:your application|applying)|thank you for (?:your application|applying)|"
+        r"confirming your .* job application|your application was successfully submitted|"
+        r"application (?:has been )?received|we (?:have )?received your .*application|"
+        r"job application successful|^indeed application:)",
+        subj_low,
+    ):
+        if not re.search(req_pattern, text):
+            return "RECEIVED", "applied", False
+
     rules = [
-        ("REJECTED", "rejected", r"not (?:be )?moving forward|regret to inform|unsuccessful|position has been filled|decided (?:not to proceed|to pursue other)"),
         ("OFFER", "offer", r"(?:formal|job) offer|offer letter|pleased to offer you"),
         ("INTERVIEW", "final_interview", r"final (?:round|interview)|executive interview|client interview"),
-        ("ASSESSMENT", "tech_exam", r"technical (?:assessment|exam)|coding (?:challenge|assessment)|hackerrank|codility|take.home test"),
-        ("INTERVIEW", "hr_screening", r"initial interview|hr screening|invitation to interview|schedule (?:an interview|a call)|appointment booked"),
-        ("REQUIREMENT", "", r"candidate nda|complete (?:your|the) (?:application|form)|submit (?:the following|your) documents|pre.employment"),
-        ("RECEIVED", "applied", r"application (?:received|submitted)|thank you for applying|received your application|successfully submitted"),
+        ("ASSESSMENT", "tech_exam", r"technical (?:assessment|exam)|coding (?:challenge|assessment)|hackerrank|codility|take.home test|online exam|complete your ai interview"),
+        ("INTERVIEW", "hr_screening", r"initial interview|hr screening|invitation to interview|invited you (?:to|for) an? (?:[\w-]+\s+)?interview|interview invitation|schedule (?:an|your) (?:interview|call)|book (?:an|your) interview|claim your .* interview spot|appointment booked|your (?:new )?interview (?:time|for|is (?:at|tomorrow|happening|today))|decided to move forward with your application"),
+        ("REQUIREMENT", "", req_pattern),
+        ("RECEIVED", "applied", r"application (?:received|submitted)|thank you for applying|received your (?:online )?application|successfully submitted"),
     ]
     hits = [(category, stage) for category, stage, pattern in rules if re.search(pattern, text)]
     if not hits:
         return "OTHER", None, False
     category, stage = hits[0]
     # A rejection wins over quoted interview terminology. Other conflicting milestones need review.
-    if category != "REJECTED" and len({s for _, s in hits if s and s != "applied"}) > 1:
-        return "OTHER", None, True
+    if category != "REJECTED" and len({c for c, s in hits if s and s != "applied"}) > 1:
+        return "REQUIREMENT", None, True
     return category, stage or None, category in {"OFFER", "INTERVIEW", "ASSESSMENT", "REQUIREMENT"}
 
 
@@ -87,6 +160,17 @@ def match_job(message, jobs):
         exact_link = any(u and u in links for u in urls)
         if names or exact_link:
             candidates.append(job)
+    if len(candidates) > 1:
+        # When one title at the same company is a more specific superstring of another, keep the specific role.
+        pairs = [(normalized(j.get("company")), normalized(j.get("title"))) for j in candidates]
+        candidates = [
+            j for j, (c1, t1) in zip(candidates, pairs)
+            if not any(c1 == c2 and t1 != t2 and t1 in t2 for c2, t2 in pairs)
+        ]
+        # If remaining candidates are duplicate rows of the exact same company + title, pick the active applied row.
+        if len({(normalized(j.get("company")), normalized(j.get("title"))) for j in candidates}) == 1:
+            candidates.sort(key=lambda j: (j.get("status") == "applied", j.get("id") or 0), reverse=True)
+            candidates = [candidates[0]]
     if len(candidates) != 1:
         return None, "Multiple possible jobs; Pipeline unchanged" if candidates else "No exact application match; Pipeline unchanged"
     return candidates[0], "Exact listing URL or company and role"
@@ -99,7 +183,7 @@ def ingest(db_path, message, jobs):
         if conn.execute("SELECT id FROM gmail_messages WHERE id=?", (message["id"],)).fetchone():
             return False
         job, reason = match_job(message, jobs)
-        category, stage, action = classify(message["subject"], message["body_text"])
+        category, stage, action = classify(message["subject"], message["body_text"], message.get("sender", ""))
         result = "Needs review"
         if job and not message.get("trusted"):
             result = "Sender authentication not verified; Pipeline unchanged"
@@ -109,12 +193,13 @@ def ingest(db_path, message, jobs):
             result = "No unambiguous milestone; Pipeline unchanged"
         elif job:
             result = "Pending update"
+        stored_body = message["body_text"] if action else ""
         conn.execute("""INSERT INTO gmail_messages
             (id,thread_id,subject,sender,received_at,body_text,category,action_required,is_read,
              job_id,match_reason,pipeline_result,target_stage,trusted)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (message["id"], message["thread_id"], message["subject"], message["sender"], message["received_at"],
-             message["body_text"], category, int(action), int(message.get("is_read", False)),
+             stored_body, category, int(action), int(message.get("is_read", False)),
              job["id"] if job else None, reason, result, stage, int(message.get("trusted", False))))
         conn.commit()
         return True
@@ -147,7 +232,8 @@ def apply_pending(db_path):
                         return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=timezone.utc).timestamp()
                     except ValueError:
                         return float("inf")
-                boundary = max(last, timestamp(job.get("applied_at")), timestamp(job.get("updated_at")))
+                job_ts = max(timestamp(job.get("applied_at")), timestamp(job.get("updated_at")))
+                boundary = last if (job_ts - m["received_at"] > 90 * 86400) else max(last, job_ts)
                 if m["received_at"] <= boundary:
                     reason = "Older than latest job change; Pipeline unchanged"
                 elif old in {"rejected", "withdrawn", "offer"} or stage == old or (stage != "rejected" and ranks.get(stage, -1) <= ranks.get(old, 99)):
@@ -175,19 +261,21 @@ def messages(db_path, limit=40, offset=0, category="", read="", match="", search
     conn = get_db_connection(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        stats = dict(conn.execute("""SELECT COUNT(*) total,COALESCE(SUM(is_read=0),0) unread,
-            COALESCE(SUM(action_required),0) action_required,COALESCE(SUM(category='INTERVIEW'),0) interviews,
-            COALESCE(SUM(stage_applied=1),0) updated,COALESCE(SUM(stage_applied=0),0) review
+        stats = dict(conn.execute("""SELECT
+            COALESCE(SUM(action_required=1),0) total,
+            COALESCE(SUM(action_required=1 AND is_read=0),0) unread,
+            COALESCE(SUM(action_required=1),0) action_required,
+            COALESCE(SUM(action_required=1 AND category='REQUIREMENT'),0) requirements,
+            COALESCE(SUM(action_required=1 AND category IN ('INTERVIEW','ASSESSMENT','OFFER')),0) interviews,
+            COALESCE(SUM(stage_applied=1),0) updated,
+            COALESCE(SUM(action_required=1 AND stage_applied=0),0) review
             FROM gmail_messages""").fetchone())
         if summary:
             return {"stats": stats}
-        clauses, args = [], []
-        if category:
-            if category == "action_required":
-                clauses.append("action_required=1")
-            else:
-                clauses.append("category=?")
-                args.append(category)
+        clauses, args = ["action_required=1"], []
+        if category and category != "action_required":
+            clauses.append("category=?")
+            args.append(category)
         if read in {"read", "unread"}:
             clauses.append("is_read=?")
             args.append(int(read == "read"))
@@ -198,7 +286,7 @@ def messages(db_path, limit=40, offset=0, category="", read="", match="", search
             clauses.append("(subject LIKE ? ESCAPE '\\' OR sender LIKE ? ESCAPE '\\')")
             term = "%" + search[:150].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             args.extend([term, term])
-        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        where = " WHERE " + " AND ".join(clauses)
         total = conn.execute("SELECT COUNT(*) FROM gmail_messages" + where, args).fetchone()[0]
         rows = conn.execute("""SELECT id,thread_id,subject,sender,received_at,category,action_required,is_read,
             job_id,match_reason,pipeline_result,stage_applied,substr(body_text,1,220) snippet

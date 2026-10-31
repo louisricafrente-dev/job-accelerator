@@ -51,8 +51,10 @@ class GmailHubTests(unittest.TestCase):
         self.assertEqual(hub.classify('Acme update', 'We are not moving forward after your final interview.')[1], 'rejected')
         self.assertEqual(hub.classify('Update', 'Please complete your coding assessment.')[1], 'tech_exam')
         self.assertIsNone(hub.classify('Not a job offer', 'Interview cancelled')[1])
+        self.assertFalse(hub.classify('Job Alert: 15 new developer jobs', 'Recommended jobs for you')[2])
         self.assertIsNone(hub.classify('Update', 'Your final interview and technical assessment are next.')[1])
         self.assertEqual(hub.classify('Thanks', 'Thank you for applying\nOn Monday wrote:\nFinal interview')[1], 'applied')
+        self.assertEqual(hub.classify('Thanks for your application', 'If you are among qualified candidates, we will schedule an interview.')[0], 'RECEIVED')
 
     def test_ingest_once_preserves_read_and_updates_only_exact_applied_job(self):
         self.assertTrue(hub.ingest(self.db, self.message(), self.jobs))
@@ -65,13 +67,19 @@ class GmailHubTests(unittest.TestCase):
         self.assertEqual(hub.detail(self.db, 'abc')['is_read'], 1)
         self.assertEqual(hub.apply_pending(self.db), 0)
 
-    def test_saved_and_untrusted_and_uncertain_messages_still_in_hub(self):
+    def test_action_items_in_hub_and_non_actionable_update_pipeline_silently(self):
         self.jobs[1]['status'] = 'saved'
         hub.ingest(self.db, self.message('a'), self.jobs)
         hub.ingest(self.db, self.message('b', trusted=False), self.jobs)
         hub.ingest(self.db, self.message('c', subject='Hello', body_text='Unknown employer'), self.jobs)
-        self.assertEqual(hub.apply_pending(self.db), 0)
-        self.assertEqual(hub.messages(self.db)['stats']['total'], 3)
+        hub.ingest(self.db, self.message('d', subject='Acme Android Developer update',
+                                         body_text='We regret to inform you we are not moving forward with your Acme Android Developer application.'), self.jobs)
+        self.assertEqual(hub.apply_pending(self.db), 1)
+        self.assertEqual(self.conn.execute('SELECT pipeline_stage FROM jobs WHERE id=1').fetchone()[0], 'rejected')
+        res = hub.messages(self.db)
+        self.assertEqual(res['stats']['total'], 2)
+        self.assertEqual(res['stats']['updated'], 1)
+        self.assertEqual([m['id'] for m in res['messages']], ['b', 'a'])
 
     def test_regression_old_event_and_manual_changes_preserved(self):
         self.conn.execute("UPDATE jobs SET pipeline_stage='offer' WHERE id=2")

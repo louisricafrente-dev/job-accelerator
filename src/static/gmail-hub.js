@@ -1,7 +1,11 @@
 const gmailTypes = {
-  INTERVIEW: ['Interview', 'interview'], ASSESSMENT: ['Assessment', 'assessment'],
-  REQUIREMENT: ['Documents / forms', 'requirement'], OFFER: ['Offer', 'offer'],
-  REJECTED: ['Rejection', 'rejected'], RECEIVED: ['Acknowledgment', 'other'], OTHER: ['Other / unclear', 'other']
+  REQUIREMENT: ['Requirement / form', 'requirement', 'Complete requirement, form, or reply'],
+  INTERVIEW: ['Interview', 'interview', 'Schedule or attend interview'],
+  ASSESSMENT: ['Assessment / exam', 'assessment', 'Complete technical assessment'],
+  OFFER: ['Job offer', 'offer', 'Review and respond to offer'],
+  REJECTED: ['Rejection', 'rejected', 'Pipeline status updated'],
+  RECEIVED: ['Acknowledgment', 'other', 'Application logged'],
+  OTHER: ['Action item', 'requirement', 'Review message details']
 };
 let gmailListController = null;
 let gmailSearchTimer = null;
@@ -37,22 +41,25 @@ async function loadGmailHub(append = false) {
     gmailMessages = append ? [...gmailMessages, ...data.messages] : data.messages;
     const stats = data.stats || {};
     document.getElementById('gmail-stats-strip').innerHTML = [
-      ['Messages', stats.total], ['Unread in Hub', stats.unread], ['Needs action', stats.action_required],
-      ['Pipeline updated', stats.updated], ['Unchanged / review', stats.review]
+      ['Action items', stats.total],
+      ['Pending to do', stats.unread],
+      ['Requirements & forms', stats.requirements ?? stats.action_required],
+      ['Interviews & exams', stats.interviews],
+      ['Pipeline auto-updated', stats.updated]
     ].map(([label, count]) => `<div><strong>${Number(count || 0)}</strong><span>${label}</span></div>`).join('');
     const scan = data.scan || {};
     const result = scan.result || {};
     const timestamp = scan.completed_at ? new Date(scan.completed_at * 1000).toLocaleString() : '';
     const statuses = {
       queued: 'Cloud scan queued. Reload saved inbox to check progress.',
-      running: 'Cloud scan running. Existing messages remain available.',
-      complete: `Last scan ${timestamp}: ${Number(result.imported || 0)} new messages; ${Number(result.pipeline_updated || 0)} Pipeline updates.`,
-      error: scan.error || 'Last scan failed. Your saved messages are still available.'
+      running: 'Cloud scan running. Existing action items remain available.',
+      complete: `Last scan ${timestamp}: ${Number(result.imported || 0)} messages scanned; ${Number(result.pipeline_updated || 0)} Pipeline updates applied.`,
+      error: scan.error || 'Last scan failed. Your saved action items are still available.'
     };
     const status = document.getElementById('gmail-scan-status');
     status.textContent = statuses[scan.status] || 'No cloud scan yet. Choose a range and scan Gmail.';
     status.dataset.state = scan.status || 'empty';
-    document.getElementById('gmail-result-count').textContent = `${gmailMessages.length} of ${data.total} matching messages · newest first`;
+    document.getElementById('gmail-result-count').textContent = `${gmailMessages.length} of ${data.total} action items · newest first`;
     const badge = document.getElementById('stat-gmail');
     if (badge) badge.textContent = stats.unread || 0;
     more.hidden = !data.has_more;
@@ -60,7 +67,7 @@ async function loadGmailHub(append = false) {
   } catch (error) {
     if (error.name !== 'AbortError') {
       document.getElementById('gmail-scan-status').textContent = error.message;
-      if (!gmailMessages.length) feed.innerHTML = '<p class="gh-empty">Inbox unavailable. Use Reload saved inbox to try again.</p>';
+      if (!gmailMessages.length) feed.innerHTML = '<p class="gh-empty">Action inbox unavailable. Use Reload saved inbox to try again.</p>';
     }
   } finally {
     if (gmailListController === controller) {
@@ -84,20 +91,21 @@ function handleGmailSearch() {
 function renderGmailMessages() {
   const feed = document.getElementById('gmail-messages-feed');
   if (!gmailMessages.length) {
-    feed.innerHTML = '<div class="gh-empty"><h3>No messages in this view</h3><p>Change your filters, or scan a wider date range. Uncertain messages are kept without changing your Pipeline.</p></div>';
+    feed.innerHTML = '<div class="gh-empty"><h3>No pending action items in this view</h3><p>You are caught up on requirements, forms, assessments, and interviews for this filter. Background confirmations and rejections automatically update your Pipeline.</p></div>';
     return;
   }
   feed.innerHTML = gmailMessages.map(message => {
-    const [label, type] = gmailTypes[message.category] || gmailTypes.OTHER;
+    const [label, type, actionHint] = gmailTypes[message.category] || gmailTypes.OTHER;
     return `<article class="gh-message ${message.is_read ? 'is-read' : 'is-unread'}">
       <div class="gh-message-meta"><span class="gh-tag gh-${type}">${label}</span>
-        <span class="gh-read-label">${message.is_read ? 'Read' : 'Unread'}</span>
+        <span class="gh-read-label">${message.is_read ? 'Done' : 'Action needed'}</span>
         <time datetime="${new Date(message.received_at * 1000).toISOString()}">${escapeHtml(new Date(message.received_at * 1000).toLocaleString())}</time></div>
       <h3><button type="button" class="gh-subject" data-open="${message.id}">${escapeHtml(message.subject || '(No subject)')}</button></h3>
       <p class="gh-sender">${escapeHtml(message.sender)}</p>
+      <p class="gh-action-prompt">Next step: ${escapeHtml(actionHint)}</p>
       <p class="gh-preview">${escapeHtml(message.snippet)}</p>
       <div class="gh-message-bottom"><span class="gh-pipeline ${message.stage_applied ? 'gh-updated' : ''}">${escapeHtml(message.pipeline_result)}${message.job_id ? ` · Job #${Number(message.job_id)}` : ''}</span>
-        <div class="gh-message-actions"><button type="button" data-read="${message.id}">${message.is_read ? 'Mark unread' : 'Mark read'}</button>
+        <div class="gh-message-actions"><button type="button" data-read="${message.id}">${message.is_read ? 'Mark unread' : 'Mark done'}</button>
         <a href="${originalGmailLink(message)}" target="_blank" rel="noopener noreferrer">Open in Gmail <span aria-hidden="true">↗</span></a></div></div>
     </article>`;
   }).join('');
@@ -126,7 +134,7 @@ async function setGmailRead(id, value, button) {
 async function triggerGmailScan(button) {
   button = button || document.getElementById('btn-gmail-scan');
   button.disabled = true;
-  button.textContent = 'Queuing scan…';
+  button.textContent = 'Queuing scan...';
   try {
     const data = await gmailRequest('/api/gmail/scan', {method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -143,14 +151,14 @@ async function triggerGmailScan(button) {
 }
 
 function renderGmailViewerContent(message) {
-  const [label, type] = gmailTypes[message.category] || gmailTypes.OTHER;
+  const [label, type, actionHint] = gmailTypes[message.category] || gmailTypes.OTHER;
   const body = (message.body_text || '').split(/(https?:\/\/[^\s<>"']+)/g).map(part =>
     /^https?:\/\//.test(part) ? `<a href="${escapeHtml(part)}" target="_blank" rel="noopener noreferrer">${escapeHtml(part)}</a>` : escapeHtml(part)).join('');
   return `<div class="gh-reader">
     <span class="gh-tag gh-${type}">${label}</span>
     <h2 id="gmail-modal-subject">${escapeHtml(message.subject)}</h2>
     <p>${escapeHtml(message.sender)}</p><p class="gh-muted">${escapeHtml(new Date(message.received_at * 1000).toLocaleString())}</p>
-    <div class="gh-reader-result"><strong>${escapeHtml(message.pipeline_result)}</strong><p>${escapeHtml(message.match_reason)}</p></div>
+    <div class="gh-reader-result"><strong>Next step: ${escapeHtml(actionHint)}</strong><p>${escapeHtml(message.pipeline_result)} · ${escapeHtml(message.match_reason)}</p></div>
     <div class="gh-message-actions"><a href="${originalGmailLink(message)}" target="_blank" rel="noopener noreferrer">Open original in Gmail ↗</a>
       <button type="button" id="gmail-viewer-unread">Mark unread &amp; close</button></div>
     <p class="gh-muted">Original message text. Remote images and attachments are not loaded.</p>
@@ -163,7 +171,7 @@ async function openGmailMessageViewer(id) {
   currentViewerMessageId = id;
   const modal = document.getElementById('gmail-message-modal');
   const content = document.getElementById('gmail-viewer-content');
-  content.innerHTML = '<h2 id="gmail-modal-subject">Loading message…</h2>';
+  content.innerHTML = '<h2 id="gmail-modal-subject">Loading message...</h2>';
   modal.style.display = 'flex';
   document.body.classList.add('modal-open');
   modal.querySelector('.btn-viewer-close').focus();

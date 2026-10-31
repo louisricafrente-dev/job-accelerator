@@ -38,9 +38,13 @@ def main():
         hub.init_hub(db)
         for i in range(45):
             hub.ingest(db, dict(id=format(i+1, 'x'), thread_id='aaa', sender='Acme Recruiting <hr@acme.example>',
-                subject=f'Acme developer update {i}' if i else '<img src=x onerror="window.hubXss=true">',
-                body_text='Your application update.\n\nOriginal plain text with <script> tags, not executable HTML.',
+                subject=f'Acme developer complete your application form {i}' if i else '<img src=x onerror="window.hubXss=true"> complete your form',
+                body_text='Please complete your application form.\n\nOriginal plain text with <script> tags, not executable HTML.',
                 received_at=time.time()-i*60, trusted=False), [])
+        hub.ingest(db, dict(id='999', thread_id='bbb', sender='Acme Recruiting <hr@acme.example>',
+            subject='Thank you for applying to Acme',
+            body_text='We have received your application.',
+            received_at=time.time()-5000, trusted=True), [])
         with patch('src.aggregator.get_default_connectors', return_value=[]):
             app = create_app(db)
         server = make_server('127.0.0.1', 0, app, server_class=ThreadedServer, handler_class=QuietHandler)
