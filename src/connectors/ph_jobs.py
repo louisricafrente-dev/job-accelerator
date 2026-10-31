@@ -467,7 +467,15 @@ class FounditPHConnector(BaseConnector):
                 if not self.accepts_date(pub_date):
                     continue
                 title = str(item.get("title") or "").strip()
-                desc = str(item.get("description") or item.get("skills") or "")
+                exp_str = str(item.get("exp") or "").strip()
+                min_exp = (item.get("minimumExperience") or {}).get("years") if isinstance(item.get("minimumExperience"), dict) else None
+                exp_tag = ""
+                if exp_str:
+                    exp_tag = f"{exp_str} experience"
+                elif min_exp is not None and isinstance(min_exp, int) and 0 <= min_exp <= 2:
+                    exp_tag = f"0-{max(1, min_exp)} years experience"
+                raw_desc = str(item.get("description") or item.get("skills") or "")
+                desc = f"{exp_tag} | {raw_desc}".strip(" |") if exp_tag else raw_desc
                 if not title or not self.accepts_opportunity(title, desc):
                     continue
                 comp = str(item.get("companyName") or "Foundit PH Employer").strip()
