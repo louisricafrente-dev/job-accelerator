@@ -1047,6 +1047,8 @@ function syncFilterControlsUI() {
   }
   const autoSyncCb = document.getElementById('auto-sync-checkbox');
   if (autoSyncCb) autoSyncCb.checked = autoSyncEnabled;
+  const settingsAutoSyncCb = document.getElementById('settings-auto-sync-checkbox');
+  if (settingsAutoSyncCb) settingsAutoSyncCb.checked = autoSyncEnabled;
 
   const appFilterSelect = document.getElementById('application-filter');
   if (appFilterSelect) {
@@ -1896,15 +1898,24 @@ function renderJobs() {
 
           <div class="job-meta-row">
             ${(() => {
-              const sources = Array.isArray(job.sources) && job.sources.length > 0
+              const rawSources = Array.isArray(job.sources) && job.sources.length > 0
                 ? job.sources
                 : [{ platform: job.platform, url: job.job_url }];
+              const seenPlatforms = new Set();
+              const sources = rawSources.filter(s => {
+                const key = String(s.platform || job.platform || '').toLowerCase();
+                if (seenPlatforms.has(key)) return false;
+                seenPlatforms.add(key);
+                return true;
+              });
 
               if (sources.length > 1) {
+                const visibleSources = sources.slice(0, 4);
+                const extraCount = sources.length - visibleSources.length;
                 return `
                   <div class="multi-platform-group" title="Available on ${sources.length} job boards">
                     <span class="multi-platform-label">Available on:</span>
-                    ${sources.map(s => `
+                    ${visibleSources.map(s => `
                       <a href="${escapeHtml(safeJobUrl(s.url))}" target="_blank" rel="noopener noreferrer"
                          class="badge-platform badge-source-link multi-source-badge"
                          onclick="event.stopPropagation()"
@@ -1912,6 +1923,7 @@ function renderJobs() {
                         ${escapeHtml(s.platform)} ↗
                       </a>
                     `).join('')}
+                    ${extraCount > 0 ? `<span class="multi-platform-label">+${extraCount} more</span>` : ''}
                   </div>
                 `;
               }
@@ -2684,6 +2696,14 @@ function setupKeyboardNavigation() {
       return;
     }
 
+    const syncModal = document.getElementById('sync-activity');
+    if (syncModal && syncModal.style.display && syncModal.style.display !== 'none') {
+      if (e.key === 'Escape') {
+        toggleSyncLogModal(false);
+      }
+      return;
+    }
+
     // Check if Gmail Message Viewer modal is open
     const gmailModal = document.getElementById('gmail-message-modal');
     if (gmailModal && gmailModal.style.display !== 'none') {
@@ -2804,7 +2824,6 @@ function setStatus(status, elem) {
   if (gmailContainer) gmailContainer.style.display = 'none';
   if (controlDeck) controlDeck.style.display = '';
   if (jobFeed) jobFeed.style.display = '';
-  if (syncActivity) syncActivity.style.display = '';
 
   restoreViewFilters();
   persistSetting('status', status);
@@ -3011,13 +3030,18 @@ let telemetryTimer = null;
 let telemetryRequest = null;
 let telemetryPollGeneration = 0;
 
-function toggleSyncLogModal() {
+function toggleSyncLogModal(forceOpen) {
   const activitySec = document.getElementById('sync-activity');
-  if (activitySec && activitySec.classList.contains('is-collapsed')) {
-    toggleTelemetryCollapse(false);
+  if (!activitySec) return;
+  const isHidden = activitySec.style.display === 'none' || !activitySec.style.display;
+  const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : isHidden;
+  activitySec.style.display = shouldOpen ? 'flex' : 'none';
+  if (shouldOpen) {
+    if (activitySec.classList.contains('is-collapsed')) {
+      toggleTelemetryCollapse(false);
+    }
+    fetchSyncTelemetry();
   }
-  activitySec?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  fetchSyncTelemetry();
 }
 
 function startTelemetryPolling() {

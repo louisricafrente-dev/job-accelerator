@@ -2022,7 +2022,7 @@ a {
   color: var(--accent-cyan);
 }
 
-.multi-platform-group {
+.multi-platform-group, .chip-carousel, .filter-subgrid, .filter-subgrid .filter-cell {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -5216,4 +5216,312 @@ a {
   .settings-feature-actions {
     justify-content: flex-start;
   }
+}
+
+
+/* === UI/UX PRO MAX SPACIOUS WORKSTATION REMAKE === */
+
+/* 1. Header De-Clutter & Zero Overflow */
+.sr-legacy-tool {
+  display: none !important;
+}
+
+.header-inner {
+  max-width: 1380px;
+  height: 64px;
+  padding: 0 24px;
+  gap: 14px;
+}
+
+.status-nav {
+  padding: 3px;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.status-tab {
+  white-space: nowrap;
+  padding: 6px 12px;
+  font-size: 0.81rem;
+  gap: 6px;
+  border-radius: 6px;
+}
+
+.header-actions {
+  gap: 8px;
+}
+
+.header-tools-group {
+  padding: 3px;
+  gap: 4px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.header-tools-group #btn-settings-hub {
+  height: 30px;
+  padding: 0 11px;
+  font-size: 0.8rem;
+  gap: 6px;
+}
+
+.header-tools-group .auto-sync-control {
+  height: 30px;
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 0.76rem;
+}
+
+.sync-media-unit {
+  min-width: 0;
+}
+
+.sync-media-cluster {
+  height: 36px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.media-btn {
+  height: 28px;
+  padding: 0 9px;
+  font-size: 0.78rem;
+}
+
+.auth-header-cluster {
+  height: 36px;
+}
+
+/* 2. Spacious Main Layout & Breathing Room */
+.app-layout {
+  max-width: 1380px;
+  padding: 28px 32px 48px;
+  gap: 20px;
+}
+
+/* 3. Clean 3-Row Control Deck (Eliminates 8-Row Vertical Stacking) */
+.control-deck {
+  padding: 20px 24px;
+  gap: 16px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(16, 22, 36, 0.96) 0%, rgba(12, 17, 28, 0.96) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
+}
+
+/* Hide redundant active-stack-strip on the main deck (accessible in Settings & Stack Drawer) */
+.control-deck > #active-stack-strip {
+  display: none !important;
+}
+
+.search-command-bar {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.search-input-wrapper {
+  flex: 1 1 320px;
+  width: auto;
+  min-height: 42px;
+  padding: 8px 14px;
+  border-radius: 10px;
+}
+
+.quick-filter-toggles {
+  gap: 12px;
+  padding: 0;
+  flex-wrap: wrap;
+}
+
+.toggle-pill-btn {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+}
+
+.btn-clear-all-filters {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 8px;
+}
+
+.filter-strip {
+  gap: 14px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* Compact Horizontal Grid for Dropdown Filters */
+.filter-selects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.filter-selects-grid .filter-cell {
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  text-align: left;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.filter-selects-grid .filter-title {
+  min-width: 0;
+  font-size: 0.71rem;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.filter-selects-grid .filter-select {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 32px 6px 10px;
+  font-size: 0.84rem;
+  border-radius: 7px;
+}
+
+.filter-selects-grid .role-filter-help {
+  display: none !important;
+}
+
+.filter-subgrid {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-top: 4px;
+  flex-wrap: wrap;
+}
+
+/* 4. Background Sync Activity as Clean On-Demand Modal Overlay */
+#sync-activity.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(5, 7, 12, 0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  margin: 0;
+}
+
+#sync-activity.modal-overlay .sync-activity-content {
+  width: 100%;
+  max-width: 980px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.75);
+}
+
+/* 5. Spacious & Scannable Job Cards */
+.feed-summary-bar {
+  padding: 2px 4px;
+}
+
+.job-stream {
+  gap: 14px;
+}
+
+.job-card {
+  padding: 20px 24px;
+  gap: 24px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: linear-gradient(180deg, rgba(16, 23, 38, 0.95) 0%, rgba(13, 19, 32, 0.95) 100%);
+}
+
+.job-main-block {
+  gap: 10px;
+}
+
+.job-title-link {
+  font-size: 1.06rem;
+  letter-spacing: -0.01em;
+}
+
+/* 6. Responsive Polish for Tablet & Mobile */
+@media (max-width: 1180px) {
+  .header-inner {
+    height: auto;
+    min-height: 60px;
+    padding: 10px 16px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .status-nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-layout {
+    padding: 16px 14px 36px;
+    gap: 14px;
+  }
+  .control-deck {
+    padding: 16px;
+    gap: 14px;
+  }
+  .search-command-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .search-input-wrapper {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+  .filter-selects-grid {
+    grid-template-columns: 1fr;
+  }
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .sync-media-unit {
+    width: auto;
+    flex: 1 1 auto;
+  }
+}
+
+.multi-platform-group, .chip-carousel, .filter-subgrid, .filter-subgrid .filter-cell {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.job-card,
+.job-main-block,
+.job-headline,
+.job-meta-row {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.job-title-link,
+.company-identifier,
+.job-location-tag,
+.job-skills-matched {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
