@@ -17,7 +17,7 @@
 .gh-metrics > div { display: grid; gap: 6px; padding: 18px 14px; }
 .gh-metrics strong { font-size: 1.6rem; font-family: var(--font-mono); }
 .gh-metrics span { color: var(--gh-muted); font-size: .8rem; }
-.gh-filters { display: grid; grid-template-columns: 2fr repeat(3,1fr); align-items: end; gap: 12px; margin-bottom: 18px; }
+.gh-filters { display: grid; grid-template-columns: 2fr repeat(3,1fr) auto; align-items: end; gap: 12px; margin-bottom: 18px; }
 .gh-legend { color: var(--gh-muted); border: 1px solid var(--border-default); padding: 12px 16px; border-radius: var(--radius-md); line-height: 1.6; }
 .gh-legend summary { cursor: pointer; min-height: 24px; color: var(--text-primary); }
 .gh-legend-items { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 14px; }
@@ -36,7 +36,8 @@
 .is-unread .gh-read-label { color: var(--accent-cyan); }
 .gh-message h3 { margin: 8px 0 0; }
 #gmail-hub-container .gh-subject { text-align: left; padding: 4px 0; background: transparent; border: none; font-size: 1.05rem; line-height: 1.5; overflow-wrap: anywhere; }
-.gh-sender { font-size: .85rem; overflow-wrap: anywhere; margin: 4px 0 10px; }
+.gh-sender { font-size: .85rem; overflow-wrap: anywhere; margin: 4px 0 8px; }
+.gh-action-prompt { font-size: .82rem; font-weight: 600; color: var(--accent-amber-bright, #fbbf24); margin: 0 0 8px; line-height: 1.5; }
 .gh-preview { color: var(--gh-muted); line-height: 1.6; font-size: .9rem; overflow-wrap: anywhere; }
 .gh-message-bottom { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
 .gh-pipeline { color: var(--gh-muted); font-size: .8rem; line-height: 1.6; }
