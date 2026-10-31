@@ -75,8 +75,13 @@ def _role_predicate(role):
     if role == "Software Development":
         members = ["Frontend", "Backend", "Full Stack", "Mobile", "AI Development"]
         parts = [role_predicate(member) for member in members]
-        sql = "(" + " OR ".join(s for s, _ in parts) + f" OR {TITLE} GLOB ? OR {TITLE} GLOB ? OR {TITLE} GLOB ? OR {TITLE} GLOB ? OR {TITLE} GLOB ?)"
-        params = [p for _, values in parts for p in values] + ["* software engineer *", "* software developer *", "* web developer *", "* programmer *", "* developer *"]
+        extra_globs = [
+            "* software engineer *", "* software developer *", "* web developer *",
+            "* programmer *", "* developer *", "* software development *",
+            "* software engineering *", "* graduate engineer *", "* associate engineer *"
+        ]
+        sql = "(" + " OR ".join(s for s, _ in parts) + "".join(f" OR {TITLE} GLOB ?" for _ in extra_globs) + ")"
+        params = [p for _, values in parts for p in values] + extra_globs
         for excluded in ("QA / Testing", "IT Support", "Technical Support", "DevOps / Cloud", "Cybersecurity", "Data Science", "Data Engineering", "Virtual Assistant", "Data Analyst", "Business / Systems Analyst"):
             negative, values = role_predicate(excluded)
             sql += f" AND NOT {negative}"
