@@ -3,7 +3,7 @@ import json
 import urllib.request
 import urllib.parse
 from typing import List
-from src.connectors.base import BaseConnector, logger
+from src.connectors.base import BaseConnector, NewPlatformConnectorMixin, logger
 from src.models import Job, is_today_or_yesterday, normalize_date, scrape_date_window
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
@@ -384,7 +384,7 @@ class OnlineJobsConnector(BaseConnector):
         return jobs
 
 
-class FounditPHConnector(BaseConnector):
+class FounditPHConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Foundit.ph"
     tier = 1
     is_feed = False
@@ -459,7 +459,8 @@ class FounditPHConnector(BaseConnector):
                 parsed_rows.append((item, jid, pub_date))
 
             has_in_window = any(self.accepts_date(d) for d in raw_dates if d)
-            more_available = has_in_window and len(parsed_rows) >= self.PAGE_SIZE - 5 and start + self.PAGE_SIZE < 150
+            max_start = 240 if self.window_days > 2 else 120
+            more_available = has_in_window and len(parsed_rows) >= self.PAGE_SIZE - 5 and start + self.PAGE_SIZE <= max_start
             self.finish_page(state, raw_ids, raw_dates, more_available, ordered=False)
             state["start"] = start + self.PAGE_SIZE if self.has_more else 0
 
@@ -511,7 +512,7 @@ class FounditPHConnector(BaseConnector):
         return jobs
 
 
-class VirtualStaffPHConnector(BaseConnector):
+class VirtualStaffPHConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "VirtualStaff.ph"
     tier = 1
     is_feed = True
@@ -625,7 +626,7 @@ class VirtualStaffPHConnector(BaseConnector):
         ]
 
 
-class PhilJobNetConnector(BaseConnector):
+class PhilJobNetConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "PhilJobNet"
     tier = 2
     is_feed = True
@@ -738,7 +739,7 @@ class PhilJobNetConnector(BaseConnector):
         ]
 
 
-class JobgetherPHConnector(BaseConnector):
+class JobgetherPHConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Jobgether"
     tier = 1
     is_feed = True
@@ -746,6 +747,9 @@ class JobgetherPHConnector(BaseConnector):
     URLS = [
         "https://jobgether.com/remote-jobs/philippines",
         "https://jobgether.com/remote-jobs/philippines?page=2",
+        "https://jobgether.com/remote-jobs/philippines?page=3",
+        "https://jobgether.com/remote-jobs/philippines?page=4",
+        "https://jobgether.com/remote-jobs/philippines?page=5",
         "https://jobgether.com/search-offers?keyword=software%20developer",
         "https://jobgether.com/search-offers?keyword=web%20developer",
         "https://jobgether.com/search-offers?keyword=mobile%20developer",

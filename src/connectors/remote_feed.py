@@ -3,7 +3,7 @@ import json
 import urllib.request
 import xml.etree.ElementTree as ET
 from typing import List
-from src.connectors.base import BaseConnector, logger
+from src.connectors.base import BaseConnector, NewPlatformConnectorMixin, logger
 from src.models import Job, is_today_or_yesterday, normalize_date, scrape_date_window
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
@@ -480,7 +480,7 @@ class UpworkConnector(BaseConnector):
 
 
 
-class WellfoundConnector(BaseConnector):
+class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Wellfound"
     tier = 2
     is_feed = True
@@ -722,7 +722,7 @@ class FlexJobsConnector(BaseConnector):
         return jobs
 
 
-class WorkingNomadsConnector(BaseConnector):
+class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Working Nomads"
     tier = 2
     is_feed = True
@@ -793,7 +793,7 @@ class WorkingNomadsConnector(BaseConnector):
                 if not hasattr(urllib.request.urlopen, '_mock_name'):
                   try:
                     from curl_cffi import requests as cffi_requests
-                    es_size = 250 if self.window_days > 2 else 100
+                    es_size = 350 if self.window_days > 2 else 120
                     es_payload = {
                         "size": es_size,
                         "sort": [{"pub_date": {"order": "desc"}}],
@@ -802,8 +802,16 @@ class WorkingNomadsConnector(BaseConnector):
                                 "must": [
                                     {"range": {"pub_date": {"gte": f"now-{max(self.window_days, 2) + 1}d/d"}}},
                                     {"terms": {"category_name.raw": ["Development", "System Administration", "Information Security", "Data", "Customer Success", "Administration"]}},
-                                    {"terms": {"locations": ["Anywhere", "Asia", "Philippines"]}},
-                                ]
+                                ],
+                                "should": [
+                                    {"match_phrase": {"locations": "Anywhere"}},
+                                    {"match_phrase": {"locations": "Asia"}},
+                                    {"match_phrase": {"locations": "Philippines"}},
+                                    {"match_phrase": {"location_base": "Anywhere"}},
+                                    {"match_phrase": {"location_base": "Asia"}},
+                                    {"match_phrase": {"location_base": "Philippines"}},
+                                ],
+                                "minimum_should_match": 1
                             }
                         },
                     }
@@ -870,7 +878,7 @@ class WorkingNomadsConnector(BaseConnector):
         ]
 
 
-class DailyRemoteConnector(BaseConnector):
+class DailyRemoteConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "DailyRemote"
     tier = 2
     is_feed = True
@@ -987,7 +995,7 @@ class DailyRemoteConnector(BaseConnector):
         ]
 
 
-class RealWorkFromAnywhereConnector(BaseConnector):
+class RealWorkFromAnywhereConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Real Work From Anywhere"
     tier = 2
     is_feed = True
@@ -1087,7 +1095,7 @@ class RealWorkFromAnywhereConnector(BaseConnector):
         ]
 
 
-class YCombinatorConnector(BaseConnector):
+class YCombinatorConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Y Combinator"
     tier = 2
     is_feed = True

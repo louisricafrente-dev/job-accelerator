@@ -14,6 +14,31 @@ from src.models import Job, normalize_date, scrape_date_window
 
 logger = logging.getLogger("connectors")
 
+# 7-day scrape window for newly integrated platforms until 2026-11-07 23:59:59 PHT (1 full week)
+# After this cutoff timestamp, it automatically reverts to 2 days (Today & Yesterday),
+# matching the regular scraping cadence with zero manual intervention required.
+NEW_PLATFORMS_7DAY_CUTOFF = 1794067199  # 2026-11-07 23:59:59+08:00
+
+
+def default_new_platform_window(override_until: float = NEW_PLATFORMS_7DAY_CUTOFF) -> int:
+    return 7 if time.time() <= override_until else 2
+
+
+class NewPlatformConnectorMixin:
+    """Mixin for newly added platforms running on a 7-day window for 1 week before reverting to 2 days."""
+    _window_days_override = None
+
+    @property
+    def window_days(self) -> int:
+        if self._window_days_override is not None:
+            return self._window_days_override
+        return default_new_platform_window()
+
+    @window_days.setter
+    def window_days(self, value: int):
+        self._window_days_override = value
+
+
 class BaseConnector(ABC):
     platform: str = "Unknown"
     tier: int = 1
