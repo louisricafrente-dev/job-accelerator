@@ -74,7 +74,14 @@
       <!-- Header Action Controls -->
       <div class="header-actions">
         <!-- Secondary Utility Buttons Group -->
-        <div class="header-tools-group">
+        <div class="header-tools-group" role="toolbar" aria-label="System Tools & Settings">
+          <button type="button" id="btn-settings-hub" class="btn-subtle btn-settings-primary" onclick="toggleSettingsModal()" title="System Settings & Configuration Hub">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span class="btn-text">Settings</span>
+          </button>
           <button id="toggle-stack-btn" class="btn-subtle" onclick="toggleStackDrawer()" title="Configure target tech skills for scoring and sync">
             <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 20h9"/>
@@ -318,6 +325,15 @@
             <span class="switch-box"></span>
             <span class="switch-text">Exclude Senior</span>
           </label>
+
+          <button type="button" id="btn-clear-all-filters" class="btn-clear-all-filters" onclick="resetAllFeedFilters()" title="Reset all search keywords, role categories, seniority, dates, and toggles back to default">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="15" y1="9" x2="9" y2="15"/>
+              <line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+            <span>Clear Filters</span>
+          </button>
         </div>
       </div>
 
@@ -437,7 +453,6 @@
           <div class="filter-cell">
             <div class="filter-cell-header">
               <span class="filter-title">Seniority</span>
-              <span class="seniority-hint" id="seniority-hint">Multi-select</span>
             </div>
             <div class="chip-carousel" id="level-group">
               <button class="filter-chip active" data-val="All" onclick="setLevel('All', this)">All</button>
@@ -469,6 +484,9 @@
       <div class="summary-left">
         <span id="search-count" class="summary-count">Loading opportunities...</span>
         <span class="summary-context" id="summary-context"></span>
+        <button type="button" id="btn-summary-clear-filters" class="summary-clear-pill" onclick="resetAllFeedFilters()" style="display: none;" title="Reset all active filters">
+          <span>Clear all filters &times;</span>
+        </button>
       </div>
       <div class="shortcuts-legend" title="Keyboard navigation enabled">
         <span class="kbd-guide"><kbd>J</kbd>/<kbd>K</kbd> Navigate</span>
@@ -484,14 +502,24 @@
           <h2 class="pipeline-title">Active Applications Pipeline</h2>
           <p class="pipeline-subtitle">Track recruitment milestones, manage interview notes, and maintain timely follow-up cadences.</p>
         </div>
-        <a href="/api/jobs/export/csv?status=applied" class="btn-export-csv" download="job_applications.csv">
-          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          <span>Export CSV</span>
-        </a>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button type="button" class="btn-export-csv btn-pipeline-clear" onclick="resetAllFeedFilters()" title="Reset all filters on pipeline">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="15" y1="9" x2="9" y2="15"/>
+              <line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+            <span>Clear Filters</span>
+          </button>
+          <a href="/api/jobs/export/csv?status=applied" class="btn-export-csv" download="job_applications.csv">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <span>Export CSV</span>
+          </a>
+        </div>
       </div>
       <div class="pipeline-stages-grid" id="pipeline-stages-summary">
         <!-- Rendered dynamically by app.js -->
@@ -520,6 +548,16 @@
         <label for="gmail-category-filter">Message type<select id="gmail-category-filter" onchange="filterGmailCategory(this.value)"><option value="">All messages</option><option value="action_required">Needs action</option><option value="INTERVIEW">Interview</option><option value="ASSESSMENT">Assessment</option><option value="REQUIREMENT">Documents / forms</option><option value="OFFER">Offer</option><option value="REJECTED">Rejection</option><option value="RECEIVED">Acknowledgment</option><option value="OTHER">Other / unclear</option></select></label>
         <label for="gmail-read-filter">Hub read state<select id="gmail-read-filter" onchange="loadGmailHub()"><option value="">Read and unread</option><option value="unread">Unread</option><option value="read">Read</option></select></label>
         <label for="gmail-match-filter">Pipeline result<select id="gmail-match-filter" onchange="loadGmailHub()"><option value="">All results</option><option value="updated">Pipeline updated</option><option value="review">Unchanged / review</option></select></label>
+        <div class="gh-filter-actions">
+          <button type="button" class="btn-subtle btn-gmail-clear" onclick="clearGmailFilters()" title="Reset Gmail search and filters">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="15" y1="9" x2="9" y2="15"/>
+              <line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+            <span>Clear Filters</span>
+          </button>
+        </div>
       </div>
       <details class="gh-legend"><summary>Message color legend &amp; read behavior</summary><div class="gh-legend-items"><span class="gh-tag gh-interview">Blue · Interview</span><span class="gh-tag gh-assessment">Purple · Assessment</span><span class="gh-tag gh-requirement">Amber · Documents / forms</span><span class="gh-tag gh-offer">Green · Offer</span><span class="gh-tag gh-rejected">Rose · Rejection</span><span class="gh-tag gh-other">Gray · Acknowledgment / other</span></div><p>Opening a message marks it read in this Hub. Mark unread to return to it later. These controls do not change Gmail read flags. All scanned received messages remain here, even when no Pipeline update is made. Spam, Trash, attachments, and sent messages are not imported.</p></details>
       <p id="gmail-result-count" class="gh-muted" role="status" aria-live="polite"></p>
@@ -720,6 +758,14 @@
           <p class="modal-subtitle">Live page-view telemetry for <code>louisricafrente-dev.vercel.app</code> inside Job Accelerator (viewing or refreshing here never increments the counter).</p>
         </div>
         <div class="modal-actions-group">
+          <a href="https://louisricafrente-dev.vercel.app" target="_blank" rel="noopener noreferrer" class="btn-subtle btn-telemetry-action" style="text-decoration: none;" title="Open live portfolio website in new tab">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/>
+              <line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            <span>Live Site &rarr;</span>
+          </a>
           <button type="button" id="btn-refresh-portfolio-views" class="btn-subtle btn-telemetry-action" onclick="loadPortfolioViews(true)" title="Refresh live portfolio view stats">
             <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="23 4 23 10 17 10"/>
@@ -772,6 +818,169 @@
         <span id="portfolio-views-updated" class="telemetry-footer-hint">Source: hits.sh read-only API</span>
         <div class="footer-actions-right">
           <button type="button" class="btn-secondary" onclick="togglePortfolioViewsModal()">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Unified Settings & Configuration Hub Modal -->
+  <div id="settings-modal" class="modal-overlay" style="display: none;" onclick="handleSettingsOverlayClick(event)" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+    <div class="modal-card settings-modal-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-title-row">
+            <h2 class="modal-title" id="settings-modal-title">Settings &amp; Configuration Hub</h2>
+            <span class="active-badge-pill">Unified Workspace Controls</span>
+          </div>
+          <p class="modal-subtitle">Manage portfolio analytics, target tech stack, scraper routing, logs, and system automation in one central dashboard.</p>
+        </div>
+        <button type="button" class="btn-close-modal" onclick="toggleSettingsModal()" aria-label="Close settings modal">
+          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body settings-modal-body">
+        <!-- 1. Portfolio Views & Live Traffic -->
+        <div class="settings-feature-row">
+          <div class="settings-feature-info">
+            <div class="settings-feature-icon-box">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-feature-title-row">
+                <h3 class="settings-feature-title">Portfolio Views &amp; Live Traffic</h3>
+                <span class="settings-pill-stat" id="settings-portfolio-badge">Live Analytics</span>
+              </div>
+              <p class="settings-feature-desc">Real-time visitor counts and 30-day traffic metrics for <code>louisricafrente-dev.vercel.app</code>.</p>
+            </div>
+          </div>
+          <div class="settings-feature-actions">
+            <button type="button" class="btn-subtle btn-telemetry-action" onclick="toggleSettingsModal(); togglePortfolioViewsModal();">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              <span>Traffic Breakdown</span>
+            </button>
+            <a href="https://louisricafrente-dev.vercel.app" target="_blank" rel="noopener noreferrer" class="btn-subtle btn-telemetry-action" style="text-decoration: none;">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              <span>View Portfolio &rarr;</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- 2. Target Tech Stack & Matrix -->
+        <div class="settings-feature-row">
+          <div class="settings-feature-info">
+            <div class="settings-feature-icon-box">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-feature-title-row">
+                <h3 class="settings-feature-title">Target Tech Stack &amp; Skills</h3>
+                <span class="settings-pill-stat" id="settings-stack-count">6 Active</span>
+              </div>
+              <p class="settings-feature-desc">Dynamic skill keywords that calculate match scores, power tailored pitches, and guide scraper sync.</p>
+            </div>
+          </div>
+          <div class="settings-feature-actions">
+            <button type="button" class="btn-subtle btn-telemetry-action" onclick="toggleSettingsModal(); toggleStackDrawer();">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Skills Matrix Drawer</span>
+            </button>
+            <button type="button" class="btn-subtle btn-telemetry-action" onclick="resetToCandidateProfile(); showToast('Reset to candidate profile stack.');">
+              <span>Reset to Profile</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 3. Residential Proxies & Hybrid Routing -->
+        <div class="settings-feature-row">
+          <div class="settings-feature-info">
+            <div class="settings-feature-icon-box">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-feature-title-row">
+                <h3 class="settings-feature-title">Residential Proxies &amp; IP Pool</h3>
+                <span class="settings-pill-stat" id="settings-proxy-pill">Hybrid Routing</span>
+              </div>
+              <p class="settings-feature-desc">Configure proxy credentials and fallback behavior to prevent Cloudflare and IP rate-limits.</p>
+            </div>
+          </div>
+          <div class="settings-feature-actions">
+            <button type="button" class="btn-subtle btn-telemetry-action" onclick="toggleSettingsModal(); toggleProxyModal();">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <span>Proxy Settings</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 4. Board Telemetry & Scraper Logs -->
+        <div class="settings-feature-row">
+          <div class="settings-feature-info">
+            <div class="settings-feature-icon-box">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 17 10 11 4 5"/>
+                <line x1="12" y1="19" x2="20" y2="19"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-feature-title-row">
+                <h3 class="settings-feature-title">Board Telemetry &amp; Live Stream</h3>
+                <span class="settings-pill-stat">15 Job Boards</span>
+              </div>
+              <p class="settings-feature-desc">Real-time status, rate-limit health, request logs, and live terminal stream across all connected boards.</p>
+            </div>
+          </div>
+          <div class="settings-feature-actions">
+            <button type="button" class="btn-subtle btn-telemetry-action" onclick="toggleSettingsModal(); toggleSyncLogModal();">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              <span>Console Stream &amp; Logs</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 5. Automation & Email Alerts -->
+        <div class="settings-feature-row">
+          <div class="settings-feature-info">
+            <div class="settings-feature-icon-box">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="20" height="16" x="2" y="4" rx="2"/>
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-feature-title-row">
+                <h3 class="settings-feature-title">Automation &amp; Email Digest</h3>
+                <span class="settings-pill-stat">michael18ricafrente@gmail.com</span>
+              </div>
+              <p class="settings-feature-desc">Automated 6-hour crawler scheduling and instant on-demand scraping reports delivered to your inbox.</p>
+            </div>
+          </div>
+          <div class="settings-feature-actions">
+            <button type="button" class="btn-subtle btn-telemetry-action" onclick="triggerEmailDigest()">
+              <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              <span>Send Daily Digest</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer proxy-modal-footer">
+        <span class="telemetry-footer-hint">Job Application Accelerator &bull; Production Workspace</span>
+        <div class="footer-actions-right">
+          <button type="button" class="btn-secondary" onclick="toggleSettingsModal()">Close</button>
         </div>
       </div>
     </div>

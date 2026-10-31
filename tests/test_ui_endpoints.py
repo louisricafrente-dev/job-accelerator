@@ -179,6 +179,11 @@ class TestUIEndpoints(unittest.TestCase):
         self.assertIn('id="btn-portfolio-views"', body_html)
         self.assertIn('onclick="togglePortfolioViewsModal()"', body_html)
         self.assertIn('id="portfolio-views-modal"', body_html)
+        self.assertIn('id="btn-settings-hub"', body_html)
+        self.assertIn('id="settings-modal"', body_html)
+        self.assertIn('id="btn-clear-all-filters"', body_html)
+        self.assertNotIn('id="seniority-hint"', body_html)
+        self.assertIn('https://louisricafrente-dev.vercel.app', body_html)
         self.assertNotIn('href="https://hits.sh/louisricafrente-dev.vercel.app/"', body_html)
 
         env_api = {"REQUEST_METHOD": "GET", "PATH_INFO": "/api/portfolio/views", "QUERY_STRING": "", "wsgi.input": None}
