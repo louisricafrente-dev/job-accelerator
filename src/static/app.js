@@ -1093,6 +1093,7 @@ function syncFilterControlsUI() {
     const val = chip.getAttribute('data-val');
     chip.classList.toggle('active', selectedLevels.has(val));
   });
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
 }
 
 // Backward-compatible alias
@@ -1207,6 +1208,10 @@ function updateActiveSkillsBadge() {
   const drawerBadge = document.getElementById('matrix-active-count-badge');
   if (drawerBadge) {
     drawerBadge.textContent = `${active.length} Active`;
+  }
+  const setStack = document.getElementById('settings-stack-count');
+  if (setStack) {
+    setStack.textContent = `${active.length} Active`;
   }
 }
 
@@ -2142,6 +2147,35 @@ function renderEmptyStateHtml() {
   `;
 }
 
+function updateActiveFilterIndicators() {
+  const defaultDate = (['saved', 'applied'].includes(currentStatus) ? 'all' : '15days');
+  const appFilterVal = document.getElementById('application-filter')?.value || 'all';
+  const pipelineFilterVal = document.getElementById('pipeline-stage-filter')?.value || 'All';
+  const hasActive = Boolean(
+    (searchQuery && searchQuery.trim()) ||
+    (currentRole && currentRole !== 'All') ||
+    (currentLevel && currentLevel !== 'All') ||
+    (currentPlatform && currentPlatform !== 'All') ||
+    (currentDateFilter && currentDateFilter !== defaultDate && currentDateFilter !== 'all') ||
+    (appFilterVal !== 'all') ||
+    (pipelineFilterVal !== 'All') ||
+    filterBySkillsOnly ||
+    hasSalaryOnly ||
+    remoteOnly ||
+    hideSenior
+  );
+
+  const clearBtn = document.getElementById('btn-clear-all-filters');
+  if (clearBtn) {
+    clearBtn.classList.toggle('has-active-filters', hasActive);
+  }
+
+  const summaryPill = document.getElementById('btn-summary-clear-filters');
+  if (summaryPill) {
+    summaryPill.style.display = hasActive ? 'inline-flex' : 'none';
+  }
+}
+
 function resetAllFeedFilters() {
   searchQuery = '';
   const searchInput = document.getElementById('search-input');
@@ -2157,13 +2191,14 @@ function resetAllFeedFilters() {
 
   selectedLevels.clear();
   selectedLevels.add('All');
+  currentLevel = 'All';
   document.querySelectorAll('#level-group .filter-chip').forEach(c => {
     c.classList.toggle('active', c.dataset.val === 'All');
   });
 
-  currentDateFilter = '15days';
+  currentDateFilter = (['saved', 'applied'].includes(currentStatus) ? 'all' : '15days');
   document.querySelectorAll('#date-group .filter-chip').forEach(c => {
-    c.classList.toggle('active', c.dataset.val === '15days');
+    c.classList.toggle('active', c.dataset.val === currentDateFilter);
   });
 
   currentPlatform = 'All';
@@ -2173,19 +2208,62 @@ function resetAllFeedFilters() {
   const appFilter = document.getElementById('application-filter');
   if (appFilter) appFilter.value = 'all';
 
+  const pipelineFilter = document.getElementById('pipeline-stage-filter');
+  if (pipelineFilter) pipelineFilter.value = 'All';
+
   if (filterBySkillsOnly) {
     filterBySkillsOnly = false;
     const btn = document.getElementById('filter-by-skills-btn');
     if (btn) btn.classList.remove('active');
+    const chk = document.getElementById('skills-only-checkbox');
+    if (chk) chk.checked = false;
+  }
+
+  if (hasSalaryOnly) {
+    hasSalaryOnly = false;
+    const chk = document.getElementById('salary-only-checkbox');
+    if (chk) chk.checked = false;
+  }
+
+  if (remoteOnly) {
+    remoteOnly = false;
+    const chk = document.getElementById('remote-only-checkbox');
+    if (chk) chk.checked = false;
+  }
+
+  if (hideSenior) {
+    hideSenior = false;
+    const chk = document.getElementById('hide-senior-checkbox');
+    if (chk) chk.checked = false;
   }
 
   rememberViewFilters();
-  persistSetting('date_filter', '15days');
-  persistSetting('level', 'All');
+  persistSetting('date_filter', currentDateFilter);
+  persistSetting('experience_levels', 'All');
   persistSetting('role', 'All');
   persistSetting('platform', 'All');
+  persistSetting('remote_only', 'false');
+  persistSetting('hide_senior', 'false');
+  persistSetting('has_salary_only', 'false');
+  persistSetting('filter_skills_only', 'false');
+  updateActiveFilterIndicators();
   loadJobs();
-  showToast('Filters reset to full 15-day inventory.', 'info');
+  showToast('All filters cleared.', 'info');
+}
+
+function clearGmailFilters() {
+  const searchInput = document.getElementById('gmail-search-input');
+  if (searchInput) searchInput.value = '';
+  const catFilter = document.getElementById('gmail-category-filter');
+  if (catFilter) catFilter.value = '';
+  const readFilter = document.getElementById('gmail-read-filter');
+  if (readFilter) readFilter.value = '';
+  const matchFilter = document.getElementById('gmail-match-filter');
+  if (matchFilter) matchFilter.value = '';
+  if (typeof filterGmailCategory === 'function') filterGmailCategory('');
+  if (typeof handleGmailSearch === 'function') handleGmailSearch('');
+  if (typeof loadGmailHub === 'function') loadGmailHub();
+  showToast('Gmail filters reset.', 'info');
 }
 
 function filterByApplicationHandling(jobs, filter) {
@@ -2590,6 +2668,14 @@ function stopSyncIndicator() {
 // Keyboard navigation
 function setupKeyboardNavigation() {
   document.addEventListener('keydown', (e) => {
+    const setModal = document.getElementById('settings-modal');
+    if (setModal && setModal.style.display !== 'none') {
+      if (e.key === 'Escape') {
+        toggleSettingsModal();
+      }
+      return;
+    }
+
     const pvModal = document.getElementById('portfolio-views-modal');
     if (pvModal && pvModal.style.display !== 'none') {
       if (e.key === 'Escape') {
@@ -2728,38 +2814,19 @@ function setStatus(status, elem) {
 }
 
 function setLevel(level, elem) {
-  if (level === 'All') {
-    selectedLevels.clear();
-    selectedLevels.add('All');
-  } else {
-    selectedLevels.delete('All');
-    if (selectedLevels.has(level)) {
-      selectedLevels.delete(level);
-      if (selectedLevels.size === 0) {
-        selectedLevels.add('All');
-      }
-    } else {
-      selectedLevels.add(level);
-    }
-  }
+  const target = level || 'All';
+  selectedLevels.clear();
+  selectedLevels.add(target);
+  currentLevel = target;
 
-  // Update active UI classes on chips
+  // Update active UI classes on chips: single-select exclusivity
   document.querySelectorAll('#level-group .filter-chip').forEach(c => {
     const val = c.getAttribute('data-val');
-    if (selectedLevels.has(val)) {
-      c.classList.add('active');
-    } else {
-      c.classList.remove('active');
-    }
+    c.classList.toggle('active', val === target);
   });
 
-  if (selectedLevels.has('All')) {
-    currentLevel = 'All';
-  } else {
-    currentLevel = Array.from(selectedLevels).join(',');
-  }
-
   persistSetting('experience_levels', currentLevel);
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
@@ -3331,6 +3398,31 @@ async function triggerEmailDigest() {
 
 
 // --------------------------------------------------------------------------
+// CENTRALIZED SETTINGS & CONFIGURATION HUB
+// --------------------------------------------------------------------------
+
+function toggleSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  if (!modal) return;
+  const isHidden = modal.style.display === 'none';
+  modal.style.display = isHidden ? 'flex' : 'none';
+  if (isHidden) {
+    const setStack = document.getElementById('settings-stack-count');
+    if (setStack) {
+      const active = typeof getActiveSkills === 'function' ? getActiveSkills() : [];
+      setStack.textContent = `${active.length} Active`;
+    }
+    loadPortfolioViews(false);
+  }
+}
+
+function handleSettingsOverlayClick(event) {
+  if (event.target === document.getElementById('settings-modal')) {
+    toggleSettingsModal();
+  }
+}
+
+// --------------------------------------------------------------------------
 // IN-APP PORTFOLIO TRAFFIC & LIVE VIEWS MONITOR
 // --------------------------------------------------------------------------
 
@@ -3359,7 +3451,7 @@ async function loadPortfolioViews(forceRefresh = false) {
     if (btnTxt) btnTxt.textContent = 'Refreshing...';
   }
   try {
-    const res = await fetch(forceRefresh ? '/api/portfolio/views?refresh=1' : '/api/portfolio/views');
+    const res = await resilientFetchWithRetry(forceRefresh ? '/api/portfolio/views?refresh=1' : '/api/portfolio/views');
     const data = await res.json();
     if (!res.ok || data.status !== 'ok') {
       throw new Error(data.error || 'Could not load portfolio views');
@@ -3380,6 +3472,9 @@ async function loadPortfolioViews(forceRefresh = false) {
 
     const modalBadge = document.getElementById('portfolio-modal-badge');
     if (modalBadge) modalBadge.textContent = `${total} Total Views`;
+
+    const setBadge = document.getElementById('settings-portfolio-badge');
+    if (setBadge) setBadge.textContent = `${total} views (${monthly}/30d)`;
 
     const elTotal = document.getElementById('pv-stat-total');
     if (elTotal) elTotal.textContent = total.toLocaleString();
@@ -3427,7 +3522,7 @@ async function loadPortfolioViews(forceRefresh = false) {
       }
     }
   } catch (err) {
-    if (listEl && forceRefresh) {
+    if (listEl) {
       listEl.innerHTML = `<div class="test-empty-state" style="color:#ef4444;">${escapeHtml(err.message)}</div>`;
     }
   } finally {
@@ -3475,6 +3570,10 @@ async function loadProxyStatus() {
     if (pill) {
       pill.textContent = (data.mode || 'hybrid').toUpperCase();
       pill.className = `proxy-status-pill ${data.mode || 'hybrid'}`;
+    }
+    const setProxy = document.getElementById('settings-proxy-pill');
+    if (setProxy) {
+      setProxy.textContent = (data.mode || 'hybrid').toUpperCase();
     }
     updateProxyHint(data.mode || 'hybrid');
   } catch (err) {
