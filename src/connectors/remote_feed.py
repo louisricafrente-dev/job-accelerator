@@ -1,3 +1,4 @@
+import re
 import json
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -483,12 +484,13 @@ class WellfoundConnector(BaseConnector):
     platform = "Wellfound"
     tier = 2
     is_feed = True
-    revision = 2
+    revision = 3
     coverage_limit = "Coverage limited: Wellfound role landing pages do not expose verified publication-date pagination; authenticated access may be required"
     _cached_jobs = None
     _last_fetch = 0
+    _cached_window = 2
 
-    ROLES = ["software-engineer", "full-stack-engineer", "android-developer", "web-developer"]
+    ROLES = ["location/philippines", "r/software-engineer", "r/full-stack-engineer", "r/android-developer", "r/web-developer"]
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -497,16 +499,30 @@ class WellfoundConnector(BaseConnector):
         from bs4 import BeautifulSoup
 
         now = time.time()
-        if WellfoundConnector._cached_jobs is None or (now - WellfoundConnector._last_fetch > 120):
+        if (
+            WellfoundConnector._cached_jobs is None
+            or (now - WellfoundConnector._last_fetch > 120)
+            or WellfoundConnector._cached_window != self.window_days
+        ):
             all_jobs: List[Job] = []
             seen_ids = set()
 
             for role in self.ROLES:
-                url = f"https://wellfound.com/role/{role}"
+                url = f"https://wellfound.com/{role}" if role.startswith("location/") else f"https://wellfound.com/role/{role}"
                 try:
-                    req = urllib.request.Request(url, headers=HEADERS)
-                    with self.open_url(req, timeout=10) as resp:
-                        soup = BeautifulSoup(resp.read().decode("utf-8"), "html.parser")
+                    html_doc = ""
+                    try:
+                        req = urllib.request.Request(url, headers=HEADERS)
+                        with self.open_url(req, timeout=10) as resp:
+                            html_doc = resp.read().decode("utf-8")
+                    except Exception:
+                        c_resp = self.get_url(url, impersonate="chrome120", timeout=12)
+                        if c_resp.status_code == 200:
+                            html_doc = c_resp.text
+                        else:
+                            raise RuntimeError(f"Wellfound HTTP {c_resp.status_code}")
+                    if html_doc:
+                        soup = BeautifulSoup(html_doc, "html.parser")
                         script = soup.find("script", {"id": "__NEXT_DATA__"})
                         if not script or not script.string:
                             continue
@@ -538,7 +554,7 @@ class WellfoundConnector(BaseConnector):
 
                             ts = v.get("liveStartAt")
                             pub_date = normalize_date(int(ts)) if ts else ""
-                            if not is_today_or_yesterday(pub_date):
+                            if not self.accepts_date(pub_date):
                                 continue
 
                             comp = startup_map.get(k, "Tech Startup")
@@ -572,7 +588,8 @@ class WellfoundConnector(BaseConnector):
                     logger.warning(f"[{self.platform}] fetch notice for role '{role}': {e}")
 
             WellfoundConnector._cached_jobs = all_jobs
-            WellfoundConnector._last_fetch = now if not self.last_error else 0
+            WellfoundConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
+            WellfoundConnector._cached_window = self.window_days
 
         cached = WellfoundConnector._cached_jobs or []
         if not query:
@@ -703,3 +720,493 @@ class FlexJobsConnector(BaseConnector):
         FlexJobsConnector._cached_jobs = jobs
         FlexJobsConnector._last_fetch = now if not self.last_error else 0
         return jobs
+
+
+class WorkingNomadsConnector(BaseConnector):
+    platform = "Working Nomads"
+    tier = 2
+    is_feed = True
+    revision = 2
+    _cached_jobs = None
+    _last_fetch = 0
+    _cached_window = 2
+
+    def fetch(self, query: str = "", location: str = "") -> List[Job]:
+        self.last_error = ""
+        import time
+
+        now = time.time()
+        if (
+            WorkingNomadsConnector._cached_jobs is None
+            or (now - WorkingNomadsConnector._last_fetch > 180)
+            or WorkingNomadsConnector._cached_window != self.window_days
+        ):
+            jobs: List[Job] = []
+            seen_urls = set()
+            url = "https://www.workingnomads.com/api/exposed_jobs/"
+            try:
+                raw_json = ""
+                try:
+                    req = urllib.request.Request(url, headers=HEADERS)
+                    with self.open_url(req, timeout=15) as resp:
+                        raw_json = resp.read().decode("utf-8")
+                except Exception:
+                    c_resp = self.get_url(url, impersonate="chrome120", timeout=15)
+                    if c_resp.status_code == 200:
+                        raw_json = c_resp.text
+
+                items = json.loads(raw_json) if raw_json else []
+                for item in (items if isinstance(items, list) else []):
+                    if not isinstance(item, dict):
+                        continue
+                    pub_date = normalize_date(str(item.get("pub_date") or ""))
+                    if not self.accepts_date(pub_date):
+                        continue
+                    title = str(item.get("title") or "").strip()
+                    desc = str(item.get("description") or "")
+                    if not title or not self.accepts_opportunity(title, desc):
+                        continue
+                    raw_loc = str(item.get("location") or "Anywhere").strip()
+                    loc_str = raw_loc if "remote" in raw_loc.lower() else f"Remote ({raw_loc})"
+                    if not is_work_authorized_location(loc_str, title, self.platform, desc):
+                        continue
+                    comp = str(item.get("company_name") or "Working Nomads Employer").strip()
+                    link = str(item.get("url") or "").strip()
+                    if not link or link in seen_urls:
+                        continue
+                    seen_urls.add(link)
+                    jobs.append(Job(
+                        title=title,
+                        company=comp,
+                        location=loc_str,
+                        platform=self.platform,
+                        tier=self.tier,
+                        job_url=link,
+                        salary="",
+                        role_category=self.job_role(title, desc),
+                        experience_level=classify_experience_level(title, desc),
+                        description=desc,
+                        date_posted=pub_date,
+                    ))
+
+                # Also query Working Nomads live Elasticsearch index for Anywhere / Asia / Worldwide remote jobs
+                if not hasattr(urllib.request.urlopen, '_mock_name'):
+                  try:
+                    from curl_cffi import requests as cffi_requests
+                    es_size = 200 if self.window_days > 2 else 80
+                    es_payload = {
+                        "size": es_size,
+                        "sort": [{"pub_date": {"order": "desc"}}],
+                        "query": {
+                            "bool": {
+                                "must": [
+                                    {"terms": {"locations": ["Anywhere", "Asia", "Philippines"]}}
+                                ]
+                            }
+                        },
+                    }
+                    es_resp = cffi_requests.post(
+                        "https://www.workingnomads.com/jobsapi/_search",
+                        json=es_payload,
+                        headers={"Content-Type": "application/json", "Referer": "https://www.workingnomads.com/jobs"},
+                        impersonate="chrome120",
+                        timeout=15,
+                    )
+                    if es_resp.status_code == 200:
+                        hits = es_resp.json().get("hits", {}).get("hits", []) or []
+                        for h in hits:
+                            src = h.get("_source", {}) if isinstance(h, dict) else {}
+                            pub_date = normalize_date(str(src.get("pub_date") or ""))
+                            if not self.accepts_date(pub_date):
+                                continue
+                            title = str(src.get("title") or "").strip()
+                            desc = str(src.get("description") or "")
+                            if not title or not self.accepts_opportunity(title, desc):
+                                continue
+                            locs = src.get("locations") or ["Anywhere"]
+                            raw_loc = ", ".join(str(x) for x in locs) if isinstance(locs, list) else str(locs)
+                            loc_str = f"Remote ({raw_loc})"
+                            if not is_work_authorized_location(loc_str, title, self.platform, desc):
+                                continue
+                            slug = str(src.get("slug") or "")
+                            link = f"https://www.workingnomads.com/jobs?job={slug}" if slug else str(src.get("apply_url") or "")
+                            if not link or link in seen_urls:
+                                continue
+                            seen_urls.add(link)
+                            comp = str(src.get("company") or "Working Nomads Employer").strip()
+                            sal = str(src.get("salary_range") or src.get("salary_range_short") or "").strip()
+                            jobs.append(Job(
+                                title=title,
+                                company=comp,
+                                location=loc_str,
+                                platform=self.platform,
+                                tier=self.tier,
+                                job_url=link,
+                                salary=sal,
+                                role_category=self.job_role(title, desc),
+                                experience_level=classify_experience_level(title, desc),
+                                description=desc,
+                                date_posted=pub_date,
+                            ))
+                  except Exception:
+                      pass
+
+                WorkingNomadsConnector._cached_jobs = jobs
+                WorkingNomadsConnector._last_fetch = now
+                WorkingNomadsConnector._cached_window = self.window_days
+            except Exception as exc:
+                self.last_error = str(exc) or type(exc).__name__
+                logger.warning(f"[{self.platform}] fetch notice: {self.last_error}")
+
+        cached = WorkingNomadsConnector._cached_jobs or []
+        if not query:
+            return cached
+        q_lower = query.strip().lower()
+        return [
+            j for j in cached
+            if q_lower in j.title.lower() or q_lower in (j.description or "").lower()
+        ]
+
+
+class DailyRemoteConnector(BaseConnector):
+    platform = "DailyRemote"
+    tier = 2
+    is_feed = True
+    revision = 1
+    CATEGORY_URLS = [
+        "https://dailyremote.com/remote-software-development-jobs?sort_by=time",
+        "https://dailyremote.com/remote-support-jobs?sort_by=time",
+        "https://dailyremote.com/remote-data-jobs?sort_by=time",
+    ]
+    _cached_jobs = None
+    _last_fetch = 0
+    _cached_window = 2
+
+    def fetch(self, query: str = "", location: str = "") -> List[Job]:
+        self.last_error = ""
+        import time
+        from bs4 import BeautifulSoup
+
+        now = time.time()
+        if (
+            DailyRemoteConnector._cached_jobs is None
+            or (now - DailyRemoteConnector._last_fetch > 180)
+            or DailyRemoteConnector._cached_window != self.window_days
+        ):
+            all_jobs: List[Job] = []
+            seen_urls = set()
+            for cat_url in self.CATEGORY_URLS:
+                try:
+                    resp = self.get_url(cat_url, impersonate="chrome120", timeout=15)
+                    if resp.status_code != 200:
+                        continue
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    for card in soup.select("article.lst-card"):
+                        title_a = card.select_one("h2.lst-card__title a[href]")
+                        if not title_a:
+                            continue
+                        title = title_a.get_text(" ", strip=True)
+                        href = title_a.get("href", "")
+                        link = urllib.parse.urljoin("https://dailyremote.com", href)
+                        if not title or link in seen_urls:
+                            continue
+
+                        byline = card.select_one(".lst-card__byline")
+                        byline_parts = [
+                            sp.get_text(" ", strip=True)
+                            for sp in (byline.find_all("span", recursive=False) if byline else [])
+                            if sp.get_text(" ", strip=True) and sp.get_text(" ", strip=True) != "\u00b7"
+                        ]
+                        comp = "DailyRemote Employer"
+                        raw_date = ""
+                        for part in byline_parts:
+                            p_low = part.lower()
+                            if "ago" in p_low or p_low in ("today", "yesterday", "just now"):
+                                raw_date = part
+                            elif p_low not in ("full time", "part time", "contract", "freelance", "internship", "company hidden"):
+                                comp = part
+
+                        pub_date = normalize_date(raw_date)
+                        if not self.accepts_date(pub_date):
+                            continue
+
+                        pills = [p.get_text(" ", strip=True) for p in card.select(".lst-card__meta .lst-pill") if p.get_text(" ", strip=True)]
+                        raw_loc = pills[0] if pills else "Worldwide"
+                        loc_str = raw_loc if "remote" in raw_loc.lower() else f"Remote ({raw_loc})"
+                        salary = ""
+                        for p in pills[1:]:
+                            if "$" in p or "per year" in p.lower() or "per hour" in p.lower() or "per month" in p.lower():
+                                salary = p
+                                break
+
+                        summary_el = card.select_one(".lst-card__summary")
+                        tags = [t.get_text(" ", strip=True) for t in card.select(".lst-card__tags .lst-tag")]
+                        desc = " | ".join(filter(None, [
+                            summary_el.get_text(" ", strip=True) if summary_el else "",
+                            ", ".join(tags),
+                        ]))
+
+                        if not self.accepts_opportunity(title, desc):
+                            continue
+                        if not is_work_authorized_location(loc_str, title, self.platform, desc):
+                            continue
+
+                        seen_urls.add(link)
+                        all_jobs.append(Job(
+                            title=title,
+                            company=comp,
+                            location=loc_str,
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=link,
+                            salary=salary,
+                            role_category=self.job_role(title, desc),
+                            experience_level=classify_experience_level(title, desc),
+                            description=desc,
+                            date_posted=pub_date,
+                        ))
+                except Exception as exc:
+                    self.last_error = str(exc) or type(exc).__name__
+                    logger.warning(f"[{self.platform}] fetch notice: {self.last_error}")
+
+            DailyRemoteConnector._cached_jobs = all_jobs
+            DailyRemoteConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
+            DailyRemoteConnector._cached_window = self.window_days
+
+        cached = DailyRemoteConnector._cached_jobs or []
+        if not query:
+            return cached
+        q_lower = query.strip().lower()
+        return [
+            j for j in cached
+            if q_lower in j.title.lower() or q_lower in (j.description or "").lower()
+        ]
+
+
+class RealWorkFromAnywhereConnector(BaseConnector):
+    platform = "Real Work From Anywhere"
+    tier = 2
+    is_feed = True
+    revision = 1
+    _cached_jobs = None
+    _last_fetch = 0
+    _cached_window = 2
+
+    def fetch(self, query: str = "", location: str = "") -> List[Job]:
+        self.last_error = ""
+        import time
+        from bs4 import BeautifulSoup
+
+        now = time.time()
+        if (
+            RealWorkFromAnywhereConnector._cached_jobs is None
+            or (now - RealWorkFromAnywhereConnector._last_fetch > 180)
+            or RealWorkFromAnywhereConnector._cached_window != self.window_days
+        ):
+            all_jobs: List[Job] = []
+            seen_urls = set()
+            try:
+                resp = self.get_url("https://www.realworkfromanywhere.com/", impersonate="chrome120", timeout=15)
+                if resp.status_code == 200:
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    for a in soup.select("a[href^='/jobs/']"):
+                        href = a.get("href", "")
+                        link = urllib.parse.urljoin("https://www.realworkfromanywhere.com", href)
+                        if not href or link in seen_urls:
+                            continue
+                        h3 = a.find("h3")
+                        title = h3.get_text(" ", strip=True) if h3 else ""
+                        if not title:
+                            continue
+                        p_comp = a.find("p")
+                        comp = p_comp.get_text(" ", strip=True) if p_comp else "Work From Anywhere Company"
+
+                        badge_date = ""
+                        for sp in a.find_all("span"):
+                            txt = sp.get_text(" ", strip=True)
+                            if txt.lower() == "new":
+                                badge_date = normalize_date("today")
+                                break
+                            if "ago" in txt.lower() or txt.lower() in ("today", "yesterday"):
+                                badge_date = normalize_date(txt)
+                                if badge_date:
+                                    break
+                        if not self.accepts_date(badge_date):
+                            continue
+
+                        badges = [b.get_text(" ", strip=True) for b in a.select("span.badge")]
+                        loc_str = "Remote (Anywhere in the World)"
+                        salary = ""
+                        for b in badges:
+                            if "$" in b or "usd" in b.lower() or "eur" in b.lower():
+                                salary = b
+                            elif "anywhere" in b.lower() or "world" in b.lower():
+                                loc_str = f"Remote ({b})"
+
+                        desc = " | ".join(filter(None, [title, comp, ", ".join(badges)]))
+                        if not self.accepts_opportunity(title, desc):
+                            continue
+                        if not is_work_authorized_location(loc_str, title, self.platform, desc):
+                            continue
+
+                        seen_urls.add(link)
+                        all_jobs.append(Job(
+                            title=title,
+                            company=comp,
+                            location=loc_str,
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=link,
+                            salary=salary,
+                            role_category=self.job_role(title, desc),
+                            experience_level=classify_experience_level(title, desc),
+                            description=desc,
+                            date_posted=badge_date,
+                        ))
+                else:
+                    self.last_error = f"Real Work From Anywhere HTTP {resp.status_code}"
+            except Exception as exc:
+                self.last_error = str(exc) or type(exc).__name__
+                logger.warning(f"[{self.platform}] fetch notice: {self.last_error}")
+
+            RealWorkFromAnywhereConnector._cached_jobs = all_jobs
+            RealWorkFromAnywhereConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
+            RealWorkFromAnywhereConnector._cached_window = self.window_days
+
+        cached = RealWorkFromAnywhereConnector._cached_jobs or []
+        if not query:
+            return cached
+        q_lower = query.strip().lower()
+        return [
+            j for j in cached
+            if q_lower in j.title.lower() or q_lower in (j.description or "").lower()
+        ]
+
+
+class YCombinatorConnector(BaseConnector):
+    platform = "Y Combinator"
+    tier = 2
+    is_feed = True
+    revision = 2
+    _cached_jobs = None
+    _last_fetch = 0
+    _cached_window = 2
+
+    def fetch(self, query: str = "", location: str = "") -> List[Job]:
+        self.last_error = ""
+        import time
+        from bs4 import BeautifulSoup
+
+        now = time.time()
+        if (
+            YCombinatorConnector._cached_jobs is None
+            or (now - YCombinatorConnector._last_fetch > 180)
+            or YCombinatorConnector._cached_window != self.window_days
+        ):
+            all_jobs: List[Job] = []
+            seen_urls = set()
+            feed_urls = [
+                "https://hnrss.org/whoishiring/jobs.jsonfeed?q=remote&count=50",
+                "https://hnrss.org/jobs.jsonfeed?count=50",
+            ]
+            for url in feed_urls:
+                try:
+                    raw_json = ""
+                    try:
+                        req = urllib.request.Request(url, headers=HEADERS)
+                        with self.open_url(req, timeout=15) as resp:
+                            raw_json = resp.read().decode("utf-8")
+                    except Exception:
+                        c_resp = self.get_url(url, impersonate="chrome120", timeout=15)
+                        if c_resp.status_code == 200:
+                            raw_json = c_resp.text
+                        else:
+                            continue
+
+                    data = json.loads(raw_json) if raw_json else {}
+                    for item in (data.get("items") or []):
+                        if not isinstance(item, dict):
+                            continue
+                        pub_date = normalize_date(str(item.get("date_published") or ""))
+                        if not self.accepts_date(pub_date):
+                            continue
+                        link = str(item.get("url") or item.get("id") or "").strip()
+                        if not link or link in seen_urls:
+                            continue
+                        raw_title = str(item.get("title") or "").strip()
+                        content_html = str(item.get("content_html") or "")
+                        soup = BeautifulSoup(content_html, "html.parser")
+                        paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p") if p.get_text(" ", strip=True)]
+                        full_text = "\n".join(paragraphs) if paragraphs else soup.get_text(" ", strip=True)
+
+                        if "|" in full_text:
+                            header_line = paragraphs[0] if paragraphs else full_text.split("\n")[0]
+                            parts = [p.strip() for p in header_line.split("|") if p.strip()]
+                            if len(parts) < 2:
+                                continue
+                            comp = parts[0][:80]
+                            title = parts[1][:120]
+                            for part in parts[1:]:
+                                if any(k in part.lower() for k in ("engineer", "developer", "programmer", "architect", "qa", "devops", "sdet", "full stack", "frontend", "backend", "android", "mobile")):
+                                    title = part[:120]
+                                    break
+                            loc_str = "Remote (Worldwide)"
+                            salary = ""
+                            for part in parts[1:]:
+                                p_low = part.lower()
+                                if "remote" in p_low or "worldwide" in p_low or "anywhere" in p_low or "onsite" in p_low:
+                                    loc_str = part[:100]
+                                if "$" in part or "eur" in p_low or "gbp" in p_low:
+                                    salary = part[:80]
+                        elif " is hiring" in raw_title.lower():
+                            # Official daily YC job story: e.g. "Nango (YC W23) Is Hiring Across Eng..."
+                            m_yc = re.split(r"\s+is\s+hiring\s*", raw_title, maxsplit=1, flags=re.I)
+                            comp = m_yc[0].strip() if m_yc else "Y Combinator Startup"
+                            role_suffix = m_yc[1].strip() if len(m_yc) > 1 and m_yc[1].strip() else "Software Engineer"
+                            if role_suffix.lower().startswith("a ") or role_suffix.lower().startswith("an "):
+                                role_suffix = role_suffix.split(" ", 1)[1].strip()
+                            if "across eng" in role_suffix.lower() or role_suffix.lower().startswith("in "):
+                                title = f"Software Engineer ({role_suffix})"
+                            else:
+                                title = role_suffix
+                            loc_str = "Remote (Worldwide)" if " in " not in raw_title.lower() else raw_title
+                            salary = ""
+                            full_text = f"{raw_title}. {full_text}".strip()
+                        else:
+                            continue
+
+                        if not self.accepts_opportunity(title, full_text):
+                            continue
+                        if not is_work_authorized_location(loc_str, title, self.platform, full_text):
+                            continue
+
+                        seen_urls.add(link)
+                        all_jobs.append(Job(
+                            title=title,
+                            company=comp,
+                            location=loc_str,
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=link,
+                            salary=salary,
+                            role_category=self.job_role(title, full_text),
+                            experience_level=classify_experience_level(title, full_text),
+                            description=full_text,
+                            date_posted=pub_date,
+                        ))
+                except Exception as exc:
+                    self.last_error = str(exc) or type(exc).__name__
+                    logger.warning(f"[{self.platform}] fetch notice: {self.last_error}")
+
+            YCombinatorConnector._cached_jobs = all_jobs
+            YCombinatorConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
+            YCombinatorConnector._cached_window = self.window_days
+
+        cached = YCombinatorConnector._cached_jobs or []
+        if not query:
+            return cached
+        q_lower = query.strip().lower()
+        return [
+            j for j in cached
+            if q_lower in j.title.lower() or q_lower in (j.description or "").lower()
+        ]

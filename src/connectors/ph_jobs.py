@@ -1,3 +1,4 @@
+import re
 import json
 import urllib.request
 import urllib.parse
@@ -381,3 +382,464 @@ class OnlineJobsConnector(BaseConnector):
             self.last_error = str(exc) or type(exc).__name__
             logger.error("[%s] fetch failed: %s", self.platform, self.last_error)
         return jobs
+
+
+class FounditPHConnector(BaseConnector):
+    platform = "Foundit.ph"
+    tier = 1
+    is_feed = False
+    checkpointed_query = True
+    query_group_size = 5
+    revision = 1
+    PAGE_SIZE = 30
+    _session = None
+    _session_primed = False
+
+    @classmethod
+    def _get_session(cls):
+        from curl_cffi import requests as cffi_requests
+        if cls._session is None:
+            cls._session = cffi_requests.Session(impersonate="chrome120")
+        if not cls._session_primed:
+            try:
+                cls._session.get("https://www.foundit.com.ph/srp/results?query=developer", timeout=12)
+                cls._session_primed = True
+            except Exception:
+                pass
+        return cls._session
+
+    def fetch(self, query: str = "software developer", location: str = "Philippines") -> List[Job]:
+        self.last_error = ""
+        self.coverage_warning = ""
+        jobs: List[Job] = []
+        state = self.page_state(query)
+        start = int(state.get("start", 0) or 0)
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://www.foundit.com.ph/middleware/jobsearch?sort=1&limit={self.PAGE_SIZE}&start={start}&query={encoded_query}"
+        referer = f"https://www.foundit.com.ph/srp/results?query={encoded_query}"
+        try:
+            sess = self._get_session()
+            resp = sess.get(
+                url,
+                headers={"Accept": "application/json, text/plain, */*", "Referer": referer},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                self._session_primed = False
+                sess = self._get_session()
+                resp = sess.get(
+                    url,
+                    headers={"Accept": "application/json, text/plain, */*", "Referer": referer},
+                    timeout=15,
+                )
+            if resp.status_code != 200:
+                self.last_error = f"Foundit.ph HTTP {resp.status_code}"
+                return jobs
+            payload = resp.json()
+            items = payload.get("jobSearchResponse", {}).get("data", []) or []
+            raw_ids: List[str] = []
+            raw_dates: List[str] = []
+            parsed_rows = []
+            for item in items:
+                if not isinstance(item, dict) or ("title" not in item and "jobId" not in item):
+                    continue
+                jid = str(item.get("jobId") or item.get("id") or "")
+                ts = item.get("createdAt") or item.get("freshness") or item.get("postedAt")
+                pub_date = ""
+                if ts is not None:
+                    try:
+                        ts_int = int(ts)
+                        if ts_int > 10_000_000_000:
+                            ts_int = ts_int // 1000
+                        pub_date = normalize_date(ts_int)
+                    except (ValueError, TypeError):
+                        pub_date = normalize_date(str(ts))
+                raw_ids.append(jid or str(len(raw_ids)))
+                raw_dates.append(pub_date)
+                parsed_rows.append((item, jid, pub_date))
+
+            has_in_window = any(self.accepts_date(d) for d in raw_dates if d)
+            more_available = has_in_window and len(parsed_rows) >= self.PAGE_SIZE - 5 and start + self.PAGE_SIZE < 150
+            self.finish_page(state, raw_ids, raw_dates, more_available, ordered=False)
+            state["start"] = start + self.PAGE_SIZE if self.has_more else 0
+
+            for item, jid, pub_date in parsed_rows:
+                if not self.accepts_date(pub_date):
+                    continue
+                title = str(item.get("title") or "").strip()
+                desc = str(item.get("description") or item.get("skills") or "")
+                if not title or not self.accepts_opportunity(title, desc):
+                    continue
+                comp = str(item.get("companyName") or "Foundit PH Employer").strip()
+                locs = item.get("locations") or "Philippines"
+                loc_str = ", ".join(locs) if isinstance(locs, list) else str(locs)
+                if "philippines" not in loc_str.lower():
+                    loc_str = f"{loc_str}, Philippines" if loc_str else "Philippines"
+                if not is_work_authorized_location(loc_str, title, self.platform, desc):
+                    continue
+                jd_url = str(item.get("seoJdUrl") or item.get("jdUrl") or "")
+                if jd_url and not jd_url.startswith("http"):
+                    link = f"https://www.foundit.com.ph{jd_url if jd_url.startswith('/') else '/' + jd_url}"
+                elif jid:
+                    link = f"https://www.foundit.com.ph/job/{jid}"
+                else:
+                    continue
+                jobs.append(Job(
+                    title=title,
+                    company=comp,
+                    location=loc_str,
+                    platform=self.platform,
+                    tier=self.tier,
+                    job_url=link,
+                    salary="",
+                    role_category=self.job_role(title, desc),
+                    experience_level=classify_experience_level(title, desc),
+                    description=desc,
+                    date_posted=pub_date,
+                ))
+        except Exception as exc:
+            self.last_error = str(exc) or type(exc).__name__
+            logger.warning("[%s] fetch notice: %s", self.platform, self.last_error)
+        return jobs
+
+
+class VirtualStaffPHConnector(BaseConnector):
+    platform = "VirtualStaff.ph"
+    tier = 1
+    is_feed = True
+    revision = 2
+    PAGE_SIZE = 60
+    _cached_jobs = None
+    _last_fetch = 0
+    _cached_window = 2
+
+    def fetch(self, query: str = "", location: str = "Philippines") -> List[Job]:
+        self.last_error = ""
+        self.coverage_warning = ""
+        import time
+
+        now = time.time()
+        if (
+            VirtualStaffPHConnector._cached_jobs is None
+            or (now - VirtualStaffPHConnector._last_fetch > 180)
+            or VirtualStaffPHConnector._cached_window != self.window_days
+        ):
+            jobs: List[Job] = []
+            try:
+                from curl_cffi import requests as cffi_requests
+                resp = cffi_requests.post(
+                    "https://www.virtualstaff.ph/api/external/job-list",
+                    json={"limit": self.PAGE_SIZE, "skip": 0, "query": {}},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Referer": "https://www.virtualstaff.ph/jobs",
+                        "Origin": "https://www.virtualstaff.ph",
+                    },
+                    impersonate="chrome120",
+                    timeout=15,
+                )
+                if resp.status_code != 200:
+                    self.last_error = f"VirtualStaff.ph HTTP {resp.status_code}"
+                    return []
+                payload = resp.json()
+                result = payload.get("result", {}) if isinstance(payload, dict) else {}
+                items = result.get("data", []) or []
+
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    jid = str(item.get("_id") or "")
+                    raw_dt = str(item.get("created_time") or item.get("updated_time") or "")
+                    pub_date = normalize_date(raw_dt)
+                    if not jid or not self.accepts_date(pub_date):
+                        continue
+                    title = str(item.get("job_title") or item.get("job_name") or "").strip()
+                    exp_raw = str(item.get("experience") or "").strip().lower()
+                    exp_tag = "entry level" if exp_raw == "entry" else (f"{exp_raw} level" if exp_raw else "")
+                    q_parts = []
+                    for q_obj in (item.get("questionnaire") or []):
+                        if isinstance(q_obj, dict):
+                            ans = q_obj.get("answer")
+                            if isinstance(ans, list):
+                                q_parts.extend(str(a) for a in ans)
+                            elif ans:
+                                q_parts.append(str(ans))
+                    skills = [
+                        str(s.get("skill") if isinstance(s, dict) else s)
+                        for s in (item.get("skills") or item.get("experience_level") or [])
+                    ]
+                    desc = " | ".join(filter(None, [
+                        exp_tag,
+                        str(item.get("job_desc_short") or item.get("job_desc") or ""),
+                        ", ".join(skills),
+                        " ; ".join(q_parts),
+                    ]))
+                    if not title or not self.accepts_opportunity(title, desc):
+                        continue
+                    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+                    link = f"https://www.virtualstaff.ph/jobs-in-philippines/{jid}/{slug}" if slug else f"https://www.virtualstaff.ph/jobs-in-philippines/{jid}"
+                    php_sal = item.get("monthly_salary_php")
+                    usd_sal = item.get("monthly_salary_usd")
+                    sal_amt = item.get("salary_amount")
+                    sal_per = item.get("salary_period") or "hr"
+                    salary = ""
+                    if php_sal and usd_sal:
+                        salary = f"PHP {int(float(php_sal)):,}/mo (${int(float(usd_sal)):,}/mo)"
+                    elif sal_amt:
+                        salary = f"${sal_amt}/{sal_per}"
+                    jobs.append(Job(
+                        title=title,
+                        company="Direct Client (VirtualStaff.ph)",
+                        location="Philippines (Remote)",
+                        platform=self.platform,
+                        tier=self.tier,
+                        job_url=link,
+                        salary=salary,
+                        role_category=self.job_role(title, desc),
+                        experience_level=classify_experience_level(title, desc),
+                        description=desc,
+                        date_posted=pub_date,
+                    ))
+                VirtualStaffPHConnector._cached_jobs = jobs
+                VirtualStaffPHConnector._last_fetch = now
+                VirtualStaffPHConnector._cached_window = self.window_days
+            except Exception as exc:
+                self.last_error = str(exc) or type(exc).__name__
+                logger.warning("[%s] fetch notice: %s", self.platform, self.last_error)
+
+        cached = VirtualStaffPHConnector._cached_jobs or []
+        if not query:
+            return cached
+        q_lower = query.strip().lower()
+        return [
+            j for j in cached
+            if q_lower in j.title.lower() or q_lower in (j.description or "").lower()
+        ]
+
+
+class PhilJobNetConnector(BaseConnector):
+    platform = "PhilJobNet"
+    tier = 2
+    is_feed = True
+    revision = 1
+    SEARCH_TERMS = ["developer", "software", "programmer", "quality assurance", "virtual assistant"]
+    _cached_jobs = None
+    _last_fetch = 0
+    _cached_window = 2
+
+    def fetch(self, query: str = "", location: str = "Philippines") -> List[Job]:
+        self.last_error = ""
+        import time
+        from datetime import datetime
+        from bs4 import BeautifulSoup
+        from curl_cffi import requests as cffi_requests
+
+        now = time.time()
+        if (
+            PhilJobNetConnector._cached_jobs is None
+            or (now - PhilJobNetConnector._last_fetch > 180)
+            or PhilJobNetConnector._cached_window != self.window_days
+        ):
+            all_jobs: List[Job] = []
+            seen_urls = set()
+            try:
+                sess = cffi_requests.Session(impersonate="chrome120")
+                base_url = "https://philjobnet.gov.ph/job-vacancies/"
+                r0 = sess.get(base_url, timeout=15)
+                pages_html = [r0.text] if r0.status_code == 200 else []
+                if r0.status_code == 200:
+                    soup0 = BeautifulSoup(r0.text, "html.parser")
+                    hidden = {
+                        inp["name"]: inp.get("value", "")
+                        for inp in soup0.select("form input[type='hidden']")
+                        if inp.get("name")
+                    }
+                    for term in self.SEARCH_TERMS:
+                        form_data = dict(hidden)
+                        form_data["ctl00$BodyContentPlaceHolder$searchterm"] = term
+                        form_data["ctl00$BodyContentPlaceHolder$Button1"] = "Search Job"
+                        try:
+                            rs = sess.post(base_url, data=form_data, timeout=15)
+                            if rs.status_code == 200:
+                                pages_html.append(rs.text)
+                        except Exception:
+                            continue
+
+                for html_doc in pages_html:
+                    soup = BeautifulSoup(html_doc, "html.parser")
+                    for card in soup.select(".jobcard"):
+                        parent_a = card.find_parent("a", href=True)
+                        href = parent_a["href"] if parent_a else ""
+                        if not href:
+                            continue
+                        link = urllib.parse.urljoin("https://philjobnet.gov.ph", href)
+                        if link in seen_urls:
+                            continue
+                        title_el = card.select_one(".jobtitle")
+                        title = title_el.get_text(" ", strip=True) if title_el else ""
+                        if not title:
+                            continue
+                        card_text = card.get_text(" ", strip=True)
+                        m_date = re.search(r"Posted on\s+(\d{1,2}/\d{1,2}/\d{4})", card_text, re.I)
+                        pub_date = ""
+                        if m_date:
+                            try:
+                                pub_date = datetime.strptime(m_date.group(1), "%m/%d/%Y").strftime("%Y-%m-%d")
+                            except ValueError:
+                                pub_date = ""
+                        if not self.accepts_date(pub_date):
+                            continue
+                        if not self.accepts_opportunity(title, card_text):
+                            continue
+                        comp_el = card.select_one(".companytitle")
+                        comp = comp_el.get_text(" ", strip=True) if comp_el else "PhilJobNet Employer"
+                        sal_el = card.select_one(".salary")
+                        sal = sal_el.get_text(" ", strip=True).replace("₱", "PHP ") if sal_el else ""
+                        loc_icon = card.select_one(".bi-geo-alt")
+                        loc_str = loc_icon.parent.get_text(" ", strip=True) if (loc_icon and loc_icon.parent) else "Philippines"
+                        if "philippines" not in loc_str.lower():
+                            loc_str = f"{loc_str}, Philippines"
+                        seen_urls.add(link)
+                        all_jobs.append(Job(
+                            title=title,
+                            company=comp,
+                            location=loc_str,
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=link,
+                            salary=sal,
+                            role_category=self.job_role(title, card_text),
+                            experience_level=classify_experience_level(title, card_text),
+                            description=card_text,
+                            date_posted=pub_date,
+                        ))
+                PhilJobNetConnector._cached_jobs = all_jobs
+                PhilJobNetConnector._last_fetch = now
+                PhilJobNetConnector._cached_window = self.window_days
+            except Exception as exc:
+                self.last_error = str(exc) or type(exc).__name__
+                logger.warning("[%s] fetch notice: %s", self.platform, self.last_error)
+
+        cached = PhilJobNetConnector._cached_jobs or []
+        if not query:
+            return cached
+        q_lower = query.strip().lower()
+        return [
+            j for j in cached
+            if q_lower in j.title.lower() or q_lower in (j.description or "").lower()
+        ]
+
+
+class JobgetherPHConnector(BaseConnector):
+    platform = "Jobgether"
+    tier = 1
+    is_feed = True
+    revision = 1
+    URLS = [
+        "https://jobgether.com/remote-jobs/philippines",
+        "https://jobgether.com/search-offers?keyword=software%20developer",
+        "https://jobgether.com/search-offers?keyword=mobile%20developer",
+        "https://jobgether.com/search-offers?keyword=qa%20engineer",
+        "https://jobgether.com/search-offers?keyword=virtual%20assistant",
+    ]
+    _cached_jobs = None
+    _last_fetch = 0
+    _cached_window = 2
+
+    def fetch(self, query: str = "", location: str = "Philippines") -> List[Job]:
+        self.last_error = ""
+        import time
+        from bs4 import BeautifulSoup
+
+        now = time.time()
+        if (
+            JobgetherPHConnector._cached_jobs is None
+            or (now - JobgetherPHConnector._last_fetch > 180)
+            or JobgetherPHConnector._cached_window != self.window_days
+        ):
+            all_jobs: List[Job] = []
+            seen_urls = set()
+            for page_url in self.URLS:
+                try:
+                    resp = self.get_url(page_url, impersonate="chrome120", timeout=15)
+                    if resp.status_code != 200:
+                        continue
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    is_ph_landing = "remote-jobs/philippines" in page_url
+                    for a in soup.find_all("a", href=True):
+                        href = a["href"]
+                        if "/offer/" not in href:
+                            continue
+                        link = urllib.parse.urljoin("https://jobgether.com", href)
+                        if link in seen_urls:
+                            continue
+                        title = (a.get("title") or a.get_text(" ", strip=True) or "").strip()
+                        if not title or title.lower() == "apply":
+                            continue
+                        card = a.find_parent("div", class_=lambda c: c and ("shadow" in c or "group" in c)) or a.parent.parent
+                        card_text = card.get_text(" | ", strip=True) if card else title
+
+                        pub_date = ""
+                        m_oid = re.search(r"/offer/([0-9a-f]{8})[0-9a-f]{16}-", href)
+                        if m_oid:
+                            try:
+                                pub_date = normalize_date(int(m_oid.group(1), 16))
+                            except ValueError:
+                                pub_date = ""
+                        if not pub_date and card:
+                            for sp in card.find_all("span"):
+                                st = sp.get_text(strip=True)
+                                if st and (st.lower() in ("today", "yesterday") or "ago" in st.lower()):
+                                    pub_date = normalize_date(st)
+                                    if pub_date:
+                                        break
+                        if not self.accepts_date(pub_date):
+                            continue
+                        if not self.accepts_opportunity(title, card_text):
+                            continue
+
+                        comp = "Jobgether Partner"
+                        if card:
+                            img = card.find("img", alt=True)
+                            if img and img.get("alt"):
+                                comp = img["alt"].strip()
+
+                        loc_str = "Philippines (Remote)" if is_ph_landing else "Remote (Worldwide)"
+                        if not is_ph_landing and card:
+                            m_loc = re.search(r"Remote from\s*\|\s*([^|]+)", card_text, re.I)
+                            if m_loc:
+                                loc_region = m_loc.group(1).strip()
+                                loc_str = f"Remote ({loc_region})"
+                        if not is_work_authorized_location(loc_str, title, self.platform, card_text):
+                            continue
+
+                        seen_urls.add(link)
+                        all_jobs.append(Job(
+                            title=title,
+                            company=comp,
+                            location=loc_str,
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=link,
+                            salary="",
+                            role_category=self.job_role(title, card_text),
+                            experience_level=classify_experience_level(title, card_text),
+                            description=card_text,
+                            date_posted=pub_date,
+                        ))
+                except Exception as exc:
+                    self.last_error = str(exc) or type(exc).__name__
+                    logger.warning("[%s] fetch notice for %s: %s", self.platform, page_url, self.last_error)
+
+            JobgetherPHConnector._cached_jobs = all_jobs
+            JobgetherPHConnector._last_fetch = now if not self.last_error else 0
+            JobgetherPHConnector._cached_window = self.window_days
+
+        cached = JobgetherPHConnector._cached_jobs or []
+        if not query:
+            return cached
+        q_lower = query.strip().lower()
+        return [
+            j for j in cached
+            if q_lower in j.title.lower() or q_lower in (j.description or "").lower()
+        ]
