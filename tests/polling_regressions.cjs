@@ -11,6 +11,7 @@ function harness() {
   let reads = 0;
   let refreshes = 0;
   let renderCount = 0;
+  const rendered = [];
   let state = { is_syncing: false };
   let response = null;
   const context = vm.createContext({
@@ -22,18 +23,23 @@ function harness() {
     },
     setTimeout: (callback, delay) => { timers.set(++nextTimer, { callback, delay }); return nextTimer; },
     clearTimeout: id => timers.delete(id),
-    fetch: async () => {
+    fetch: async (url, options = {}) => {
+      if (options.method === 'POST') {
+        return { ok: true, json: async () => ({ status: 'queued', execution: { id: 'latest', status: 'queued' } }) };
+      }
       reads++;
+      const payload = state;
       if (response) await response;
-      return { ok: true, json: async () => state };
+      return { ok: true, json: async () => payload };
     },
-    renderTelemetry: () => renderCount++,
+    renderTelemetry: data => { renderCount++; rendered.push(data); },
     stopSyncIndicator() {}, showToast: message => toasts.push(message),
     loadStats: () => refreshes++, loadJobs: () => refreshes++,
     syncLocalOverridesToServer() {}, flushPendingSettings() {},
     batchSyncMessage: () => 'partial progress',
   });
   vm.runInContext('let syncCompletionPending = false;', context);
+  vm.runInContext(code.slice(code.indexOf('async function triggerSync('), code.indexOf('function startSyncPoller()')), context);
   vm.runInContext(code.slice(code.indexOf('function startSyncPoller()'), code.indexOf('function batchSyncMessage(')), context);
   vm.runInContext(code.slice(code.indexOf('let telemetryTimer ='), code.indexOf('function renderTelemetry(data)')), context);
   vm.runInContext(code.slice(code.indexOf("document.addEventListener('visibilitychange'"), code.indexOf("window.addEventListener('online'")), context);
@@ -41,7 +47,7 @@ function harness() {
     context, timers, toasts,
     setState: value => state = value,
     setResponse: value => response = value,
-    reads: () => reads, refreshes: () => refreshes, renderCount: () => renderCount,
+    reads: () => reads, refreshes: () => refreshes, renderCount: () => renderCount, rendered,
     visibility: value => { context.document.visibilityState = value; listeners.get('visibilitychange')(); },
   };
 }
@@ -128,6 +134,30 @@ async function main() {
   h.context.currentUserRole = null;
   h.context.startTelemetryPolling();
   assert.equal(h.timers.size, 0, 'sign-out cancels polling');
+
+  h = harness();
+  let releaseOld, releaseNew;
+  h.setState({ is_syncing: false, progress: { completed_searches: 1000 } });
+  h.setResponse(new Promise(resolve => releaseOld = resolve));
+  h.context.startTelemetryPolling();
+  h.setState({ is_syncing: true, execution: { id: 'latest' }, awaiting_checkpoint: true });
+  h.setResponse(new Promise(resolve => releaseNew = resolve));
+  const restart = h.context.triggerSync('restart');
+  await settle();
+  assert.equal(h.reads(), 2, 'Restart acknowledgment fetches fresh status instead of reusing the old request');
+  releaseOld();
+  await settle();
+  assert.equal(h.renderCount(), 0, 'pre-Restart response cannot restore old progress');
+  const concurrentRead = h.context.fetchSyncTelemetry();
+  assert.equal(h.reads(), 2, 'the discarded request cannot clear the new in-flight request');
+  releaseNew();
+  await restart;
+  await concurrentRead;
+  assert.equal(h.renderCount(), 1);
+  assert.equal(h.rendered[0].execution.id, 'latest');
+  assert.equal(h.rendered[0].awaiting_checkpoint, true);
+  assert.equal(h.timers.size, 1);
+  assert.match(h.toasts.at(-1), /Restart saved/);
   console.log('Polling regressions passed: cadence, single timer, completion/error/partial, visibility, in-flight races, sign-out.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

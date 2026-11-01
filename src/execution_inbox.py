@@ -39,7 +39,7 @@ def enqueue(db_path, queries=None, key=KEY, now=None, automatic=False, resume=Fa
     for _ in range(5):
         raw = get_user_setting(db_path, key, "{}")
         current = json.loads(raw)
-        if current.get("status") in ACTIVE and current.get("expires_at", now + 1) > now:
+        if not restart and current.get("status") in ACTIVE and current.get("expires_at", now + 1) > now:
             if automatic and not (current.get("automatic") or current.get("daily_requested")):
                 current["daily_requested"] = True
                 if not _replace(db_path, raw, current, key):
@@ -49,6 +49,8 @@ def enqueue(db_path, queries=None, key=KEY, now=None, automatic=False, resume=Fa
                    "requested_at": now, "local_deadline": now + LOCAL_ACK_SECONDS,
                    "expires_at": now + CYCLE_SECONDS, "automatic": automatic,
                    "resume": resume, "restart": restart}
+        if restart and current.get("status") in ACTIVE and (current.get("automatic") or current.get("daily_requested")):
+            command["daily_requested"] = True
         if resume and not restart:
             checkpoint = json.loads(get_user_setting(db_path, "sync_batch_progress", "{}") or "{}")
             command["cycle_id"] = checkpoint.get("cycle_id") or current.get("cycle_id") or current.get("id") or command["id"]
@@ -100,12 +102,14 @@ def update_owned(db_path, claimed, result=None, key=KEY, now=None, totals=None):
     return False
 
 
-def cancel(db_path, key=KEY, status="cancelled"):
+def cancel(db_path, key=KEY, status="cancelled", claimed=None):
     if status not in {"cancelled", "paused", "stopped", "error"}:
         raise ValueError("Invalid terminal command status")
     raw = get_user_setting(db_path, key, "{}")
     command = json.loads(raw)
     if command.get("status") not in ACTIVE:
+        return False
+    if claimed and (command.get("id") != claimed.get("id") or command.get("fence") != claimed.get("fence")):
         return False
     command.update(status=status, updated_at=time.time())
     return _replace(db_path, raw, command, key)

@@ -2582,6 +2582,16 @@ async function triggerSync(action = 'restart') {
         throw new Error(data.error || `Sync failed (${res.status})`);
       }
       if (syncToken !== currentSessionToken || currentUserRole !== 'admin') return;
+      if (data.execution) {
+        ++telemetryDataGeneration;
+        telemetryRequest = null;
+        startSyncPoller();
+        await fetchSyncTelemetry();
+        showToast(action === 'restart'
+          ? 'Restart saved. Workers will follow the new cycle when they connect.'
+          : 'Sync saved. Waiting for the assigned worker.');
+        return;
+      }
       if (data.local_request && ['queued', 'running'].includes(data.local_request.status)) {
         showToast('Sync accepted by the local worker on this PC. Keep the PC awake while it runs.');
         startSyncPoller();
@@ -3037,6 +3047,7 @@ const MONITORED_BOARDS = [
 let telemetryTimer = null;
 let telemetryRequest = null;
 let telemetryPollGeneration = 0;
+let telemetryDataGeneration = 0;
 
 function toggleSyncLogModal(forceOpen) {
   const activitySec = document.getElementById('sync-activity');
@@ -3070,20 +3081,21 @@ async function fetchSyncTelemetry() {
   if (!currentUserRole) return;
   if (telemetryRequest) return telemetryRequest;
   const token = currentSessionToken;
+  const generation = telemetryDataGeneration;
   telemetryRequest = (async () => {
     const hint = document.getElementById('telemetry-update-status');
     try {
       const res = await fetch('/api/sync/status', { signal: AbortSignal.timeout(10000) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not read sync status');
-      if (token !== currentSessionToken) return;
+      if (token !== currentSessionToken || generation !== telemetryDataGeneration) return;
       renderTelemetry(data);
       if (hint) hint.textContent = `Updated ${new Date().toLocaleTimeString()} · Refreshes every ${data.is_syncing ? '5' : '60'} seconds`;
       return data;
     } catch (err) {
-      if (token === currentSessionToken && hint) hint.textContent = `Live updates unavailable: ${err.message}. Retrying automatically.`;
+      if (token === currentSessionToken && generation === telemetryDataGeneration && hint) hint.textContent = `Live updates unavailable: ${err.message}. Retrying automatically.`;
     } finally {
-      telemetryRequest = null;
+      if (generation === telemetryDataGeneration) telemetryRequest = null;
     }
   })();
   return telemetryRequest;
@@ -3099,7 +3111,8 @@ function renderTelemetry(data) {
   // 1. Status overview bar
   const syncStateEl = document.getElementById('telemetry-sync-state');
   if (syncStateEl) {
-    syncStateEl.textContent = progress ? `${progress.completed_searches}/${progress.total_searches} searches saved` : 'No saved search progress';
+    syncStateEl.textContent = data.awaiting_checkpoint ? '0 searches saved · New cycle accepted'
+      : progress ? `${progress.completed_searches}/${progress.total_searches} searches saved` : 'No saved search progress';
     if (waiting) {
       const seconds = Math.max(1, Math.ceil(progress.next_run_at - Date.now() / 1000));
       syncStateEl.textContent += ` · Waiting for retry at ${retryTime(progress.next_run_at)} (in ${Math.ceil(seconds / 60)} min) · Resumes automatically`;

@@ -36,7 +36,8 @@ def start(db_path, queries=None, automatic=False, resume=False, restart=False):
         raise RuntimeError("GitHub Actions dispatch token is not configured")
     command = inbox.enqueue(db_path, queries, automatic=automatic, resume=resume, restart=restart)
     lease = str(int(time.time()) + 30) + "|" + command["id"]
-    if not command.get("dispatched_at") and acquire_sync_lease(db_path, lease, int(time.time()), key="execution_dispatch"):
+    dispatch_key = "execution_dispatch:" + command["id"]
+    if not command.get("dispatched_at") and acquire_sync_lease(db_path, lease, int(time.time()), key=dispatch_key):
         try:
             dispatch(command["id"])
             for _ in range(5):
@@ -49,13 +50,19 @@ def start(db_path, queries=None, automatic=False, resume=False, restart=False):
                     command = current
                     break
         finally:
-            release_sync_lease(db_path, lease, key="execution_dispatch")
+            release_sync_lease(db_path, lease, key=dispatch_key)
     return {"status": "queued", "is_syncing": True, "execution": inbox.public(command)}
 
 
 def telemetry(db_path):
     command = inbox.public(inbox.read(db_path))
     shared = json.loads(get_user_setting(db_path, "sync_status", "{}") or "{}")
+    waiting_for_cycle = (bool(command.get("id")) and not command.get("result")
+                         and shared.get("cycle_id") != command.get("cycle_id", command.get("id")))
+    if waiting_for_cycle:
+        shared.update(progress=None, telemetry={}, logs=[], platforms={},
+                      last_result={"status": command["status"], "added": 0, "skipped": 0, "total_fetched": 0})
+    shared["awaiting_checkpoint"] = waiting_for_cycle and command.get("status") in inbox.ACTIVE
     shared["is_syncing"] = command.get("status") in inbox.ACTIVE
     if isinstance(command.get("result"), dict):
         shared["last_result"] = command["result"]

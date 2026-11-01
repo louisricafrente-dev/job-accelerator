@@ -143,6 +143,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             aggregator.last_sync_result = result
             aggregator.platform_telemetry = telemetry
             set_sync_checkpoint(aggregator.db_path, json.dumps(checkpoint), json.dumps({
+                "cycle_id": checkpoint.get("cycle_id"),
                 "is_syncing": result["is_syncing"], "last_sync_time": aggregator.last_sync_time,
                 "last_successful_fetch": aggregator.last_sync_time,
                 "total_boards": len(aggregator.connectors), "last_result": {**result, "status": "running"} if result["is_syncing"] else result,

@@ -1,16 +1,24 @@
-# Database executor (not deployed)
+# Database executor
 
-`JOB_EXECUTOR=database` selects the new transport. Without it, the existing deployed worker/queue behavior remains available. No production scheduled task, Vercel environment or default branch has been changed by this patch.
+`JOB_EXECUTOR=database` selects the shared-database transport used in production. The cutover prerequisites below describe the original migration; they are historical rather than an indication that the current executor is undeployed.
 
 ## Flow
 
-1. Sync stores one command in the indexed `user_settings` inbox and requests a GitHub Actions supervisor. Repeated clicks retain the same active command.
+1. Sync stores one command in the indexed `user_settings` inbox and requests a GitHub Actions supervisor. Ordinary Sync/Resume reuses an active command. Explicit Restart atomically replaces it with a new command ID, immediately revoking the old run's write authority.
 2. `python scripts/inbox_worker.py --executor local` reads the small inbox once every 60 seconds. It sends no idle dashboard requests or periodic idle presence writes. Startup/shutdown records supply Last seen, which is not an online guarantee.
 3. The PC may claim within 90 seconds. The cloud supervisor waits for this acknowledgment deadline or an expired active claim, then uses the same scraper and shared checkpoint. GitHub queue startup time is additional; 90 seconds is not a guaranteed cloud start time.
 4. Active claims renew every 60 seconds with a 180-second expiry. Atomic compare-and-swap claims and database-side fence predicates protect job/checkpoint writes after cancellation or takeover. The existing scraper lease remains in place.
 5. Existing deduplication and job tracking rules remain unchanged. Scrape completion never sends email; the separate 10 AM Manila digest endpoint reads stored jobs only, with one successful digest per calendar day. Provider blocks finish as Partial rather than pretending retrieval succeeded.
 
 The main scraper no longer needs repeated 8-job dashboard uploads. It inserts via the existing ingestion code directly into Turso. Upwork runs inside the midnight queue once per Manila day, requesting at most 10 recent results. Old monitor callbacks drain without fetching/requeueing, and the standalone script is retired. This patch does not claim zero Vercel requests or zero provider usage.
+
+## Website command authority (November 1, 2026)
+
+The latest command accepted into the website's shared database is authoritative for both executors. A disconnected or delayed PC reads that command on its next poll; it cannot restore its previous run. Old cloud supervisors exit when their command ID is superseded, and database write fences reject late old-worker jobs, checkpoints and completion. Worker-initiated pause also requires the same command ID and ownership token. Restart retains a pending daily scrape intent and source access cooldowns, while resetting search progress.
+
+The website immediately displays zero saved searches for a newly accepted cycle until a matching checkpoint is available. It does not combine a new command with an old cycle's 1,000-search progress. This remains correct after reopening the page because status is read from the shared database. The client also discards pre-command status responses that arrive late. Cloud dispatch locks are scoped per command, so an old in-flight dispatch does not prevent the new Restart supervisor from starting.
+
+The 60-second local polling interval and 90-second acknowledgment window remain unchanged. Accepting Restart immediately changes authoritative state; worker acknowledgment and actual execution may follow later. Physical source requests already in flight can finish, but cannot commit under a superseded command.
 
 ## Daily schedule
 

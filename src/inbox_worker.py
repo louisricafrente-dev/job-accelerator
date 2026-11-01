@@ -33,7 +33,7 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
             command["daily_requested"] = inbox.read(db_path, key).get("daily_requested", False)
             aggregator.daily_run = bool(command.get("automatic") or command["daily_requested"])
             if command.get("automatic") and get_user_setting(db_path, "auto_sync_enabled", "1") in ("0", "false"):
-                inbox.cancel(db_path, key=key, status="paused")
+                inbox.cancel(db_path, key=key, status="paused", claimed=command)
                 return
             remaining = command["expires_at"] - time.time()
             if remaining <= 0:

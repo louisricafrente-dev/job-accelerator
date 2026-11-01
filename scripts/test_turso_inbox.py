@@ -60,6 +60,21 @@ def main():
             conn.commit()
         finally:
             conn.close()
+        pending = enqueue(db, ["integration-only-no-scrape"], key=key, now=clock + 253)
+        stale_local = claim(db, "local", "delayed-pc", key=key, now=clock + 254)
+        latest = enqueue(db, ["integration-restart-no-scrape"], key=key, now=clock + 255, restart=True)
+        assert latest["id"] != pending["id"]
+        assert not update_owned(db, stale_local, {"status": "ok"}, key=key, now=clock + 256)
+        stale_predicate, stale_params = execution_condition({**stale_local, "key": key})
+        conn = get_db_connection(db)
+        try:
+            cursor = conn.execute("UPDATE user_settings SET value='old-restart' WHERE key=? AND " + stale_predicate, [probe_key, *stale_params])
+            assert cursor.rowcount == 0, "Superseded worker passed the write fence"
+            conn.commit()
+        finally:
+            conn.close()
+        delayed = claim(db, "local", "reconnected-pc", key=key, now=clock + 300)
+        assert delayed["id"] == latest["id"] and delayed["restart"]
     finally:
         conn = get_db_connection(db)
         try:
