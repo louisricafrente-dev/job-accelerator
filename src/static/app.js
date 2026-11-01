@@ -1835,6 +1835,16 @@ function showToast(message, actionText = null, onAction = null) {
 function renderJobs() {
   const feed = document.getElementById('job-feed');
   let headerHtml = '';
+  if (currentStatus === 'saved' && currentViewMode !== 'va') {
+    headerHtml = `
+      <div class="va-view-header">
+        <span class="va-view-text">Saved opportunities stay here until you move them.</span>
+        <button type="button" class="btn-return-tech" onclick="archiveExpiredSavedJobs()" title="Archive saved jobs posted more than 7 days ago">
+          Archive jobs older than 7 days
+        </button>
+      </div>
+    `;
+  }
   if (currentViewMode === 'va') {
     headerHtml = `
       <div class="va-view-header">
@@ -1842,6 +1852,7 @@ function renderJobs() {
           <span class="va-view-badge">Remote VA Feed</span>
           <span class="va-view-text">Showing <strong>${jobsList.length}</strong> Virtual Assistant &amp; remote support opportunities.</span>
         </div>
+        ${currentStatus === 'saved' ? '<button type="button" class="btn-return-tech" onclick="archiveExpiredSavedJobs()" title="Archive saved jobs posted more than 7 days ago">Archive jobs older than 7 days</button>' : ''}
         <button type="button" class="btn-return-tech" onclick="switchToTechMode()" title="Return to Software &amp; Tech Engineering jobs">
           ← Back to Tech Jobs
         </button>
@@ -2030,6 +2041,19 @@ function selectCard(idx) {
     newCard.classList.add('selected');
     newCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
+}
+
+async function archiveExpiredSavedJobs() {
+  const expired = jobsList.filter(job =>
+    job.status === 'saved' && job.date_posted && getDaysSince(job.date_posted) > 7
+  );
+  if (!expired.length) {
+    showToast('No saved jobs older than 7 days.');
+    return;
+  }
+  if (!confirm(`Archive ${expired.length} saved job${expired.length === 1 ? '' : 's'} posted more than 7 days ago?`)) return;
+  for (const job of expired) await updateJobStatus(job.id, 'ignored');
+  showToast(`Archived ${expired.length} expired saved job${expired.length === 1 ? '' : 's'}.`);
 }
 
 // Apply button handler (Instant non-blocking local-first update with 1-click Undo)
