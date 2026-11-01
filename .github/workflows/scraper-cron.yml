@@ -1,0 +1,47 @@
+name: Scheduled cloud scraper
+
+on:
+  schedule:
+    # 00:00 Manila time (16:00 UTC)
+    - cron: '0 16 * * *'
+    # 10:00 AM Manila time (02:00 UTC)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force sync ignoring local worker active status'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-scraper-cron
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 135
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run cloud scraper with local-first awareness
+        run: |
+          python scripts/cloud_cron_sync.py ${{ inputs.force && '--force' || '' }}
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          SCRAPER_PROXY_LIST: ${{ secrets.SCRAPER_PROXY_LIST }}
+          FLCONSOLE_MCP_TOKEN: ${{ secrets.FLCONSOLE_MCP_TOKEN }}
