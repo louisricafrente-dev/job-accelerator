@@ -2,37 +2,11 @@
   "version": 2,
   "functions": {
     "api/index.py": {
-      "maxDuration": 300,
+      "maxDuration": 60,
       "includeFiles": "{src,scripts,data}/**"
-    },
-    "api/queue_worker.py": {
-      "maxDuration": 300,
-      "includeFiles": "{src,scripts}/**",
-      "experimentalTriggers": [
-        {
-          "type": "queue/v2beta",
-          "topic": "job-sync",
-          "retryAfterSeconds": 60,
-          "maxConcurrency": 1
-        }
-      ]
     }
   },
-  "crons": [
-    {
-      "path": "/api/cron/sync",
-      "schedule": "0 16 * * *"
-    },
-    {
-      "path": "/api/notify/daily",
-      "schedule": "0 2 * * *"
-    }
-  ],
   "routes": [
-    {
-      "src": "/api/queue_worker(?:\\.py)?",
-      "dest": "api/queue_worker.py"
-    },
     {
       "src": "/(.*)",
       "dest": "api/index.py"

@@ -1,3 +1,5 @@
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.CurrentDirectory = "C:\Users\PC\Documents\antigravity\resilient-pasteur\tmp\job-accelerator-actions-migration"
+Set fso = CreateObject("Scripting.FileSystemObject")
+scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+WshShell.CurrentDirectory = scriptDir
 WshShell.Run "python run.py", 0, False

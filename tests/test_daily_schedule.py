@@ -180,8 +180,13 @@ class DailyApiTests(unittest.TestCase):
         send.assert_not_called()
 
     def test_vercel_has_exactly_one_scrape_and_one_digest_schedule(self):
-        config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text())
-        self.assertEqual(config["crons"], [
-            {"path": "/api/cron/sync", "schedule": "0 16 * * *"},
-            {"path": "/api/notify/daily", "schedule": "0 2 * * *"},
-        ])
+        root = Path(__file__).resolve().parents[1]
+        config = json.loads((root / "vercel.json").read_text())
+        self.assertNotIn("crons", config, "Vercel crons must be removed to avoid quota exhaustion and duplicates")
+
+        scraper_cron = (root / ".github" / "workflows" / "scraper-cron.yml").read_text()
+        self.assertIn("0 16 * * *", scraper_cron)
+        self.assertIn("0 2 * * *", scraper_cron)
+
+        digest_cron = (root / ".github" / "workflows" / "daily-digest-cron.yml").read_text()
+        self.assertIn("0 2 * * *", digest_cron)

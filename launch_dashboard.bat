@@ -1,6 +1,6 @@
 @echo off
 title Job Accelerator Dashboard
-cd /d "C:\Users\PC\Documents\antigravity\resilient-pasteur\tmp\job-accelerator-actions-migration"
+cd /d "%~dp0"
 echo ========================================================
 echo       Starting Job Accelerator Local Dashboard...
 echo ========================================================

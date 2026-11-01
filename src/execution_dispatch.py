@@ -9,7 +9,7 @@ from src.database import acquire_sync_lease, release_sync_lease, get_user_settin
 
 
 def enabled():
-    return os.environ.get("JOB_EXECUTOR") == "database"
+    return os.environ.get("JOB_EXECUTOR") == "database" or bool(os.environ.get("VERCEL"))
 
 
 def dispatch(command_id, workflow="scraper-worker.yml", inputs=None):

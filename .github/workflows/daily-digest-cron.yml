@@ -5,6 +5,11 @@ on:
     # 10:00 AM Manila time (02:00 UTC)
     - cron: '0 2 * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force send digest even if already sent today'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -30,7 +35,8 @@ jobs:
         run: pip install libsql-client beautifulsoup4 requests
 
       - name: Dispatch daily email digest
-        run: python scripts/daily_notifier.py
+        run: |
+          python scripts/daily_notifier.py ${{ inputs.force && '--force' || '' }}
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}

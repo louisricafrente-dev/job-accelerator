@@ -39,7 +39,8 @@ if os.path.exists(env_file):
     except Exception:
         pass
 
-from src.database import get_jobs, get_stats, init_db, get_user_setting, get_db_connection
+from src.database import get_jobs, get_stats, init_db, get_user_setting, get_db_connection, set_user_setting
+from src.daily_schedule import day as get_manila_day
 
 RECIPIENT_EMAIL = "michael18ricafrente@gmail.com"
 SENDER_EMAIL = os.environ.get("SMTP_USER", "michael18ricafrente@gmail.com")
@@ -219,7 +220,19 @@ def build_html_content(data: dict, dashboard_url: str = "") -> str:
     """
     return html
 
-def send_daily_email(db_path: str = "data/jobs.db", dashboard_url: str = "", new_jobs_count: int = None) -> dict:
+def send_daily_email(db_path: str = "data/jobs.db", dashboard_url: str = "", new_jobs_count: int = None, force: bool = False) -> dict:
+    today_manila = get_manila_day()
+    if not force:
+        already_sent_day = get_user_setting(db_path, "daily_digest_day", "").strip()
+        if already_sent_day == today_manila:
+            print(f"[*] Daily digest already dispatched today ({today_manila}). Skipping duplicate send.")
+            return {
+                "success": True,
+                "status": "already_sent",
+                "day": today_manila,
+                "message": f"Daily digest already dispatched today ({today_manila})."
+            }
+
     data = generate_digest_data(db_path)
     if new_jobs_count is not None:
         data["new_jobs_count"] = max(0, int(new_jobs_count))
@@ -271,6 +284,11 @@ def send_daily_email(db_path: str = "data/jobs.db", dashboard_url: str = "", new
         print(f"[✓] Daily notification email dispatched successfully to {RECIPIENT_EMAIL}!")
         result["success"] = True
         result["message"] = f"Dispatched successfully to {RECIPIENT_EMAIL}"
+        try:
+            set_user_setting(db_path, "daily_digest_day", today_manila)
+            print(f"[✓] Recorded daily_digest_day={today_manila} in Turso database.")
+        except Exception as e:
+            print(f"[*] Warning recording daily_digest_day: {e}")
     except Exception as e:
         print(f"[!] SMTP Dispatch Error: {e}")
         result["error"] = str(e)
@@ -278,6 +296,8 @@ def send_daily_email(db_path: str = "data/jobs.db", dashboard_url: str = "", new
     return result
 
 if __name__ == "__main__":
-    db = sys.argv[1] if len(sys.argv) > 1 else "data/jobs.db"
-    res = send_daily_email(db)
+    force = "--force" in sys.argv or os.environ.get("FORCE_DIGEST") == "1"
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    db = args[0] if args else "data/jobs.db"
+    res = send_daily_email(db, force=force)
     print(res)
