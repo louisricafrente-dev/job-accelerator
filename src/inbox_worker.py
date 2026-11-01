@@ -41,10 +41,10 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
             result = aggregator.run_sync(queries=command.get("queries"), budget_seconds=min(120, remaining),
                                          cycle_id=command.get("cycle_id", command["id"]), resume=command.get("resume", False),
                                          restart=command.get("restart", False))
-            command["restart"] = False
             if result.get("status") == "already_syncing":
                 stop.wait(15)
                 continue
+            command["restart"] = False
             for field in ("added", "skipped", "total_fetched"):
                 totals[field] += result.get(field, 0)
             for board, count in result.get("platforms", {}).items():

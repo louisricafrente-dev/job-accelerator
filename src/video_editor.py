@@ -59,7 +59,7 @@ def attention_check(description):
                 or re.search("[\u200b-\u200d\ufeff]", description))
 
 
-def collectable_job(job):
+def collectable_job(job, window_days=2):
     if job.role_category == "Video Editor":
         start, end = scrape_date_window(days=7)
         date = normalize_date(job.date_posted)
@@ -67,5 +67,9 @@ def collectable_job(job):
                 and start.date().isoformat() <= date < end.date().isoformat()
                 and not video_fit(job.title, job.description)
                 and is_work_authorized_location(job.location, job.title, job.platform, job.description))
-    return (is_today_or_yesterday(job.date_posted)
+    start, end = scrape_date_window(days=window_days)
+    date = normalize_date(job.date_posted)
+    accepted_date = (is_today_or_yesterday(job.date_posted) if window_days == 2 else
+                     bool(date) and start.date().isoformat() <= date < end.date().isoformat())
+    return (accepted_date
             and is_relevant_opportunity(job.title, job.description, allow_va_training=True))

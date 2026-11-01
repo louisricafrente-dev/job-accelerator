@@ -347,13 +347,14 @@ class Aggregator:
 
             ingestion_error = None
             try:
+                windows = {conn.platform: conn.window_days for conn in self.connectors}
                 relevant_jobs = [
                     j for j in all_jobs
-                    if collectable_job(j)
+                    if collectable_job(j, window_days=windows.get(j.platform, 2))
                 ]
                 dropped_cnt = len(all_jobs) - len(relevant_jobs)
                 if dropped_cnt > 0:
-                    self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} outside the role's date window or relevance rules; verified {len(relevant_jobs)} opportunities (video: 7 dates; other jobs: today/yesterday, Asia/Manila).")
+                    self.log_event(f"[Filter Engine] Screened {len(all_jobs)} harvested listings: blocked {dropped_cnt} outside the connector's date window or relevance rules; verified {len(relevant_jobs)} opportunities (Asia/Manila calendar dates).")
                 added, skipped = insert_jobs(self.db_path, relevant_jobs)
                 self.log_event(f"[Database] Synchronized {len(relevant_jobs)} listings: +{added} new opportunities, {skipped} existing/cross-board merged.")
             except Exception as e:

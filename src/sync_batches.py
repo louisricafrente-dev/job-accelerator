@@ -38,6 +38,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         signature = hashlib.sha256(json.dumps(queries).encode()).hexdigest()
         raw = get_user_setting(aggregator.db_path, PROGRESS_KEY, "")
         checkpoint = json.loads(raw) if raw else {}
+        # A takeover must not replay Restart after this cycle has saved its checkpoint.
+        restart = restart and (cycle_id is None or checkpoint.get("cycle_id") != cycle_id)
         saved_status = json.loads(get_user_setting(aggregator.db_path, "sync_status", "{}") or "{}")
         aggregator.last_sync_time = saved_status.get("last_successful_fetch", 0)
         new_cycle = restart or (cycle_id is not None and checkpoint.get("cycle_id") != cycle_id)
@@ -241,7 +243,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 for future in done:
                     connector, indices = pending.pop(future)
                     jobs, error, fetch_seconds = future.result()
-                    relevant = [job for job in jobs if collectable_job(job)]
+                    relevant = [job for job in jobs if collectable_job(job, window_days=connector.window_days)]
                     completed.append((connector, indices, jobs, error, fetch_seconds, relevant))
                     combined_jobs.extend(relevant)
                 save_started_at = time.monotonic()

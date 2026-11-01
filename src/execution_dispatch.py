@@ -66,6 +66,6 @@ def telemetry(db_path):
     presence = json.loads(get_user_setting(db_path, inbox.KEY + ":local", "{}") or "{}")
     shared.update(execution=command,
                   local_worker={"online": local, "last_seen_at": max(presence.get("last_seen_at", 0), command.get("local_last_seen", 0)), "presence_mode": "last_seen"},
-                  local_request={**command, "status": command.get("status") if local else ""},
-                  cloud_run={**command, "status": command.get("status") if not local else ""})
+                  local_request={**command, "status": command.get("status") if command.get("executor") == "local" else ""},
+                  cloud_run={**command, "status": command.get("status") if command.get("executor") == "cloud" else ""})
     return shared

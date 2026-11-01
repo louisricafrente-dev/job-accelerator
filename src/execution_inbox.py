@@ -89,6 +89,7 @@ def update_owned(db_path, claimed, result=None, key=KEY, now=None, totals=None):
             command["local_last_seen"] = now
         if totals is not None:
             command["totals"] = totals
+            command["restart"] = False
         if result is not None:
             # A midnight request accepted during this batch still needs a daily pass.
             if command.get("daily_requested") and not claimed.get("daily_requested"):

@@ -19,7 +19,7 @@ class TestAggregator(unittest.TestCase):
             pass
 
     def test_run_orchestrator(self):
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(window_days=2)
         mock_connector.platform = "MockBoard"
         mock_connector.tier = 1
         mock_connector.fetch.return_value = [
@@ -41,7 +41,7 @@ class TestAggregator(unittest.TestCase):
         self.assertEqual(stats["platforms"]["MockBoard"], 1)
 
     def test_14_day_and_matrix_filtering(self):
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(window_days=2)
         mock_connector.platform = "MockBoard"
         mock_connector.tier = 1
         mock_connector.fetch.return_value = [
@@ -67,7 +67,7 @@ class TestAggregator(unittest.TestCase):
         self.assertEqual(titles, {"React Developer", "Virtual Assistant (Paid Training)"})
 
     def test_sync_lock_prevents_spam(self):
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(window_days=2)
         mock_connector.platform = "SlowBoard"
         mock_connector.tier = 1
         mock_connector.fetch.return_value = []
@@ -88,7 +88,7 @@ class TestAggregator(unittest.TestCase):
         aggregator._sync_lock.release()
 
     def test_connector_caching_avoids_repeated_network_calls(self):
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(window_days=2)
         mock_connector.platform = "CachedBoard"
         mock_connector.tier = 1
         mock_connector.fetch.return_value = [
@@ -106,7 +106,7 @@ class TestAggregator(unittest.TestCase):
 
     def test_background_sync_launch(self):
         import time
-        mock_connector = MagicMock()
+        mock_connector = MagicMock(window_days=2)
         mock_connector.platform = "BgBoard"
         mock_connector.tier = 1
         mock_connector.fetch.return_value = []

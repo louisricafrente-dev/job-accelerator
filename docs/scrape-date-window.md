@@ -50,6 +50,14 @@ Ambiguous labels (recently/recent/new/active today) and invalid ISO values remai
 
 ## Access recovery and dashboard status
 
+### November 1 ingestion and worker handoff correction
+
+Both ingestion paths now use each connector's configured date window. This preserves the temporary seven-date window for the nine new platforms through November 7, 2026 at 23:59:59 Manila, followed by the existing automatic return to two dates. Standard sources still use today/yesterday; video source and fit rules remain unchanged. Unknown and future publication dates remain excluded.
+
+Restart applies once per command cycle. Once that cycle has persisted a checkpoint, a cloud takeover continues its saved cursors even if the PC disconnected before saving batch totals. Successful batch totals also durably clear the Restart flag. A new Restart command still clears progress and preserves source cooldowns. Telemetry classifies local/cloud result origin by executor independently of whether the local worker is currently active.
+
+`tests/test_scraper_handoff.py` covers both ingestion paths, date-window reversion, unknown/future dates, ordinary-source limits, checkpoint-preserving takeover, explicit new Restart, and terminal result origin. The namespaced Turso integration also verifies the consumed Restart flag survives takeover without touching jobs.
+
 Coverage warnings are separate from transport errors. The dashboard distinguishes LIMITED COVERAGE, VERIFY ACCESS, BLOCKED, RETRY LATER and SETUP REQUIRED, including older-worker snapshots that stored warnings as errors. A completed limited sample never promises that waiting removes its provider limitation. Active retries display SCANNING even when the previous attempt failed. Completed searches with coverage issues show PARTIAL COVERAGE.
 
 Restart resets search/page progress while preserving source cooldowns and Retry-After deadlines. Existing access blocks have a six-hour minimum cooldown; other source failures use fifteen minutes. Expiry permits another attempt; it does not guarantee restored access or schedule a standalone per-source retry. The next eligible scrape cycle must perform the request. A successful retry clears stale block/error state. No CAPTCHA solving, 403 proxy rotation or credential export was added. Other sources continue and failed cursors remain available for retry.

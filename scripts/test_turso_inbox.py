@@ -30,10 +30,11 @@ def main():
     clock = time.time()
     db = "integration-inbox.db"
     try:
-        enqueue(db, ["integration-only-no-scrape"], key=key, now=clock)
+        enqueue(db, ["integration-only-no-scrape"], key=key, now=clock, restart=True)
         assert claim(db, "cloud", "integration-gh", key=key, now=clock + 89) is None
         local = claim(db, "local", "integration-pc", key=key, now=clock + 60)
-        assert local and update_owned(db, local, key=key, now=clock + 70)
+        assert local and update_owned(db, local, key=key, now=clock + 70, totals={"added": 0})
+        assert read(db, key=key)["restart"] is False
         guard = {**local, "key": key}
         predicate, params = execution_condition(guard)
         conn = get_db_connection(db)
@@ -47,6 +48,7 @@ def main():
             conn.close()
         cloud = claim(db, "cloud", "integration-gh", key=key, now=clock + 251)
         assert cloud
+        assert cloud["restart"] is False
         assert not update_owned(db, local, {"status": "ok"}, key=key, now=clock + 252)
         assert update_owned(db, cloud, {"status": "ok"}, key=key, now=clock + 252)
         assert read(db, key=key)["status"] == "complete"
