@@ -1042,7 +1042,7 @@
     </div>
   </div>
 
-    <!-- Admin & Guest Workspace Gate Modal -->
+    <!-- Admin Workspace Gate Modal -->
   <div id="auth-gate-modal" class="auth-gate-overlay" style="display: none;">
     <div class="auth-gate-card">
       <div class="auth-gate-header">
@@ -1053,25 +1053,7 @@
           <span>Job Application Accelerator</span>
         </div>
         <h2 class="auth-gate-title">Workstation Access</h2>
-        <p class="auth-gate-sub">Sign in with your admin credentials. Guest access is temporarily unavailable.</p>
-      </div>
-
-      <!-- Segmented Mode Tabs -->
-      <div class="auth-tabs" role="tablist">
-        <button type="button" class="auth-tab active" id="tab-admin" onclick="switchAuthTab('admin')">
-          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-          </svg>
-          <span>Admin Access</span>
-        </button>
-        <button type="button" class="auth-tab" id="tab-guest" disabled title="Guest access is temporarily unavailable">
-          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-            <circle cx="12" cy="7" r="4"/>
-          </svg>
-          <span>Guest Sandbox</span>
-        </button>
+        <p class="auth-gate-sub">Sign in with your admin credentials.</p>
       </div>
 
       <!-- Tab Content: Admin Mode -->
@@ -1123,32 +1105,6 @@
         </button>
       </div>
 
-      <!-- Tab Content: Guest Mode -->
-      <div id="auth-panel-guest" class="auth-panel" style="display: none;">
-        <div class="guest-info-banner">
-          <div class="guest-badge-indicator">
-            <span class="guest-badge-dot"></span>
-            <strong>Private Isolated Workspace</strong>
-          </div>
-          <p class="guest-desc">
-            A separate, temporary local SQLite database will be initialized exclusively for your session.
-            You can freely test moving jobs to pipeline, changing notes, filtering across connected job sites, and customizing the stack matrix.
-          </p>
-          <div class="guest-safeguard-pill">
-            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-            </svg>
-            <span>Admin master database remains 100% private and untouched.</span>
-          </div>
-        </div>
-
-        <button type="button" id="btn-enter-guest" disabled class="btn-primary auth-submit-btn guest-launch-btn" onclick="submitGuestAccess()">
-          <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-          <span>Launch Guest Sandbox</span>
-        </button>
-      </div>
     </div>
   </div>
 
