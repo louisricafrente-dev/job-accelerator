@@ -1027,11 +1027,15 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             data = {}
         from src.proxy_manager import get_proxy_settings, test_single_proxy, parse_proxy_list
         raw = str(data.get("proxies", "")).strip()
-        proxies_to_test = parse_proxy_list(raw) if raw else get_proxy_settings(target_db).get("proxies", [])
-
         results = []
-        for p in proxies_to_test[:10]:
-            results.append(test_single_proxy(p, timeout=4))
+        if raw:
+            lines = [l.strip() for l in raw.splitlines() if l.strip() and not l.strip().startswith("#")]
+            for line in lines[:10]:
+                results.append(test_single_proxy(line, timeout=8))
+        else:
+            proxies_to_test = get_proxy_settings(target_db).get("proxies", [])
+            for p in proxies_to_test[:10]:
+                results.append(test_single_proxy(p, timeout=8))
 
         bottle.response.content_type = "application/json"
         return json.dumps({"status": "ok", "results": results})

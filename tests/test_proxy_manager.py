@@ -54,6 +54,43 @@ class TestProxyManager(unittest.TestCase):
                 self.assertTrue(is_proxy_active())
                 self.assertIsNotNone(apply_proxy_environment())
 
+    def test_parse_various_proxy_formats(self):
+        # host:port:user:pass
+        self.assertEqual(
+            parse_proxy_line("192.168.1.1:8080:myuser:mypass"),
+            "http://myuser:mypass@192.168.1.1:8080"
+        )
+        # user:pass:host:port
+        self.assertEqual(
+            parse_proxy_line("myuser:mypass:192.168.1.1:8080"),
+            "http://myuser:mypass@192.168.1.1:8080"
+        )
+        # user:pass@host:port (with and without http://)
+        self.assertEqual(
+            parse_proxy_line("myuser:mypass@192.168.1.1:8080"),
+            "http://myuser:mypass@192.168.1.1:8080"
+        )
+        self.assertEqual(
+            parse_proxy_line("http://myuser:mypass@192.168.1.1:8080"),
+            "http://myuser:mypass@192.168.1.1:8080"
+        )
+        # host:port (unauthenticated)
+        self.assertEqual(
+            parse_proxy_line("192.168.1.1:8080"),
+            "http://192.168.1.1:8080"
+        )
+        # raw IP without port returns None
+        self.assertIsNone(parse_proxy_line("192.168.1.1"))
+
+    def test_scraper_proxy_list_env_discovery(self):
+        with patch.dict(os.environ, {"SCRAPER_PROXY_LIST": "192.168.1.1:8080"}, clear=True):
+            settings = get_proxy_settings()
+            self.assertEqual(settings["proxies"], ["http://192.168.1.1:8080"])
+
+    def test_github_actions_activates_proxy_in_hybrid(self):
+        with patch.dict(os.environ, {"PROXY_URL": TEST_PROXIES[0], "GITHUB_ACTIONS": "true"}, clear=True):
+            self.assertTrue(is_proxy_active())
+
     def test_always_and_disabled_modes(self):
         with patch("src.proxy_manager.get_proxy_settings", return_value={"mode": "disabled", "proxies": TEST_PROXIES}):
             with patch.dict(os.environ, {"VERCEL": "1"}):

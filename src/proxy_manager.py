@@ -25,22 +25,55 @@ DEFAULT_PROXIES = []
 
 
 def parse_proxy_line(line: str) -> Optional[str]:
-    """Parse a single proxy line in either host:port:user:pass or URL format."""
-    line = line.strip()
+    """Parse a single proxy line in various formats:
+    - host:port:user:pass
+    - user:pass:host:port
+    - user:pass@host:port (with or without http://)
+    - host:port
+    - http://..., https://..., socks5://...
+    """
+    line = line.strip().strip("'\"").strip()
     if not line or line.startswith("#"):
         return None
     
-    if line.startswith("http://") or line.startswith("https://") or line.startswith("socks5://"):
+    # Handle socks5 or http/https schemes
+    if line.startswith(("http://", "https://", "socks5://")):
+        scheme, rest = line.split("://", 1)
+        if "@" not in rest and rest.count(":") == 3:
+            parts = rest.split(":")
+            if parts[1].isdigit():
+                host, port, user, pwd = parts
+                return f"{scheme}://{user}:{pwd}@{host}:{port}"
+            elif parts[3].isdigit():
+                user, pwd, host, port = parts
+                return f"{scheme}://{user}:{pwd}@{host}:{port}"
         return line
     
+    # Handle user:pass@host:port without scheme
+    if "@" in line:
+        return f"http://{line}"
+    
+    # Replace comma or tab delimiters if user pasted CSV / TSV
+    if "," in line and ":" not in line:
+        line = line.replace(",", ":")
+    elif "	" in line:
+        line = line.replace("	", ":")
+
     parts = line.split(":")
     if len(parts) == 4:
-        # host:port:user:pass
-        host, port, user, pwd = parts
-        return f"http://{user}:{pwd}@{host}:{port}"
+        # Check whether parts[1] is port (host:port:user:pass) or parts[3] is port (user:pass:host:port)
+        if parts[1].isdigit():
+            host, port, user, pwd = parts
+            return f"http://{user}:{pwd}@{host}:{port}"
+        elif parts[3].isdigit():
+            user, pwd, host, port = parts
+            return f"http://{user}:{pwd}@{host}:{port}"
+        else:
+            host, port, user, pwd = parts
+            return f"http://{user}:{pwd}@{host}:{port}"
     elif len(parts) == 2:
-        # host:port (unauthenticated)
         return f"http://{parts[0]}:{parts[1]}"
+    
     return None
 
 
@@ -81,7 +114,7 @@ def get_proxy_settings(db_path: Optional[str] = None) -> Dict[str, Any]:
             pass
 
     if not raw_list:
-        env_proxy = os.environ.get("PROXY_URL") or os.environ.get("PROXY_LIST")
+        env_proxy = os.environ.get("PROXY_URL") or os.environ.get("PROXY_LIST") or os.environ.get("SCRAPER_PROXY_LIST")
         if env_proxy:
             raw_list = env_proxy
 
@@ -108,7 +141,7 @@ def is_proxy_active(db_path: Optional[str] = None) -> bool:
     if mode == "always":
         return True
     
-    return bool(os.environ.get("FORCE_PROXY"))
+    return bool(os.environ.get("FORCE_PROXY") or os.environ.get("GITHUB_ACTIONS"))
 
 
 _rr_index = 0
@@ -213,20 +246,30 @@ def apply_proxy_environment(db_path: Optional[str] = None) -> Optional[str]:
         return None
 
 
-def test_single_proxy(proxy_str: str, timeout: int = 5) -> Dict[str, Any]:
+def test_single_proxy(proxy_str: str, timeout: int = 8) -> Dict[str, Any]:
     """Test a single proxy line or URL and return its live latency, country, and status."""
-    proxy_url = parse_proxy_line(proxy_str)
+    raw_str = str(proxy_str).strip()
+    proxy_url = parse_proxy_line(raw_str)
     if not proxy_url:
-        return {"status": "error", "error": "Invalid proxy format"}
+        if raw_str and ":" not in raw_str and "@" not in raw_str:
+            err_msg = "Walang port number. Format: host:port o host:port:user:pass (hal. 192.168.1.1:8080)"
+        else:
+            err_msg = "Invalid proxy format. Format: host:port o host:port:user:pass"
+        return {
+            "status": "error",
+            "proxy": raw_str,
+            "error": err_msg,
+            "latency_ms": 0
+        }
     
     start_time = time.monotonic()
+    handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+    opener = urllib.request.build_opener(handler)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) JobAccelerator/1.0"}
+    
+    # 1. Primary check via ip-api.com (provides detailed ISP, City, Country)
     try:
-        handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
-        opener = urllib.request.build_opener(handler)
-        req = urllib.request.Request(
-            "http://ip-api.com/json",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) JobAccelerator/1.0"}
-        )
+        req = urllib.request.Request("http://ip-api.com/json", headers=headers)
         with opener.open(req, timeout=timeout) as resp:
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
             data = json.loads(resp.read().decode("utf-8"))
@@ -241,17 +284,48 @@ def test_single_proxy(proxy_str: str, timeout: int = 5) -> Dict[str, Any]:
                     "isp": data.get("isp"),
                     "latency_ms": elapsed_ms
                 }
-            return {
-                "status": "error",
-                "proxy": format_proxy_for_display(proxy_url),
-                "error": data.get("message", "IP check failed"),
-                "latency_ms": elapsed_ms
-            }
-    except Exception as exc:
+            if data.get("message") == "private range":
+                return {
+                    "status": "error",
+                    "proxy": format_proxy_for_display(proxy_url),
+                    "error": "Proxy IP is private or local",
+                    "latency_ms": elapsed_ms
+                }
+    except Exception as first_exc:
+        logger.debug("Primary ip-api.com test failed (%s); trying fallback HTTPS endpoint", first_exc)
+        # 2. Fallback check via api.ipify.org (HTTPS, high reliability, no rate-limiting on Vercel)
+        try:
+            req_fallback = urllib.request.Request("https://api.ipify.org?format=json", headers=headers)
+            with opener.open(req_fallback, timeout=max(4, timeout - 2)) as resp:
+                elapsed_ms = int((time.monotonic() - start_time) * 1000)
+                data = json.loads(resp.read().decode("utf-8"))
+                ip = data.get("ip")
+                if ip:
+                    return {
+                        "status": "ok",
+                        "proxy": format_proxy_for_display(proxy_url),
+                        "ip": ip,
+                        "country": "Live Proxy Node",
+                        "country_code": "OK",
+                        "city": "Residential/Data",
+                        "isp": "Active Proxy Tunnel",
+                        "latency_ms": elapsed_ms
+                    }
+        except Exception:
+            pass
+        
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        err_str = str(first_exc) or type(first_exc).__name__
+        if "timed out" in err_str.lower():
+            err_str = f"Connection timed out ({timeout}s). Maaaring mabagal o offline ang proxy."
+        elif "407" in err_str:
+            err_str = "Proxy Authentication Required (407). Maling username o password."
+        elif "connection refused" in err_str.lower():
+            err_str = "Connection refused ng proxy host."
+            
         return {
             "status": "error",
             "proxy": format_proxy_for_display(proxy_url),
-            "error": str(exc) or type(exc).__name__,
+            "error": err_str,
             "latency_ms": elapsed_ms
         }
