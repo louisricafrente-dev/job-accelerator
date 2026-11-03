@@ -16,6 +16,18 @@ function originalGmailLink(message) {
   return `https://mail.google.com/mail/u/michael18ricafrente@gmail.com/#all/${message.id}`;
 }
 
+function getActionLinkConfig(url) {
+  if (!url) return null;
+  const lower = url.toLowerCase();
+  if (lower.includes('calendly.com') || lower.includes('goodtime.io') || lower.includes('chilipiper') || lower.includes('meet.google.com') || lower.includes('zoom.us')) {
+    return { label: '📅 Schedule Interview', bg: '#059669' };
+  }
+  if (lower.includes('hackerrank.com') || lower.includes('codility.com') || lower.includes('testgorilla') || lower.includes('codesignal') || lower.includes('hirevue') || lower.includes('vervoe')) {
+    return { label: '💻 Open Assessment', bg: '#2563eb' };
+  }
+  return { label: '🎯 Open Action Link', bg: '#4f46e5' };
+}
+
 async function gmailRequest(url, options) {
   const response = await fetch(url, options);
   const data = await response.json();
@@ -96,6 +108,9 @@ function renderGmailMessages() {
   }
   feed.innerHTML = gmailMessages.map(message => {
     const [label, type, actionHint] = gmailTypes[message.category] || gmailTypes.OTHER;
+    const actionConfig = getActionLinkConfig(message.action_link);
+    const deadlineHtml = message.action_deadline ? `<span class="gh-deadline" style="display:inline-block; font-size:11px; font-weight:600; color:#d97706; background:rgba(217,119,6,0.1); padding:2px 6px; border-radius:4px; margin-top:4px;">⏱ ${escapeHtml(message.action_deadline)}</span>` : '';
+    const directActionBtn = actionConfig ? `<a href="${escapeHtml(message.action_link)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex; align-items:center; gap:4px; padding:3px 8px; background:${actionConfig.bg}; color:#fff; border-radius:4px; text-decoration:none; font-weight:600; font-size:11px;">${actionConfig.label} <span aria-hidden="true">↗</span></a>` : '';
     return `<article class="gh-message ${message.is_read ? 'is-read' : 'is-unread'}">
       <div class="gh-message-meta"><span class="gh-tag gh-${type}">${label}</span>
         <span class="gh-read-label">${message.is_read ? 'Done' : 'Action needed'}</span>
@@ -103,10 +118,14 @@ function renderGmailMessages() {
       <h3><button type="button" class="gh-subject" data-open="${message.id}">${escapeHtml(message.subject || '(No subject)')}</button></h3>
       <p class="gh-sender">${escapeHtml(message.sender)}</p>
       <p class="gh-action-prompt">Next step: ${escapeHtml(actionHint)}</p>
+      ${deadlineHtml}
       <p class="gh-preview">${escapeHtml(message.snippet)}</p>
       <div class="gh-message-bottom"><span class="gh-pipeline ${message.stage_applied ? 'gh-updated' : ''}">${escapeHtml(message.pipeline_result)}${message.job_id ? ` · Job #${Number(message.job_id)}` : ''}</span>
-        <div class="gh-message-actions"><button type="button" data-read="${message.id}">${message.is_read ? 'Mark unread' : 'Mark done'}</button>
-        <a href="${originalGmailLink(message)}" target="_blank" rel="noopener noreferrer">Open in Gmail <span aria-hidden="true">↗</span></a></div></div>
+        <div class="gh-message-actions">
+          ${directActionBtn}
+          <button type="button" data-read="${message.id}">${message.is_read ? 'Mark unread' : 'Mark done'}</button>
+          <a href="${originalGmailLink(message)}" target="_blank" rel="noopener noreferrer">Open in Gmail <span aria-hidden="true">↗</span></a>
+        </div></div>
     </article>`;
   }).join('');
   feed.querySelectorAll('[data-open]').forEach(button => button.addEventListener('click', () => openGmailMessageViewer(button.dataset.open)));
@@ -152,14 +171,19 @@ async function triggerGmailScan(button) {
 
 function renderGmailViewerContent(message) {
   const [label, type, actionHint] = gmailTypes[message.category] || gmailTypes.OTHER;
+  const actionConfig = getActionLinkConfig(message.action_link);
+  const deadlineHtml = message.action_deadline ? `<div style="margin-top:6px;"><span class="gh-deadline" style="display:inline-block; font-size:12px; font-weight:600; color:#d97706; background:rgba(217,119,6,0.1); padding:2px 8px; border-radius:4px;">⏱ Deadline: ${escapeHtml(message.action_deadline)}</span></div>` : '';
+  const directActionBtn = actionConfig ? `<a href="${escapeHtml(message.action_link)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex; align-items:center; gap:4px; padding:6px 12px; background:${actionConfig.bg}; color:#fff; border-radius:4px; text-decoration:none; font-weight:600; font-size:13px; margin-right:8px;">${actionConfig.label} ↗</a>` : '';
   const body = (message.body_text || '').split(/(https?:\/\/[^\s<>"']+)/g).map(part =>
     /^https?:\/\//.test(part) ? `<a href="${escapeHtml(part)}" target="_blank" rel="noopener noreferrer">${escapeHtml(part)}</a>` : escapeHtml(part)).join('');
   return `<div class="gh-reader">
     <span class="gh-tag gh-${type}">${label}</span>
     <h2 id="gmail-modal-subject">${escapeHtml(message.subject)}</h2>
     <p>${escapeHtml(message.sender)}</p><p class="gh-muted">${escapeHtml(new Date(message.received_at * 1000).toLocaleString())}</p>
-    <div class="gh-reader-result"><strong>Next step: ${escapeHtml(actionHint)}</strong><p>${escapeHtml(message.pipeline_result)} · ${escapeHtml(message.match_reason)}</p></div>
-    <div class="gh-message-actions"><a href="${originalGmailLink(message)}" target="_blank" rel="noopener noreferrer">Open original in Gmail ↗</a>
+    <div class="gh-reader-result"><strong>Next step: ${escapeHtml(actionHint)}</strong>${deadlineHtml}<p>${escapeHtml(message.pipeline_result)} · ${escapeHtml(message.match_reason)}</p></div>
+    <div class="gh-message-actions">
+      ${directActionBtn}
+      <a href="${originalGmailLink(message)}" target="_blank" rel="noopener noreferrer">Open original in Gmail ↗</a>
       <button type="button" id="gmail-viewer-unread">Mark unread &amp; close</button></div>
     <p class="gh-muted">Original message text. Remote images and attachments are not loaded.</p>
     <pre class="gh-body">${body}</pre>

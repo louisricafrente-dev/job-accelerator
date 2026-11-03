@@ -199,6 +199,38 @@ class GmailHubTests(unittest.TestCase):
         self.assertEqual(client.uid.call_count-calls, 2)
         self.assertEqual(client.select.call_args.kwargs['readonly'], True)
 
+    def test_fuzzy_ats_company_and_action_item_extraction(self):
+        # 1. Fuzzy ATS matching (Workday on behalf of Infor)
+        self.conn.execute("""INSERT INTO jobs (id,dedup_hash,title,company,platform,tier,job_url,role_category,
+            experience_level,status,pipeline_stage,notes,updated_at,applied_at) VALUES
+            (3,'three','Software Engineer, Associate - Java','Infor','Workday',1,'https://careers.infor.com/jobs/3','Backend','Junior / Entry',
+            'applied','applied','Infor note','2026-10-01 00:00:00','2026-10-01 00:00:00')""")
+        self.conn.commit()
+        jobs = [dict(zip([c[0] for c in self.conn.execute('SELECT * FROM jobs').description], row))
+                for row in self.conn.execute('SELECT * FROM jobs')]
+
+        msg = dict(id='infor_1', thread_id='t1', subject='Infor Candidate Update: Invitation to Interview',
+                   sender='Workday on behalf of Infor <infor@myworkday.com>',
+                   body_text='We are pleased to invite you to an interview for the Software Engineer role.\nPlease book a slot: https://calendly.com/infor-team/interview\nDeadline: complete within 48 hours.',
+                   received_at=self.now, trusted=True)
+
+        job, reason = hub.match_job(msg, jobs)
+        self.assertIsNotNone(job)
+        self.assertEqual(job['id'], 3)
+        self.assertIn('Fuzzy ATS', reason)
+
+        # 2. Action items extraction
+        link, deadline = hub.extract_action_items(msg['subject'], msg['body_text'])
+        self.assertEqual(link, 'https://calendly.com/infor-team/interview')
+        self.assertIn('within 48 hours', deadline)
+
+        # Ingest and verify stored action items
+        self.assertTrue(hub.ingest(self.db, msg, jobs))
+        res = hub.messages(self.db)
+        found = [m for m in res['messages'] if m['id'] == 'infor_1'][0]
+        self.assertEqual(found['action_link'], 'https://calendly.com/infor-team/interview')
+        self.assertIn('within 48 hours', found['action_deadline'])
+
 
 class GmailApiTests(unittest.TestCase):
     from tests.test_local_worker import TestLocalWorker as _Fixture

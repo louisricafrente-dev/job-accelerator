@@ -16,7 +16,8 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS gmail_messages (
  received_at REAL NOT NULL, body_text TEXT NOT NULL, category TEXT NOT NULL,
  action_required INTEGER NOT NULL, is_read INTEGER NOT NULL DEFAULT 0,
  job_id INTEGER, match_reason TEXT NOT NULL, pipeline_result TEXT NOT NULL,
- target_stage TEXT, stage_applied INTEGER NOT NULL DEFAULT 0, trusted INTEGER NOT NULL DEFAULT 0);
+ target_stage TEXT, stage_applied INTEGER NOT NULL DEFAULT 0, trusted INTEGER NOT NULL DEFAULT 0,
+ action_link TEXT, action_deadline TEXT);
  CREATE INDEX IF NOT EXISTS idx_gmail_received ON gmail_messages(received_at DESC, id);
  CREATE INDEX IF NOT EXISTS idx_gmail_job_event ON gmail_messages(job_id,stage_applied,received_at);
 """
@@ -50,6 +51,11 @@ def init_hub(db_path):
         for sql in SCHEMA.split(";"):
             if sql.strip():
                 conn.execute(sql)
+        for col in ("action_link", "action_deadline"):
+            try:
+                conn.execute(f"ALTER TABLE gmail_messages ADD COLUMN {col} TEXT")
+            except Exception:
+                pass
         conn.commit()
     finally:
         conn.close()
@@ -62,6 +68,101 @@ def normalized(value):
 def fresh_text(body):
     # Quoted history is retained in the viewer but never drives a new stage change.
     return re.split(r"(?im)^\s*(?:On .+wrote:|From:|[-_]{3,}\s*(?:Original Message|Forwarded message))", body)[0]
+
+
+COMPANY_STOPWORDS = {
+    "inc", "incorporated", "corp", "corporation", "ltd", "limited", "llc",
+    "philippines", "ph", "holdings", "solutions", "technologies", "tech",
+    "services", "global", "group", "co", "company", "software", "development"
+}
+
+
+def core_company_tokens(name):
+    tokens = re.findall(r"[a-z0-9]+", (name or "").lower())
+    clean = [t for t in tokens if t not in COMPANY_STOPWORDS and len(t) >= 2]
+    return clean or tokens
+
+
+def extract_ats_entities(sender, subject, body):
+    entities = set()
+    s = sender or ""
+    # E.g. "Workday on behalf of Infor" or "notifications via Greenhouse"
+    m_behalf = re.search(r"(?:on behalf of|via)\s+([^<>,@\n]+)", s, re.IGNORECASE)
+    if m_behalf:
+        entities.add(m_behalf.group(1).strip())
+    # E.g. "Infor Careers <...>" or "Canonical Recruiting <...>"
+    m_pref = re.search(r"^([^<@\n]+?)\s+(?:Careers|Recruiting|Talent|Hiring|HR|Team|Updates|Jobs)\b", s, re.IGNORECASE)
+    if m_pref:
+        entities.add(m_pref.group(1).strip())
+    # E.g. "Careers at Infor"
+    m_at = re.search(r"(?:Careers|Recruiting|Talent|HR)\s+(?:at|with|for)\s+([^<>,@\n]+)", s, re.IGNORECASE)
+    if m_at:
+        entities.add(m_at.group(1).strip())
+    sub = subject or ""
+    m_sub_brack = re.search(r"\[([A-Za-z0-9&.,' -]{3,35})\]", sub)
+    if m_sub_brack:
+        entities.add(m_sub_brack.group(1).strip())
+    m_sub_app = re.search(r"(?:application|interview|update|role|position)\s+(?:at|with|for|to)\s+([A-Za-z0-9&.,' -]{3,35})(?:\s*[-–:|]|\s+for|\s*$)", sub, re.IGNORECASE)
+    if m_sub_app:
+        entities.add(m_sub_app.group(1).strip())
+    m_sub_start = re.search(r"^([A-Za-z0-9&.,' -]{3,35})\s*[-–:]\s*(?:Interview|Application|Update|Candidate|Next Steps)", sub, re.IGNORECASE)
+    if m_sub_start:
+        entities.add(m_sub_start.group(1).strip())
+
+    cleaned = set()
+    for e in entities:
+        norm = " ".join(re.findall(r"[a-z0-9]+", e.lower()))
+        if len(norm) >= 3 and norm not in {"workday", "greenhouse", "lever", "ashby", "smartrecruiters", "bamboohr", "indeed", "jobstreet"}:
+            cleaned.add(norm)
+    return cleaned
+
+
+def extract_action_items(subject, body):
+    fresh = fresh_text(body or "")
+    text = (subject or "") + "\n" + fresh
+
+    link_patterns = [
+        r"https?://(?:[a-zA-Z0-9-]+\.)?calendly\.com/[a-zA-Z0-9_/-]+",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?goodtime\.io/[a-zA-Z0-9_/-]+",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?chilipiper\.com/[a-zA-Z0-9_/-]+",
+        r"https?://outlook\.office365\.com/owa/calendar/[^\s<>\"']+",
+        r"https?://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?zoom\.us/(?:j|my)/[a-zA-Z0-9_?&=/-]+",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?hackerrank\.com/(?:tests|x/tests)/[a-zA-Z0-9_/-]+",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?codility\.com/(?:c/run|program)/[a-zA-Z0-9_/-]+",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?testgorilla\.com/[a-zA-Z0-9_/-]+",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?codesignal\.com/[a-zA-Z0-9_/-]+",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?hirevue\.com/[a-zA-Z0-9_/-]+",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?vervoe\.com/[a-zA-Z0-9_/-]+",
+        r"https?://forms\.gle/[a-zA-Z0-9_-]+",
+        r"https?://docs\.google\.com/forms/[^\s<>\"']+",
+        r"https?://(?:[a-zA-Z0-9-]+\.)?typeform\.com/to/[a-zA-Z0-9_-]+",
+        r"https?://airtable\.com/[a-zA-Z0-9_-]+"
+    ]
+
+    action_link = None
+    for pat in link_patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            action_link = m.group(0).rstrip(".,)>\"'")
+            break
+
+    deadline_patterns = [
+        r"(?:complete|submit|finish|deadline|due|by|before)\s+(?:on\s+)?(?:(?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday),\s*)?(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,\s*\d{4})?(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|AM|PM)?)?)",
+        r"(?:within\s+\d{1,2}\s+(?:hours?|days?|business days?))",
+        r"(?:deadline\s*(?:is|:)\s*[^\n,.;]{4,40})",
+        r"(?:due(?:\s+date)?\s*(?:is|:)\s*[^\n,.;]{4,40})"
+    ]
+    action_deadline = None
+    for dpat in deadline_patterns:
+        dm = re.search(dpat, text, re.IGNORECASE)
+        if dm:
+            clean_d = dm.group(0).strip()
+            if 6 <= len(clean_d) <= 60:
+                action_deadline = clean_d
+                break
+
+    return action_link, action_deadline
 
 
 def classify(subject, body, sender=""):
@@ -140,8 +241,9 @@ def classify(subject, body, sender=""):
 
 
 def match_job(message, jobs):
-    text = normalized(message["subject"] + " " + fresh_text(message["body_text"]))
-    links = set(re.findall(r"https?://[^\s<>\"']+", fresh_text(message["body_text"])))
+    fresh_body = fresh_text(message["body_text"])
+    text = normalized(message["subject"] + " " + fresh_body)
+    links = set(re.findall(r"https?://[^\s<>\"']+", fresh_body))
     candidates = []
     for job in jobs:
         # Only explicit role + company or exact listing URL is strong enough; no fuzzy first match.
@@ -160,6 +262,45 @@ def match_job(message, jobs):
         exact_link = any(u and u in links for u in urls)
         if names or exact_link:
             candidates.append(job)
+
+    fuzzy_matched = False
+    if not candidates:
+        ats_entities = extract_ats_entities(message.get("sender", ""), message.get("subject", ""), message.get("body_text", ""))
+        sender_norm = normalized(message.get("sender", ""))
+        subj_norm = normalized(message.get("subject", ""))
+
+        for job in jobs:
+            raw_comp = job.get("company") or ""
+            comp_norm = normalized(raw_comp)
+            comp_core = core_company_tokens(raw_comp)
+
+            comp_match = False
+            for ent in ats_entities:
+                if ent == comp_norm or (len(comp_core) >= 1 and all(t in ent for t in comp_core)):
+                    comp_match = True
+                    break
+            if not comp_match and comp_core:
+                core_phrase = " ".join(comp_core)
+                if len(core_phrase) >= 4 and (core_phrase in sender_norm or core_phrase in subj_norm):
+                    comp_match = True
+                elif len(comp_norm) >= 4 and (" " + comp_norm + " " in " " + text + " "):
+                    comp_match = True
+
+            if comp_match:
+                title_tokens = set(re.findall(r"[a-z0-9]+", (job.get("title") or "").lower()))
+                role_keywords = title_tokens - {"junior", "entry", "senior", "lead", "associate", "level", "ii", "iii", "i", "the", "and", "or", "in", "at", "for"}
+                title_overlap = [k for k in role_keywords if len(k) >= 3 and " " + k + " " in " " + text + " "]
+                has_job_context = any(term in text for term in ["interview", "application", "applied", "position", "role", "candidacy", "assessment", "screening", "offer"])
+
+                if (title_overlap and has_job_context) or len(title_overlap) >= 2:
+                    candidates.append(job)
+                    fuzzy_matched = True
+                elif has_job_context:
+                    company_jobs = [j for j in jobs if normalized(j.get("company")) == comp_norm]
+                    if len(company_jobs) == 1:
+                        candidates.append(job)
+                        fuzzy_matched = True
+
     if len(candidates) > 1:
         # When one title at the same company is a more specific superstring of another, keep the specific role.
         pairs = [(normalized(j.get("company")), normalized(j.get("title"))) for j in candidates]
@@ -173,7 +314,8 @@ def match_job(message, jobs):
             candidates = [candidates[0]]
     if len(candidates) != 1:
         return None, "Multiple possible jobs; Pipeline unchanged" if candidates else "No exact application match; Pipeline unchanged"
-    return candidates[0], "Exact listing URL or company and role"
+    reason = "Fuzzy ATS company and role match" if fuzzy_matched else "Exact listing URL or company and role"
+    return candidates[0], reason
 
 
 def ingest(db_path, message, jobs):
@@ -184,6 +326,7 @@ def ingest(db_path, message, jobs):
             return False
         job, reason = match_job(message, jobs)
         category, stage, action = classify(message["subject"], message["body_text"], message.get("sender", ""))
+        action_link, action_deadline = extract_action_items(message["subject"], message["body_text"])
         result = "Needs review"
         if job and not message.get("trusted"):
             result = "Sender authentication not verified; Pipeline unchanged"
@@ -196,11 +339,12 @@ def ingest(db_path, message, jobs):
         stored_body = message["body_text"] if action else ""
         conn.execute("""INSERT INTO gmail_messages
             (id,thread_id,subject,sender,received_at,body_text,category,action_required,is_read,
-             job_id,match_reason,pipeline_result,target_stage,trusted)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             job_id,match_reason,pipeline_result,target_stage,trusted,action_link,action_deadline)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (message["id"], message["thread_id"], message["subject"], message["sender"], message["received_at"],
              stored_body, category, int(action), int(message.get("is_read", False)),
-             job["id"] if job else None, reason, result, stage, int(message.get("trusted", False))))
+             job["id"] if job else None, reason, result, stage, int(message.get("trusted", False)),
+             action_link, action_deadline))
         conn.commit()
         return True
     finally:
@@ -289,7 +433,8 @@ def messages(db_path, limit=40, offset=0, category="", read="", match="", search
         where = " WHERE " + " AND ".join(clauses)
         total = conn.execute("SELECT COUNT(*) FROM gmail_messages" + where, args).fetchone()[0]
         rows = conn.execute("""SELECT id,thread_id,subject,sender,received_at,category,action_required,is_read,
-            job_id,match_reason,pipeline_result,stage_applied,substr(body_text,1,220) snippet
+            job_id,match_reason,pipeline_result,stage_applied,substr(body_text,1,220) snippet,
+            action_link,action_deadline
             FROM gmail_messages""" + where + " ORDER BY received_at DESC,id DESC LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
         return {"account": ACCOUNT, "messages": [dict(r) for r in rows], "stats": stats,
                 "total": total, "has_more": offset + len(rows) < total, "scan": scan_status(db_path)}
