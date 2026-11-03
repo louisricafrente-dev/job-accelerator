@@ -57,6 +57,12 @@ def start(db_path, queries=None, automatic=False, resume=False, restart=False):
 def telemetry(db_path):
     command = inbox.public(inbox.read(db_path))
     shared = json.loads(get_user_setting(db_path, "sync_status", "{}") or "{}")
+    shared_time = shared.get("completed_at", shared.get("last_result", {}).get("timestamp", 0))
+    command_time = command.get("updated_at", command.get("requested_at", 0))
+    if (command.get("status") not in inbox.ACTIVE
+            and shared.get("cycle_id") != command.get("cycle_id", command.get("id"))
+            and shared_time > command_time):
+        command = {}
     waiting_for_cycle = (bool(command.get("id")) and not command.get("result")
                          and shared.get("cycle_id") != command.get("cycle_id", command.get("id")))
     if waiting_for_cycle:

@@ -12,8 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))
-    for name in ("VERCEL", "RENDER", "TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN", "FLCONSOLE_MCP_TOKEN", "UPWORK_FEED_URL"):
-        os.environ.pop(name, None)
+    for name in ("VERCEL", "RENDER", "TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN", "FLCONSOLE_MCP_TOKEN", "UPWORK_FEED_URL",
+                 "GMAIL_APP_PASSWORD", "SMTP_PASSWORD", "GITHUB_ACTIONS_TOKEN", "JOB_EXECUTOR",
+                 "FORCE_SYNC", "FORCE_DIGEST", "PROXY_LIST", "SCRAPER_PROXY_LIST", "PROXY_URL", "FORCE_PROXY"):
+        # Keep empty keys so local .env loaders cannot reintroduce live credentials.
+        os.environ[name] = ""
     with patch("src.aggregator.get_default_connectors", return_value=[]), patch(
         "socket.socket.connect", side_effect=AssertionError("Live network access is disabled in regression checks")
     ):

@@ -180,7 +180,7 @@ class TestRegressions(unittest.TestCase):
 
     def test_serverless_sync_returns_after_durable_queue_acceptance(self):
         queued = {"status": "queued", "cloud_run": {"id": "run-1", "status": "queued"}, "is_syncing": True}
-        with patch.dict(os.environ, {"VERCEL": "1", "TURSO_AUTH_TOKEN": "test", "TURSO_DATABASE_URL": "https://unused.example"}), patch("src.cloud_sync.start_run", return_value=queued) as enqueue, patch("src.server.Aggregator.run_sync") as run:
+        with patch.dict(os.environ, {"VERCEL": "1", "TURSO_AUTH_TOKEN": "test", "TURSO_DATABASE_URL": "https://unused.example"}), patch("src.execution_dispatch.start", return_value=queued) as enqueue, patch("src.server.Aggregator.run_sync") as run:
             result = wsgi_request(self.app, "POST", "/api/sync", {"background": True}, cookie=self.cookie)
             self.assertEqual(result["json"]["status"], "queued")
             enqueue.assert_called_once()

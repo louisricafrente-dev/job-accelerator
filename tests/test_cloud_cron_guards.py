@@ -14,10 +14,37 @@ from src.daily_schedule import day as get_manila_day
 
 class CloudCronGuardsTests(unittest.TestCase):
 
+    def test_queued_cron_supervises_worker_and_preserves_partial_result(self):
+        from scripts.cloud_cron_sync import run
+        command = {"id": "scheduled", "status": "queued"}
+        result = {"status": "partial", "added": 3, "progress": {"unfinished": True}}
+        with patch("scripts.cloud_cron_sync.is_turso_active", return_value=True), \
+                patch("scripts.cloud_cron_sync.init_db"), \
+                patch("scripts.cloud_cron_sync.get_user_setting", return_value="1"), \
+                patch("src.execution_inbox.enqueue", return_value=command), \
+                patch("src.execution_inbox.read", return_value={**command, "status": "partial", "result": result}), \
+                patch("src.inbox_worker.run_cloud", return_value=result) as supervise, \
+                patch("scripts.cloud_cron_sync.Aggregator"), patch("sys.argv", ["cloud_cron_sync.py"]):
+            run()
+        self.assertEqual(supervise.call_args.args[1], command["id"])
+
+    def test_cron_database_failure_fails_the_workflow(self):
+        from scripts.cloud_cron_sync import run
+        command = {"id": "scheduled", "status": "queued"}
+        with patch("scripts.cloud_cron_sync.is_turso_active", return_value=True), \
+                patch("scripts.cloud_cron_sync.init_db"), \
+                patch("scripts.cloud_cron_sync.get_user_setting", return_value="1"), \
+                patch("src.execution_inbox.enqueue", return_value=command), \
+                patch("src.execution_inbox.read", return_value={**command, "status": "error"}), \
+                patch("src.inbox_worker.run_cloud", return_value={"status": "error"}), \
+                patch("scripts.cloud_cron_sync.Aggregator"), patch("sys.argv", ["cloud_cron_sync.py"]):
+            with self.assertRaises(SystemExit):
+                run()
+
     @patch("scripts.cloud_cron_sync.is_turso_active", return_value=True)
     @patch("scripts.cloud_cron_sync.init_db")
     @patch("scripts.cloud_cron_sync.get_user_setting")
-    @patch("src.execution_inbox.read")
+    @patch("src.execution_inbox.enqueue")
     @patch("src.aggregator.Aggregator.run_sync")
     def test_cloud_cron_yields_when_local_worker_running(self, mock_run_sync, mock_inbox_read, mock_get_setting, mock_init, mock_turso):
         from scripts.cloud_cron_sync import run
@@ -34,7 +61,7 @@ class CloudCronGuardsTests(unittest.TestCase):
     @patch("scripts.cloud_cron_sync.is_turso_active", return_value=True)
     @patch("scripts.cloud_cron_sync.init_db")
     @patch("scripts.cloud_cron_sync.get_user_setting")
-    @patch("src.execution_inbox.read")
+    @patch("src.execution_inbox.enqueue")
     @patch("src.aggregator.Aggregator.run_sync")
     def test_cloud_cron_yields_when_cloud_worker_running(self, mock_run_sync, mock_inbox_read, mock_get_setting, mock_init, mock_turso):
         from scripts.cloud_cron_sync import run

@@ -315,9 +315,13 @@ class TestLocalWorker(unittest.TestCase):
         from datetime import datetime
         from zoneinfo import ZoneInfo
         config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text())
-        schedules = {job["path"]: job["schedule"] for job in config["crons"]}
-        self.assertEqual(schedules["/api/cron/sync"], "0 16 * * *")
-        self.assertEqual(schedules["/api/notify/daily"], "0 2 * * *")
+        self.assertFalse(config.get("crons"), "Vercel must not run scheduled scraping")
+        root = Path(__file__).resolve().parents[1]
+        scraper = (root / ".github/workflows/scraper-cron.yml").read_text()
+        digest = (root / ".github/workflows/daily-digest-cron.yml").read_text()
+        self.assertIn("cron: '0 16 * * *'", scraper)
+        self.assertIn("cron: '0 2 * * *'", scraper)
+        self.assertIn("cron: '0 2 * * *'", digest)
         midnight = datetime(2026, 10, 21, 16, tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Asia/Manila"))
         self.assertEqual((midnight.hour, midnight.minute), (0, 0))
 

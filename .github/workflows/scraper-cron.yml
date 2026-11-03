@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: 'Force sync ignoring local worker active status'
+        description: 'Run even when auto-sync is paused; preserve active worker ownership'
         type: boolean
         default: false
 

@@ -134,6 +134,18 @@ class RestartAuthorityTests(unittest.TestCase):
         self.assertFalse(status["is_syncing"])
         self.assertIsNone(status["progress"])
 
+    def test_newer_scheduled_result_is_not_replaced_by_old_partial_command(self):
+        inbox.enqueue(self.db)
+        owner = inbox.claim(self.db, "local", "old-pc")
+        inbox.update_owned(self.db, owner, {"status": "partial", "added": 477})
+        latest = {"cycle_id": "cloud-cron-new", "completed_at": time.time() + 1,
+                  "executor": "cloud", "last_result": {"status": "partial", "added": 143}}
+        set_user_setting(self.db, "sync_status", json.dumps(latest))
+        status = telemetry(self.db)
+        self.assertEqual(status["last_result"], latest["last_result"])
+        self.assertEqual(status["execution"], {})
+        self.assertFalse(status["is_syncing"])
+
 
 class RestartAuthorityApiTests(unittest.TestCase):
     from tests.test_local_worker import TestLocalWorker as _Fixture

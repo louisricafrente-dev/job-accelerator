@@ -57,6 +57,9 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
                 if progress.get("unfinished") and result.get("status") != "error":
                     result["status"] = "partial"
                 if inbox.update_owned(db_path, command, result, key=key):
+                    if aggregator.daily_run and result.get("status") != "error":
+                        from src.daily_schedule import day
+                        set_user_setting(db_path, "daily_scrape_day", day())
                     return result
                 continue
             stop.wait(min(30, max(1, progress.get("next_run_at", time.time()) - time.time())))

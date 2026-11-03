@@ -93,8 +93,12 @@ class JobSpyAdapter(BaseConnector):
                 wanted = wanted + 1 if getattr(self, "bounded_group_probe", False) else wanted * group_size + 1
             def send(proxy):
                 errors_log = _JobSpyErrors()
-                scraper_logger = logging.getLogger("JobSpy:" + self.platform)
-                scraper_logger.addHandler(errors_log)
+                legacy_name = {"linkedin": "LinkedIn", "indeed": "Indeed", "glassdoor": "Glassdoor",
+                               "zip_recruiter": "ZipRecruiter"}[self.site_name]
+                scraper_loggers = [logging.getLogger("JobSpy:" + legacy_name),
+                                   logging.getLogger("jobspy." + self.site_name.replace("_", ""))]
+                for scraper_logger in scraper_loggers:
+                    scraper_logger.addHandler(errors_log)
                 try:
                     frame = scrape_jobs(
                         site_name=[self.site_name],
@@ -107,7 +111,8 @@ class JobSpyAdapter(BaseConnector):
                         proxies=[proxy] if proxy else None
                     )
                 finally:
-                    scraper_logger.removeHandler(errors_log)
+                    for scraper_logger in scraper_loggers:
+                        scraper_logger.removeHandler(errors_log)
                 if errors_log.messages:
                     frame.attrs["errors"] = {self.site_name: "; ".join(errors_log.messages[-5:])}
                 from src.proxy_manager import is_connection_error

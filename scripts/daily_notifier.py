@@ -26,7 +26,7 @@ if root_dir not in sys.path:
 
 # Load local .env variables if present
 env_file = os.path.join(root_dir, ".env")
-if os.path.exists(env_file):
+if __name__ == "__main__" and os.path.exists(env_file):
     try:
         with open(env_file, "r", encoding="utf-8") as f:
             for line in f:

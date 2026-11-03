@@ -136,6 +136,19 @@ class TestProxyFallback(unittest.TestCase):
         self.assertIn("429", board.last_error)
         self.assertFalse(logging.getLogger("JobSpy:LinkedIn").handlers)
 
+    def test_current_jobspy_logger_reports_block_without_proxy_rotation(self):
+        import logging
+        import pandas as pd
+        def blocked(**kwargs):
+            logging.getLogger("jobspy.linkedin").error("response status code 429 (blocked: use a proxy)")
+            return pd.DataFrame()
+        board = JobSpyAdapter("LinkedIn", "linkedin", 1)
+        Aggregator(self.db, [board])
+        with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=Mock(side_effect=blocked))}):
+            board.fetch()
+        self.assertIn("429", board.last_error)
+        self.assertFalse(logging.getLogger("jobspy.linkedin").handlers)
+
     def test_proxy_credentials_are_redacted_from_errors(self):
         with patch("curl_cffi.requests.Session.get", side_effect=TimeoutError("failed proxy " + self.pool[0])):
             with self.assertRaises(RuntimeError) as error:
