@@ -22,6 +22,13 @@ def main():
     aggregator = Aggregator(db)
     if args.executor == "cloud":
         run_cloud(db, args.command_id, aggregator)
+        from src import execution_inbox as inbox
+        command = inbox.public(inbox.read(db))
+        if command.get("id") == args.command_id:
+            if command.get("status") == "error":
+                raise SystemExit("Cloud scrape failed; checkpoint retained for resume")
+            if command.get("status") == "partial":
+                print("::warning::Scrape finished partially; inspect blocked sources and coverage limits in the dashboard.")
     else:
         from scripts.local_worker import worker_lock, LOCAL_DATA
         LOCAL_DATA.mkdir(parents=True, exist_ok=True)

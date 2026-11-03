@@ -70,6 +70,8 @@ def run():
                       "unfinished": result.get("progress", {}).get("unfinished", 0)}))
     if status == "error":
         raise SystemExit("Scheduled scrape failed; inspect shared source telemetry/checkpoint")
+    if status == "partial":
+        print("::warning::Scrape finished partially; blocked sources/coverage limits remain in dashboard telemetry.")
 
 
 if __name__ == "__main__":
