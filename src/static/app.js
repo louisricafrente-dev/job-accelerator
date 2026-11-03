@@ -1905,6 +1905,7 @@ function renderJobs() {
             <span class="company-identifier">@ ${escapeHtml(job.company)}</span>
             ${followUpBadge}
             ${applicationHandlingLabel(job) ? `<span class="badge-date ${job.application_handling === 'in_progress' ? 'badge-in-progress' : ''}" title="Application handling">${applicationHandlingLabel(job)}</span>` : ''}
+            ${needsHumanTagBadge(job)}
           </div>
 
           <div class="job-meta-row">
@@ -2308,6 +2309,26 @@ function filterByApplicationHandling(jobs, filter) {
     const handling = job.application_handling || (job.status === 'applied' ? 'applied_human' : '');
     return filter === 'unlabeled' ? !handling : handling === filter;
   });
+}
+
+function needsHumanTagBadge(job) {
+  if (!job.notes) return '';
+  const match = job.notes.match(/\[TAG:\s*([^\]]+)\]/i);
+  if (!match) return '';
+  const tagKey = match[1].trim().toUpperCase();
+  const tagMap = {
+    'CAPTCHA': { label: 'CAPTCHA', icon: '🧩', cls: 'badge-tag-captcha' },
+    'LOGIN_OTP': { label: 'Login / OTP', icon: '📱', cls: 'badge-tag-otp' },
+    'SCREENING': { label: 'Screening', icon: '📝', cls: 'badge-tag-screening' },
+    'VIDEO_REQ': { label: 'Video Req', icon: '🎥', cls: 'badge-tag-video' },
+    'FILE_UPLOAD': { label: 'File Upload', icon: '📎', cls: 'badge-tag-files' },
+    'PAYWALL_BID': { label: 'Connects / Bid', icon: '💳', cls: 'badge-tag-paywall' },
+    'INELIGIBLE': { label: 'Ineligible', icon: '🚫', cls: 'badge-tag-ineligible' },
+    'ALREADY_APPLIED': { label: 'Already Applied', icon: '✅', cls: 'badge-tag-applied' },
+    'REVIEW_REQUIRED': { label: 'Review Required', icon: '⚠️', cls: 'badge-tag-review' }
+  };
+  const item = tagMap[tagKey] || { label: tagKey, icon: '🏷️', cls: 'badge-tag-default' };
+  return `<span class="badge-needs-human-tag ${item.cls}" title="Needs Human: ${item.label}">${item.icon} ${item.label}</span>`;
 }
 
 function applicationHandlingLabel(job) {
