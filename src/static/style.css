@@ -3857,16 +3857,19 @@ a {
   border-color: var(--accent-cyan);
   outline: none;
 }
-#application-filter-row {
+#application-filter-row,
+#tag-filter-row {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
 }
-#application-filter-row .filter-select {
+#application-filter-row .filter-select,
+#tag-filter-row .filter-select {
   border-color: var(--border-default);
 }
-#application-filter-row .filter-select:hover {
+#application-filter-row .filter-select:hover,
+#tag-filter-row .filter-select:hover {
   border-color: var(--border-hover);
 }
 

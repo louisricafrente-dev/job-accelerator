@@ -15,7 +15,8 @@ let latestByStage = {};
 let currentViewerMessageId = null;
 let selectedLevels = new Set(['All']);
 let currentLevel = 'All';
-let currentRole = 'All';
+let const tagSelect = document.getElementById('tag-filter'); if (tagSelect) tagSelect.value = 'all';
+  currentRole = 'All';
 const ROLE_OPTIONS = {
   'Web/Software Dev': [['Frontend', 'Frontend development'],
     ['Backend', 'Backend development'], ['Full Stack', 'Full-stack development'], ['Mobile', 'Mobile development'],
@@ -831,9 +832,10 @@ const viewFilterKeys = new Set(['date_filter', 'role', 'experience_levels', 'pla
 function filterViewKey() { return currentViewMode === 'va' ? 'va' : currentStatus; }
 function rememberViewFilters() {
   const appFilterVal = document.getElementById('application-filter')?.value || 'all';
+    const tagFilterVal = document.getElementById('tag-filter')?.value || 'all';
   viewFilters[filterViewKey()] = { date: currentDateFilter, role: currentRole, level: currentLevel,
     platform: currentPlatform, remote: remoteOnly, senior: hideSenior, salary: hasSalaryOnly,
-    skills: filterBySkillsOnly, search: searchQuery, application: appFilterVal };
+    skills: filterBySkillsOnly, search: searchQuery, application: appFilterVal, tag: document.getElementById('tag-filter')?.value || 'all' };
   persistSetting('view_filters', JSON.stringify(viewFilters));
 }
 function restoreViewFilters() {
@@ -848,6 +850,8 @@ function restoreViewFilters() {
   if (input) input.value = searchQuery;
   const appSelect = document.getElementById('application-filter');
   if (appSelect) appSelect.value = f.application || 'all';
+    const tagSelect = document.getElementById('tag-filter');
+    if (tagSelect) tagSelect.value = f.tag || 'all';
 }
 
 // Universal persistence helper (saves to both localStorage & server SQLite)
@@ -998,7 +1002,8 @@ async function loadAllUserSettings() {
   if (settings.role && settings.role !== 'Virtual Assistant') {
     currentRole = settings.role;
   } else {
-    currentRole = 'All';
+    const tagSelect = document.getElementById('tag-filter'); if (tagSelect) tagSelect.value = 'all';
+  currentRole = 'All';
   }
   if (settings.platform) {
     currentPlatform = settings.platform;
@@ -2099,7 +2104,11 @@ function renderEmptyStateHtml() {
   const isVa = currentViewMode === 'va';
   const activeFilters = [];
 
-  if (searchQuery && searchQuery.trim()) {
+  const tagFilterVal = document.getElementById('tag-filter')?.value || 'all';
+    if (tagFilterVal !== 'all') {
+      activeFilters.push({ label: `Tag: ${tagFilterVal}`, action: 'resetTagFilter()' });
+    }
+    if (searchQuery && searchQuery.trim()) {
     activeFilters.push({ label: `Search: "${searchQuery}"`, action: 'clearSearchInput()' });
   }
   if (currentRole && currentRole !== 'All') {
@@ -2187,6 +2196,7 @@ function renderEmptyStateHtml() {
 function updateActiveFilterIndicators() {
   const defaultDate = (['saved', 'applied'].includes(currentStatus) ? 'all' : '15days');
   const appFilterVal = document.getElementById('application-filter')?.value || 'all';
+    const tagFilterVal = document.getElementById('tag-filter')?.value || 'all';
   const pipelineFilterVal = document.getElementById('pipeline-stage-filter')?.value || 'All';
   const hasActive = Boolean(
     (searchQuery && searchQuery.trim()) ||
@@ -2195,6 +2205,7 @@ function updateActiveFilterIndicators() {
     (currentPlatform && currentPlatform !== 'All') ||
     (currentDateFilter && currentDateFilter !== defaultDate && currentDateFilter !== 'all') ||
     (appFilterVal !== 'all') ||
+      (tagFilterVal !== 'all') ||
     (pipelineFilterVal !== 'All') ||
     filterBySkillsOnly ||
     hasSalaryOnly ||
@@ -2220,6 +2231,7 @@ function resetAllFeedFilters() {
   const clearBtn = document.getElementById('clear-search-btn');
   if (clearBtn) clearBtn.style.display = 'none';
 
+  const tagSelect = document.getElementById('tag-filter'); if (tagSelect) tagSelect.value = 'all';
   currentRole = 'All';
   syncRoleControls();
   document.querySelectorAll('#role-group .filter-chip').forEach(c => {
@@ -2301,6 +2313,64 @@ function clearGmailFilters() {
   if (typeof handleGmailSearch === 'function') handleGmailSearch('');
   if (typeof loadGmailHub === 'function') loadGmailHub();
   showToast('Gmail filters reset.', 'info');
+}
+
+
+function filterByTag(jobs, tagFilter) {
+  if (!tagFilter || tagFilter === 'all') return jobs;
+  if (tagFilter === 'untagged') {
+    return jobs.filter(job => !job.notes || !job.notes.match(/\[TAG:\s*([^\]]+)\]/i));
+  }
+  return jobs.filter(job => {
+    if (!job.notes) return false;
+    const match = job.notes.match(/\[TAG:\s*([^\]]+)\]/i);
+    if (!match) return false;
+    const rawKey = match[1].trim().toUpperCase();
+    if (tagFilter === 'CAPTCHA') {
+      return rawKey.includes('CAPTCHA') || rawKey.includes('CLOUDFLARE') || rawKey.includes('TURNSTILE');
+    }
+    if (tagFilter === 'LOGIN_OTP') {
+      return rawKey.includes('OTP') || rawKey.includes('LOGIN') || rawKey.includes('WORKDAY');
+    }
+    if (tagFilter === 'SCREENING') {
+      return rawKey.includes('SCREENING');
+    }
+    if (tagFilter === 'VIDEO_REQ') {
+      return rawKey.includes('VIDEO') || rawKey.includes('AUDIO') || rawKey.includes('VOICE');
+    }
+    if (tagFilter === 'FILE_UPLOAD') {
+      return rawKey.includes('FILE') || rawKey.includes('UPLOAD') || rawKey.includes('SPEED');
+    }
+    if (tagFilter === 'PAYWALL_BID') {
+      return rawKey.includes('PAYWALL') || rawKey.includes('BID') || rawKey.includes('CONNECT');
+    }
+    if (tagFilter === 'INELIGIBLE') {
+      return rawKey.includes('INELIGIBLE') || rawKey.includes('OUT_OF_SCOPE');
+    }
+    if (tagFilter === 'ALREADY_APPLIED') {
+      return rawKey.includes('APPLIED') || rawKey.includes('RECEIPT');
+    }
+    if (tagFilter === 'REVIEW_REQUIRED') {
+      return rawKey.includes('REVIEW');
+    }
+    if (tagFilter === 'EXPIRED_OR_REDIRECTED') {
+      return rawKey.includes('EXPIRED') || rawKey.includes('REDIRECT');
+    }
+    return rawKey === tagFilter;
+  });
+}
+
+function handleTagFilterChange(elem) {
+  rememberViewFilters();
+  loadJobs();
+}
+
+function resetTagFilter() {
+  const sel = document.getElementById('tag-filter');
+  if (sel) {
+    sel.value = 'all';
+    handleTagFilterChange(sel);
+  }
 }
 
 function filterByApplicationHandling(jobs, filter) {

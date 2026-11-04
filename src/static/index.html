@@ -10,8 +10,8 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="shortcut icon" href="/static/favicon.ico">
   <meta name="theme-color" content="#080c14">
-  <link rel="stylesheet" href="/static/style.css?v=20261104-tags-v2">
-  <link rel="stylesheet" href="/static/gmail-hub.css?v=20261104-tags-v2">
+  <link rel="stylesheet" href="/static/style.css?v=20261104-tag-filter-v3">
+  <link rel="stylesheet" href="/static/gmail-hub.css?v=20261104-tag-filter-v3">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -439,6 +439,26 @@
             <option value="unlabeled">No application label</option>
           </select>
           <span class="role-filter-help" id="application-filter-help">Filter jobs by application &amp; submission progress</span>
+        </div>
+
+        <!-- Reason / Tag Filter -->
+        <div class="filter-cell" id="tag-filter-row">
+          <label class="filter-title" for="tag-filter">Tag / Reason</label>
+          <select id="tag-filter" class="filter-select" onchange="handleTagFilterChange(this)">
+            <option value="all">All Tags &amp; Reasons</option>
+            <option value="CAPTCHA">🧩 CAPTCHA / Cloudflare</option>
+            <option value="LOGIN_OTP">📱 Login / OTP</option>
+            <option value="SCREENING">📝 Screening Question</option>
+            <option value="VIDEO_REQ">🎥 Video / Audio Req</option>
+            <option value="FILE_UPLOAD">📎 File Upload</option>
+            <option value="PAYWALL_BID">💳 Connects / Bid</option>
+            <option value="INELIGIBLE">🚫 Ineligible / Out of Scope</option>
+            <option value="ALREADY_APPLIED">✅ Already Applied</option>
+            <option value="REVIEW_REQUIRED">⚠️ Review Required</option>
+            <option value="EXPIRED_OR_REDIRECTED">🔗 Expired / Redirected</option>
+            <option value="untagged">⚪ No Tag</option>
+          </select>
+          <span class="role-filter-help" id="tag-filter-help">Filter jobs by needs_human reason tag</span>
         </div>
 
         <!-- Pipeline Process Stage Filter -->
@@ -1108,8 +1128,8 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261104-tags-v2"></script>
-  <script src="/static/gmail-hub.js?v=20261104-tags-v2"></script>
+  <script src="/static/app.js?v=20261104-tag-filter-v3"></script>
+  <script src="/static/gmail-hub.js?v=20261104-tag-filter-v3"></script>
 </body>
 </html>
 
