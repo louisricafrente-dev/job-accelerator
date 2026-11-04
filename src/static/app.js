@@ -15,8 +15,7 @@ let latestByStage = {};
 let currentViewerMessageId = null;
 let selectedLevels = new Set(['All']);
 let currentLevel = 'All';
-let const tagSelect = document.getElementById('tag-filter'); if (tagSelect) tagSelect.value = 'all';
-  currentRole = 'All';
+let currentRole = 'All';
 const ROLE_OPTIONS = {
   'Web/Software Dev': [['Frontend', 'Frontend development'],
     ['Backend', 'Backend development'], ['Full Stack', 'Full-stack development'], ['Mobile', 'Mobile development'],

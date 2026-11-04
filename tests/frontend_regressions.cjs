@@ -2,6 +2,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const code = fs.readFileSync('src/static/app.js', 'utf8');
+// Compile the whole entry point before tests evaluate isolated helpers.
+new vm.Script(code, { filename: 'src/static/app.js' });
 const storage = new Map();
 const token = (role, id) => Buffer.from(JSON.stringify({ role, id })).toString('base64url') + '.test';
 const requests = [];
