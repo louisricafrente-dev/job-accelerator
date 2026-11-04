@@ -23,6 +23,7 @@ vm.runInContext(code.slice(code.indexOf('const LOCAL_STATUS_KEY ='), code.indexO
 vm.runInContext(code.slice(code.indexOf('const ROLE_OPTIONS ='), code.indexOf('let currentPlatform =')), context);
 vm.runInContext(code.slice(code.indexOf('function getSkillsMatch(job)'), code.indexOf('// Chip & Stack helpers')), context);
 vm.runInContext(code.slice(code.indexOf('let loadJobsSequence ='), code.indexOf('// Skills matching calculator')), context);
+vm.runInContext(code.slice(code.indexOf('function filterByTag('), code.indexOf('function handleTagFilterChange(')), context);
 
 async function main() {
   context.userStack = 'React';
@@ -122,7 +123,19 @@ async function main() {
   await context.loadJobs();
   assert.equal(context.jobsList[0].id, 555, 'unfiltered Saved must retain pending local jobs');
   context.removeLocalStatusOverride(555);
+  elements.get('tag-filter').value = 'CAPTCHA';
+  context.resilientFetchWithRetry = async () => ({ ok: true, json: async () => ({ jobs: [
+    { id: 1, status: context.currentStatus, notes: '[TAG: CLOUDFLARE_CHALLENGE]' },
+    { id: 2, status: context.currentStatus, notes: '[TAG: SCREENING_QUESTION]' }
+  ], has_more: false }) });
+  await context.loadJobs();
+  assert.equal(elements.get('tag-filter-row').style.display, '');
+  assert.deepEqual(Array.from(context.jobsList, job => job.id), [1]);
   context.currentStatus = 'new';
+  await context.loadJobs();
+  assert.equal(elements.get('tag-filter-row').style.display, 'none');
+  assert.equal(context.jobsList.length, 2, 'Saved tags must not filter Inbox');
+  elements.get('tag-filter').value = 'all';
 
   vm.runInContext(code.slice(code.indexOf('async function triggerSync('), code.indexOf('function startSyncPoller()')), context);
   const matrix = vm.runInNewContext(code.slice(code.indexOf('const PRESET_CATEGORIES ='), code.indexOf('const PRESET_SKILLS =')) + ';PRESET_CATEGORIES.flatMap(c=>c.skills)');

@@ -850,7 +850,7 @@ function restoreViewFilters() {
   const appSelect = document.getElementById('application-filter');
   if (appSelect) appSelect.value = f.application || 'all';
     const tagSelect = document.getElementById('tag-filter');
-    if (tagSelect) tagSelect.value = f.tag || 'all';
+    if (tagSelect) tagSelect.value = currentViewMode === 'tech' && currentStatus === 'saved' ? (f.tag || 'all') : 'all';
 }
 
 // Universal persistence helper (saves to both localStorage & server SQLite)
@@ -1241,6 +1241,9 @@ async function loadJobs() {
   const feedSummary = document.querySelector('.feed-summary-bar');
   if (feedSummary) feedSummary.style.display = status === 'gmail' ? 'none' : '';
   const activeView = typeof currentViewMode !== 'undefined' ? currentViewMode : 'tech';
+  const isSavedView = activeView === 'tech' && currentStatus === 'saved';
+  const tagFilterRow = document.getElementById('tag-filter-row');
+  if (tagFilterRow) tagFilterRow.style.display = isSavedView ? '' : 'none';
   const isAppliedView = activeView === 'tech' && currentStatus === 'applied';
   if (pipelineHeader) {
     pipelineHeader.style.display = isAppliedView ? 'block' : 'none';
@@ -1378,6 +1381,7 @@ async function loadJobs() {
     if (applicationFilter !== 'all') {
       jobs = filterByApplicationHandling(jobs, applicationFilter);
     }
+    if (isSavedView) jobs = filterByTag(jobs, document.getElementById('tag-filter')?.value || 'all');
     jobsList = jobs;
     selectedIndex = 0;
     renderJobs();
