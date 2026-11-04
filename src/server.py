@@ -54,7 +54,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         bottle.response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, OPTIONS"
         bottle.response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Session-Token"
         if bottle.request.path.startswith("/static/"):
-            bottle.response.headers["Cache-Control"] = "public, max-age=60, s-maxage=3600"
+            bottle.response.headers["Cache-Control"] = "public, max-age=0, must-revalidate, s-maxage=60"
         else:
             bottle.response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             bottle.response.headers["Pragma"] = "no-cache"

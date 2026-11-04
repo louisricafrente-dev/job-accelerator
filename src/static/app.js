@@ -2315,19 +2315,49 @@ function needsHumanTagBadge(job) {
   if (!job.notes) return '';
   const match = job.notes.match(/\[TAG:\s*([^\]]+)\]/i);
   if (!match) return '';
-  const tagKey = match[1].trim().toUpperCase();
+  const rawKey = match[1].trim().toUpperCase();
+  const tagKey = rawKey.split(/[\s\-:]+/)[0];
   const tagMap = {
     'CAPTCHA': { label: 'CAPTCHA', icon: '🧩', cls: 'badge-tag-captcha' },
+    'CLOUDFLARE': { label: 'Cloudflare / CAPTCHA', icon: '🛡️', cls: 'badge-tag-captcha' },
+    'CLOUDFLARE_CHALLENGE': { label: 'Cloudflare / CAPTCHA', icon: '🛡️', cls: 'badge-tag-captcha' },
     'LOGIN_OTP': { label: 'Login / OTP', icon: '📱', cls: 'badge-tag-otp' },
     'SCREENING': { label: 'Screening', icon: '📝', cls: 'badge-tag-screening' },
+    'SCREENING_QUESTION': { label: 'Screening', icon: '📝', cls: 'badge-tag-screening' },
     'VIDEO_REQ': { label: 'Video Req', icon: '🎥', cls: 'badge-tag-video' },
+    'AUDIO_REQ': { label: 'Voice / Audio Req', icon: '🎙️', cls: 'badge-tag-video' },
+    'AUDIO_RECORDING_REQUIRED': { label: 'Voice / Audio Req', icon: '🎙️', cls: 'badge-tag-video' },
     'FILE_UPLOAD': { label: 'File Upload', icon: '📎', cls: 'badge-tag-files' },
     'PAYWALL_BID': { label: 'Connects / Bid', icon: '💳', cls: 'badge-tag-paywall' },
+    'PAYWALL_CREDITS': { label: 'Connects / Bid', icon: '💳', cls: 'badge-tag-paywall' },
     'INELIGIBLE': { label: 'Ineligible', icon: '🚫', cls: 'badge-tag-ineligible' },
+    'OUT_OF_SCOPE': { label: 'Out of Scope', icon: '🚫', cls: 'badge-tag-ineligible' },
+    'OUT_OF_SCOPE_ROLE': { label: 'Out of Scope', icon: '🚫', cls: 'badge-tag-ineligible' },
+    'EXPIRED': { label: 'Expired / Link Broken', icon: '🔗', cls: 'badge-tag-ineligible' },
+    'EXPIRED_OR_REDIRECTED': { label: 'Expired / Link Broken', icon: '🔗', cls: 'badge-tag-ineligible' },
     'ALREADY_APPLIED': { label: 'Already Applied', icon: '✅', cls: 'badge-tag-applied' },
+    'SUBMITTED_RECEIPT': { label: 'Already Applied', icon: '✅', cls: 'badge-tag-applied' },
     'REVIEW_REQUIRED': { label: 'Review Required', icon: '⚠️', cls: 'badge-tag-review' }
   };
-  const item = tagMap[tagKey] || { label: tagKey, icon: '🏷️', cls: 'badge-tag-default' };
+  let item = tagMap[rawKey] || tagMap[tagKey];
+  if (!item) {
+    if (rawKey.includes('CLOUDFLARE') || rawKey.includes('CAPTCHA')) {
+      item = { label: 'Cloudflare / CAPTCHA', icon: '🛡️', cls: 'badge-tag-captcha' };
+    } else if (rawKey.includes('AUDIO') || rawKey.includes('VOICE')) {
+      item = { label: 'Voice / Audio Req', icon: '🎙️', cls: 'badge-tag-video' };
+    } else if (rawKey.includes('VIDEO')) {
+      item = { label: 'Video Req', icon: '🎥', cls: 'badge-tag-video' };
+    } else if (rawKey.includes('EXPIRED') || rawKey.includes('REDIRECT')) {
+      item = { label: 'Expired / Link Broken', icon: '🔗', cls: 'badge-tag-ineligible' };
+    } else if (rawKey.includes('OUT_OF_SCOPE')) {
+      item = { label: 'Out of Scope', icon: '🚫', cls: 'badge-tag-ineligible' };
+    } else if (rawKey.includes('OTP') || rawKey.includes('LOGIN')) {
+      item = { label: 'Login / OTP', icon: '📱', cls: 'badge-tag-otp' };
+    } else {
+      const cleanLabel = rawKey.replace(/_/g, ' ');
+      item = { label: cleanLabel, icon: '🏷️', cls: 'badge-tag-default' };
+    }
+  }
   return `<span class="badge-needs-human-tag ${item.cls}" title="Needs Human: ${item.label}">${item.icon} ${item.label}</span>`;
 }
 

@@ -718,8 +718,8 @@ def get_jobs(
             words = [w.strip() for w in search.strip().split() if w.strip()]
             for word in words:
                 query_param = f"%{word}%"
-                clauses.append("(title LIKE ? OR company LIKE ? OR location LIKE ? OR role_category LIKE ? OR experience_level LIKE ?)")
-                params.extend([query_param, query_param, query_param, query_param, query_param])
+                clauses.append("(title LIKE ? OR company LIKE ? OR location LIKE ? OR role_category LIKE ? OR experience_level LIKE ? OR notes LIKE ?)")
+                params.extend([query_param, query_param, query_param, query_param, query_param, query_param])
 
         if date_filter and date_filter != "all":
             # If querying applied jobs, filter by when the user actually applied (COALESCE(applied_at, updated_at, date_posted))

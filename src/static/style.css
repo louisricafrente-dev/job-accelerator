@@ -5540,6 +5540,7 @@ a {
   letter-spacing: 0.04em;
   margin-left: 6px;
   vertical-align: middle;
+  white-space: nowrap;
 }
 .badge-tag-captcha {
   background-color: rgba(245, 158, 11, 0.15);
