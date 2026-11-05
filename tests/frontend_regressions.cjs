@@ -122,6 +122,31 @@ async function main() {
   await oldRequest;
   assert.equal(context.jobsList[0].id, 999, 'an old response must not overwrite newer filters');
 
+  const persistSetting = context.persistSetting;
+  context.persistSetting = () => {};
+  context.syncFilterControlsUI = () => {};
+  context.showToast = () => {};
+  context.currentStatus = 'new';
+  context.currentRole = 'Web/Software Dev';
+  context.currentLevel = 'Junior / Entry';
+  context.currentDateFilter = '7days';
+  context.currentPlatform = 'All';
+  const requestedDates = [];
+  vm.runInContext('jobsQueryCache.clear()', context);
+  context.resilientFetchWithRetry = async url => {
+    const date = new URL(url, 'http://localhost').searchParams.get('date_filter');
+    requestedDates.push(date);
+    return { ok: true, json: async () => ({
+      jobs: date === '15days' ? [{ id: 2000, status: 'new', title: 'Junior Developer' }] : [],
+      has_more: false
+    }) };
+  };
+  await context.loadJobs();
+  assert.deepEqual(requestedDates, ['7days', '15days'], 'empty recent junior feed should expand once');
+  assert.equal(context.currentDateFilter, '15days');
+  assert.equal(context.jobsList[0].id, 2000, 'expanded feed should display available jobs');
+  context.persistSetting = persistSetting;
+
   context.currentStatus = 'saved';
   context.currentRole = 'Mobile';
   context.currentDateFilter = 'all';

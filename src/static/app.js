@@ -1409,6 +1409,17 @@ async function loadJobs() {
       jobs = filterByApplicationHandling(jobs, applicationFilter);
     }
     if (isSavedView) jobs = filterByTag(jobs, document.getElementById('tag-filter')?.value || 'all');
+    if (!jobs.length && currentStatus === 'new' && activeView === 'tech' &&
+        currentRole === 'Web/Software Dev' && currentLevel === 'Junior / Entry' &&
+        currentDateFilter === '7days' && currentPlatform === 'All' && !searchQuery &&
+        !remoteOnly && !hasSalaryOnly && !hideSenior && !filterBySkillsOnly &&
+        applicationFilter === 'all') {
+      currentDateFilter = '15days';
+      persistSetting('date_filter', currentDateFilter);
+      syncFilterControlsUI();
+      showToast('No junior software jobs in the past 7 days. Showing the past 15 days.');
+      return loadJobs();
+    }
     jobsList = jobs;
     selectedIndex = 0;
     hasLoadedJobsOnce = true;
