@@ -101,8 +101,14 @@ async function main() {
   };
   await context.loadJobs();
   assert.equal(context.jobsList.length, 207, 'feed must load every page');
+  const loadedFeed = elements.get('job-feed').innerHTML;
+  context.resilientFetchWithRetry = () => { throw new Error('cached filters must not refetch'); };
+  await context.loadJobs();
+  assert.equal(context.jobsList.length, 207, 'repeated filters should use cached results');
+  assert.equal(elements.get('job-feed').innerHTML, loadedFeed, 'cached filters must not show the loading spinner');
 
   let release;
+  vm.runInContext('jobsQueryCache.clear()', context);
   context.resilientFetchWithRetry = () => new Promise(resolve => { release = resolve; });
   const oldRequest = context.loadJobs();
   context.resilientFetchWithRetry = async () => ({ ok: true, json: async () => ({ jobs: [{ id: 999, status: 'new' }], has_more: false }) });
@@ -124,6 +130,7 @@ async function main() {
   assert.equal(context.jobsList[0].id, 555, 'unfiltered Saved must retain pending local jobs');
   context.removeLocalStatusOverride(555);
   elements.get('tag-filter').value = 'CAPTCHA';
+  vm.runInContext('jobsQueryCache.clear()', context);
   context.resilientFetchWithRetry = async () => ({ ok: true, json: async () => ({ jobs: [
     { id: 1, status: context.currentStatus, notes: '[TAG: CLOUDFLARE_CHALLENGE]' },
     { id: 2, status: context.currentStatus, notes: '[TAG: SCREENING_QUESTION]' }
@@ -131,7 +138,16 @@ async function main() {
   await context.loadJobs();
   assert.equal(elements.get('tag-filter-row').style.display, '');
   assert.deepEqual(Array.from(context.jobsList, job => job.id), [1]);
+  elements.get('tag-filter').value = 'all';
+  context.resilientFetchWithRetry = () => { throw new Error('Saved tag changes must use cached results'); };
+  await context.loadJobs();
+  assert.deepEqual(Array.from(context.jobsList, job => job.id), [1, 2]);
   context.currentStatus = 'new';
+  vm.runInContext('jobsQueryCache.clear()', context);
+  context.resilientFetchWithRetry = async () => ({ ok: true, json: async () => ({ jobs: [
+    { id: 1, status: 'new', notes: '[TAG: CLOUDFLARE_CHALLENGE]' },
+    { id: 2, status: 'new', notes: '[TAG: SCREENING_QUESTION]' }
+  ], has_more: false }) });
   await context.loadJobs();
   assert.equal(elements.get('tag-filter-row').style.display, 'none');
   assert.equal(context.jobsList.length, 2, 'Saved tags must not filter Inbox');

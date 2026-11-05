@@ -1223,11 +1223,14 @@ function updateActiveSkillsBadge() {
 
 // Load jobs with current filters
 let loadJobsSequence = 0;
+const jobsQueryCache = new Map();
+const JOBS_CACHE_MS = 30000;
+let hasLoadedJobsOnce = false;
 async function loadJobs() {
   const sequence = ++loadJobsSequence;
   const token = currentSessionToken;
   const feed = document.getElementById('job-feed');
-  feed.innerHTML = `
+  if (!hasLoadedJobsOnce) feed.innerHTML = `
     <div class="state-loading">
       <div class="loading-spinner"></div>
       <p>Scanning job opportunities across platforms...</p>
@@ -1239,7 +1242,7 @@ async function loadJobs() {
   const pipelineHeader = document.getElementById('pipeline-hub-header');
   const stageFilterRow = document.getElementById('pipeline-stage-filter-row');
   const feedSummary = document.querySelector('.feed-summary-bar');
-  if (feedSummary) feedSummary.style.display = status === 'gmail' ? 'none' : '';
+  if (feedSummary) feedSummary.style.display = currentStatus === 'gmail' ? 'none' : '';
   const activeView = typeof currentViewMode !== 'undefined' ? currentViewMode : 'tech';
   const isSavedView = activeView === 'tech' && currentStatus === 'saved';
   const tagFilterRow = document.getElementById('tag-filter-row');
@@ -1275,19 +1278,30 @@ async function loadJobs() {
     }
 
     params.set('limit', '500');
-    let jobs = [];
-    let hasMore = true;
-    while (hasMore) {
+    const cacheKey = `${token || ''}:${params.toString()}`;
+    const cached = jobsQueryCache.get(cacheKey);
+    let rawJobs;
+    if (cached && Date.now() - cached.savedAt < JOBS_CACHE_MS) {
+      rawJobs = cached.jobs;
+    } else {
+      rawJobs = [];
+      let hasMore = true;
+      while (hasMore) {
+        if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
+        params.set('offset', String(rawJobs.length));
+        const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, {}, 3);
+        if (!res.ok) throw new Error(`Unable to load jobs (${res.status})`);
+        const data = await res.json();
+        const page = data.jobs || [];
+        rawJobs.push(...page);
+        hasMore = Boolean(data.has_more) && page.length > 0;
+      }
       if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
-      params.set('offset', String(jobs.length));
-      const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, {}, 3);
-      if (!res.ok) throw new Error(`Unable to load jobs (${res.status})`);
-      const data = await res.json();
-      const page = data.jobs || [];
-      jobs.push(...page);
-      hasMore = Boolean(data.has_more) && page.length > 0;
+      jobsQueryCache.set(cacheKey, { jobs: rawJobs, savedAt: Date.now() });
+      if (jobsQueryCache.size > 12) jobsQueryCache.delete(jobsQueryCache.keys().next().value);
     }
     if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
+    let jobs = rawJobs.map(job => ({ ...job }));
 
     // Local-First Overrides Overlay
     const overrides = getLocalStatusOverrides();
@@ -1384,6 +1398,7 @@ async function loadJobs() {
     if (isSavedView) jobs = filterByTag(jobs, document.getElementById('tag-filter')?.value || 'all');
     jobsList = jobs;
     selectedIndex = 0;
+    hasLoadedJobsOnce = true;
     renderJobs();
     updateSummaryText(jobs.length);
   } catch (err) {
@@ -2458,6 +2473,7 @@ async function changeApplicationHandling(jobId, value) {
 
 // Update status via API (Optimistic in-place update with Local-First persistence & auto-retry)
 async function updateJobStatus(jobId, status = null, notes = null, stage = null, followUp = null, handling = null) {
+  jobsQueryCache.clear();
   const token = currentSessionToken;
   const storageKey = overrideStorageKey(token);
   const jobIdx = jobsList.findIndex(j => j.id === jobId);
