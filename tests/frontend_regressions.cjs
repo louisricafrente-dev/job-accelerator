@@ -108,11 +108,16 @@ async function main() {
   assert.equal(elements.get('job-feed').innerHTML, loadedFeed, 'cached filters must not show the loading spinner');
 
   let release;
+  let staleSignal;
   vm.runInContext('jobsQueryCache.clear()', context);
-  context.resilientFetchWithRetry = () => new Promise(resolve => { release = resolve; });
+  context.resilientFetchWithRetry = (_, options) => {
+    staleSignal = options.signal;
+    return new Promise(resolve => { release = resolve; });
+  };
   const oldRequest = context.loadJobs();
   context.resilientFetchWithRetry = async () => ({ ok: true, json: async () => ({ jobs: [{ id: 999, status: 'new' }], has_more: false }) });
   await context.loadJobs();
+  assert.equal(staleSignal.aborted, true, 'a newer filter must cancel the old jobs request');
   release({ ok: true, json: async () => ({ jobs: [{ id: 1, status: 'new' }], has_more: false }) });
   await oldRequest;
   assert.equal(context.jobsList[0].id, 999, 'an old response must not overwrite newer filters');
