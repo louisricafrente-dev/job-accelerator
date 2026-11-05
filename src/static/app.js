@@ -328,20 +328,12 @@ window.fetch = function(url, options = {}) {
 async function resilientFetchWithRetry(url, options = {}, retries = 3, backoff = 500) {
   let attempt = 0;
   while (attempt < retries) {
-    if (options.signal?.aborted) throw new Error('Request cancelled');
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
-      const cancel = () => controller.abort();
-      options.signal?.addEventListener('abort', cancel, { once: true });
       const fetchOpts = { ...options, signal: controller.signal };
-      let res;
-      try {
-        res = await window.fetch(url, fetchOpts);
-      } finally {
-        clearTimeout(timeoutId);
-        options.signal?.removeEventListener('abort', cancel);
-      }
+      const res = await window.fetch(url, fetchOpts);
+      clearTimeout(timeoutId);
       if (res.ok || res.status === 401 || res.status === 404) {
         return res;
       }
@@ -350,7 +342,6 @@ async function resilientFetchWithRetry(url, options = {}, retries = 3, backoff =
         await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt - 1)));
       }
     } catch (err) {
-      if (options.signal?.aborted) throw err;
       attempt++;
       if (attempt >= retries) {
         console.warn(`Resilient fetch warning for ${url}:`, err);
@@ -1232,15 +1223,11 @@ function updateActiveSkillsBadge() {
 
 // Load jobs with current filters
 let loadJobsSequence = 0;
-let activeJobsRequest = null;
 const jobsQueryCache = new Map();
 const JOBS_CACHE_MS = 30000;
 let hasLoadedJobsOnce = false;
 async function loadJobs() {
   const sequence = ++loadJobsSequence;
-  if (activeJobsRequest) activeJobsRequest.abort();
-  const requestController = new AbortController();
-  activeJobsRequest = requestController;
   const token = currentSessionToken;
   const feed = document.getElementById('job-feed');
   if (!hasLoadedJobsOnce) feed.innerHTML = `
@@ -1302,7 +1289,7 @@ async function loadJobs() {
       while (hasMore) {
         if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
         params.set('offset', String(rawJobs.length));
-        const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, { signal: requestController.signal }, 3);
+        const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, {}, 3);
         if (!res.ok) throw new Error(`Unable to load jobs (${res.status})`);
         const data = await res.json();
         const page = data.jobs || [];
@@ -1409,17 +1396,6 @@ async function loadJobs() {
       jobs = filterByApplicationHandling(jobs, applicationFilter);
     }
     if (isSavedView) jobs = filterByTag(jobs, document.getElementById('tag-filter')?.value || 'all');
-    if (!jobs.length && currentStatus === 'new' && activeView === 'tech' &&
-        currentRole === 'Web/Software Dev' && currentLevel === 'Junior / Entry' &&
-        currentDateFilter === '7days' && currentPlatform === 'All' && !searchQuery &&
-        !remoteOnly && !hasSalaryOnly && !hideSenior && !filterBySkillsOnly &&
-        applicationFilter === 'all') {
-      currentDateFilter = '15days';
-      persistSetting('date_filter', currentDateFilter);
-      syncFilterControlsUI();
-      showToast('No junior software jobs in the past 7 days. Showing the past 15 days.');
-      return loadJobs();
-    }
     jobsList = jobs;
     selectedIndex = 0;
     hasLoadedJobsOnce = true;
