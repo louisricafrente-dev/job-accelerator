@@ -292,8 +292,13 @@ const ICONS = {
 // SECURITY GATEWAY & MULTI-TENANT ACCESS CONTROL (ADMIN / GUEST SANDBOX)
 // --------------------------------------------------------------------------
 let currentUserRole = null; // 'admin' | 'guest'
-let currentSessionToken = localStorage.getItem('job_accel_session_token') || '';
+let currentSessionToken = '';
 let isDashboardBootstrapped = false;
+localStorage.removeItem('job_accel_session_token');
+
+function clientSessionKey(role, id) {
+  return btoa(JSON.stringify({ role, id })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') + '.client';
+}
 
 // Retire proxy credentials left by earlier builds in browser storage.
 localStorage.removeItem('job_accel_proxy_list');
@@ -308,24 +313,9 @@ for (const key of Object.keys(localStorage)) {
   } catch (_) {}
 }
 
-// Universal fetch interceptor to attach bearer token and intercept 401s
+// Browser authentication uses the HttpOnly session cookie.
 const originalFetch = window.fetch;
 window.fetch = function(url, options = {}) {
-  options = options || {};
-  options.headers = options.headers || {};
-  if (currentSessionToken) {
-    if (options.headers instanceof Headers) {
-      if (!options.headers.has('Authorization')) {
-        options.headers.set('Authorization', `Bearer ${currentSessionToken}`);
-      }
-    } else if (Array.isArray(options.headers)) {
-      options.headers.push(['Authorization', `Bearer ${currentSessionToken}`]);
-    } else {
-      if (!options.headers['Authorization']) {
-        options.headers['Authorization'] = `Bearer ${currentSessionToken}`;
-      }
-    }
-  }
   return originalFetch(url, options).then(response => {
     const urlStr = typeof url === 'string' ? url : (url.url || '');
     if (response.status === 401 && !urlStr.includes('/api/auth/')) {
@@ -447,7 +437,7 @@ function flushJobOverride(jobId, token = currentSessionToken) {
       }
       try {
         const res = await window.fetch(`/api/jobs/${jobId}/status`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
         if (!res.ok || !(await res.json()).success) throw new Error('Save failed');
@@ -498,9 +488,7 @@ window.addEventListener('online', () => {
 
 async function checkAuthStatus() {
   try {
-    const res = await originalFetch('/api/auth/status', {
-      headers: currentSessionToken ? { 'Authorization': `Bearer ${currentSessionToken}` } : {}
-    });
+    const res = await originalFetch('/api/auth/status');
     if (!res.ok) {
       currentUserRole = null;
       updateAuthUI();
@@ -509,9 +497,10 @@ async function checkAuthStatus() {
     const data = await res.json();
     if (data.authenticated) {
       currentUserRole = data.role;
+      currentSessionToken = clientSessionKey(data.role, data.guest_id || 'louis_admin');
       if (currentUserRole === 'guest') {
         for (const key of Object.keys(localStorage)) {
-          if (key.startsWith('job_accel_') && key !== 'job_accel_session_token') localStorage.removeItem(key);
+          if (key.startsWith('job_accel_') && !key.includes(':guest:')) localStorage.removeItem(key);
         }
       }
       updateAuthUI();
@@ -706,9 +695,7 @@ async function submitAdminLogin() {
     if (res.ok && data.success) {
       if (passwordInput) passwordInput.value = '';
       currentUserRole = 'admin';
-      currentSessionToken = data.token;
-      // Persistent login session: stored in localStorage and cookie
-      localStorage.setItem('job_accel_session_token', data.token);
+      currentSessionToken = clientSessionKey('admin', 'louis_admin');
       hideAuthGate();
       updateAuthUI();
       showToast('👑 Welcome back! Master database unlocked.');
@@ -757,8 +744,7 @@ async function submitGuestAccess() {
     if (res.ok && data.success) {
       clearLocalWorkspaceData();
       currentUserRole = 'guest';
-      currentSessionToken = data.token;
-      localStorage.setItem('job_accel_session_token', data.token);
+      currentSessionToken = clientSessionKey('guest', data.guest_id);
       hideAuthGate();
       updateAuthUI();
       showToast('Guest demo ready. These are sample opportunities only.');
@@ -926,7 +912,7 @@ async function sendSettings(body, token) {
   try {
     return await Promise.race([
       fetch('/api/settings', { method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body), signal: controller.signal }),
       new Promise((_, reject) => {
         timeout = setTimeout(() => { controller.abort(); reject(new Error('Settings save timed out')); }, SETTINGS_TIMEOUT_MS);
@@ -3072,7 +3058,7 @@ function updateBackToTop() {
 function scrollBackToTop() {
   window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
 }
-window.addEventListener('scroll', updateBackToTop, { passive: true });
+if (typeof window.addEventListener === 'function') window.addEventListener('scroll', updateBackToTop, { passive: true });
 
 function setLevel(level, elem) {
   const target = level || 'All';
