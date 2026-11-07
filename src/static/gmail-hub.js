@@ -29,13 +29,17 @@ function getActionLinkConfig(url) {
 }
 
 async function gmailRequest(url, options) {
+  if (currentUserRole !== 'admin') throw new Error('Gmail Hub requires admin access.');
+  const token = currentSessionToken;
   const response = await fetch(url, options);
   const data = await response.json();
+  if (currentUserRole !== 'admin' || token !== currentSessionToken) throw new DOMException('Session changed', 'AbortError');
   if (!response.ok) throw new Error(data.error || 'Gmail Hub request failed.');
   return data;
 }
 
 async function loadGmailHub(append = false) {
+  if (currentUserRole !== 'admin') return;
   const feed = document.getElementById('gmail-messages-feed');
   if (!feed) return;
   if (gmailListController) gmailListController.abort();
@@ -50,6 +54,7 @@ async function loadGmailHub(append = false) {
   more.disabled = true;
   try {
     const data = await gmailRequest('/api/gmail/messages?' + params, {signal: controller.signal});
+    if (controller.signal.aborted || currentUserRole !== 'admin') return;
     gmailMessages = append ? [...gmailMessages, ...data.messages] : data.messages;
     const stats = data.stats || {};
     document.getElementById('gmail-stats-strip').innerHTML = [
@@ -77,7 +82,7 @@ async function loadGmailHub(append = false) {
     more.hidden = !data.has_more;
     renderGmailMessages();
   } catch (error) {
-    if (error.name !== 'AbortError') {
+    if (currentUserRole === 'admin' && error.name !== 'AbortError') {
       document.getElementById('gmail-scan-status').textContent = error.message;
       if (!gmailMessages.length) feed.innerHTML = '<p class="gh-empty">Action inbox unavailable. Use Reload saved inbox to try again.</p>';
     }
@@ -191,6 +196,7 @@ function renderGmailViewerContent(message) {
 }
 
 async function openGmailMessageViewer(id) {
+  if (currentUserRole !== 'admin') return;
   if (!currentViewerMessageId) gmailReturnFocus = document.activeElement;
   currentViewerMessageId = id;
   const modal = document.getElementById('gmail-message-modal');

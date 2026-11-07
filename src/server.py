@@ -2,7 +2,6 @@ import time
 import os
 import json
 import uuid
-import hashlib
 import hmac
 import urllib.request
 import bottle
@@ -18,11 +17,11 @@ from src.models import Job
 from src.auth import (
     get_or_create_admin_totp_secret, verify_totp, get_otpauth_uri,
     create_session_token, verify_session_token,
-    resolve_guest_db_path, reset_guest_db, save_guest_changes,
     admin_login_retry_after, record_admin_login_failure, clear_admin_login_failures
 )
+from src.guest_demo import ensure_guest_db, reset_guest_db
 
-def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False) -> bottle.Bottle:
+def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = True) -> bottle.Bottle:
     app = bottle.Bottle()
     from src.gmail_hub import init_hub
     init_hub(db_path)
@@ -33,6 +32,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
     get_or_create_admin_totp_secret(db_path)
 
     public_settings = {"view_filters", "target_stack", "filter_skills_only", "has_salary_only", "remote_only", "hide_senior", "date_filter", "role", "experience_levels", "status", "platform", "va_training_enabled", "auto_sync_enabled", "proxy_list", "proxy_mode"}
+    guest_settings = public_settings - {"auto_sync_enabled", "proxy_list", "proxy_mode"}
 
     @app.error(400)
     def bad_request(error):
@@ -68,8 +68,6 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         if not token:
             token = bottle.request.headers.get("X-Session-Token")
         if not token:
-            token = bottle.request.query.get("session_token")
-        if not token:
             token = bottle.request.get_cookie("job_accel_session")
         if not token:
             return None
@@ -82,7 +80,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         session = get_current_session()
         if session and session.get("role") == "guest":
             guest_id = session.get("id") or "guest_sandbox"
-            return resolve_guest_db_path(guest_id, db_path)
+            return ensure_guest_db(guest_id, db_path)
         # Default / Admin points strictly to master db_path
         return db_path
 
@@ -96,6 +94,14 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                 "auth_required": True,
                 "message": "Authentication required. Log in with your admin credentials."
             })
+        return None
+
+    def require_admin():
+        session = get_current_session()
+        if not session or session.get("role") != "admin":
+            bottle.response.status = 403
+            bottle.response.content_type = "application/json"
+            return json.dumps({"error": "Admin access required"})
         return None
 
     # -------------------------------------------------------------------------
@@ -147,13 +153,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
         if user_val.strip().lower() != env_user:
             return False
         env_pwd = os.environ.get("ADMIN_PASSWORD")
-        if env_pwd:
-            return hmac.compare_digest(pass_val.strip(), env_pwd.strip())
-        # Cryptographic salted PBKDF2 hash (source code safe: zero plain text password)
-        salt = b"job_accelerator_auth_salt_2026"
-        calc = hashlib.pbkdf2_hmac("sha256", pass_val.strip().encode("utf-8"), salt, 100000).hex()
-        EXPECTED_HASH = "REDACTED"
-        return hmac.compare_digest(calc, EXPECTED_HASH)
+        return bool(env_pwd) and hmac.compare_digest(pass_val, env_pwd)
 
     @app.route("/api/auth/login-admin", method=["POST", "OPTIONS"])
     def api_login_admin():
@@ -216,8 +216,8 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             bottle.response.status = 403
             return {"success": False, "error": "Guest access is temporarily unavailable."}
         guest_id = f"guest_{uuid.uuid4().hex[:10]}"
-        # Ensure fresh isolated guest database clone is created
-        resolve_guest_db_path(guest_id, db_path)
+        # Create a synthetic workspace without touching master rows.
+        ensure_guest_db(guest_id, db_path)
         token = create_session_token("guest", guest_id)
         bottle.response.set_cookie("job_accel_session", token, path="/", max_age=30*86400, httponly=True, secure=bool(os.environ.get("VERCEL")), samesite="Strict")
         bottle.response.content_type = "application/json"
@@ -226,7 +226,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             "role": "guest",
             "guest_id": guest_id,
             "token": token,
-            "message": "Guest sandbox database initialized. Your changes are private and will not affect the Admin database."
+            "message": "Guest demo ready. Changes stay in your temporary sample workspace."
         })
 
     @app.route("/api/auth/reset-sandbox", method=["POST", "OPTIONS"])
@@ -339,9 +339,6 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             return {"success": False, "error": str(exc)}
         if not success:
             bottle.response.status = 404
-        session = get_current_session()
-        if success and session["role"] == "guest":
-            save_guest_changes(session["id"], db_path, job_id, changes)
         bottle.response.content_type = "application/json"
         return json.dumps({"success": success})
 
@@ -436,7 +433,8 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             return auth_err
         target_db = resolve_target_db()
 
-        settings = {k: v for k, v in get_all_user_settings(target_db).items() if k in public_settings}
+        allowed = guest_settings if get_current_session()["role"] == "guest" else public_settings
+        settings = {k: v for k, v in get_all_user_settings(target_db).items() if k in allowed}
         if "target_stack" not in settings:
             settings["target_stack"] = DEFAULT_TARGET_STACK
         bottle.response.content_type = "application/json"
@@ -455,22 +453,18 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             data = {}
         session = get_current_session()
         is_admin = session and session.get("role") == "admin"
+        allowed = public_settings if is_admin else guest_settings
         revisions = data.get("__revisions", {})
         if not isinstance(revisions, dict) or any(type(v) is not int or not 0 <= v <= 9007199254740991 for v in revisions.values()):
             bottle.abort(400, "Invalid setting revisions")
         for k, v in data.items():
-            if k not in public_settings:
+            if k not in allowed:
                 continue
             if not isinstance(v, (str, bool, int, float, list)) or len(str(v)) > 10000:
                 bottle.abort(400, "Setting value is invalid or too long")
-            # Don't allow guest to overwrite master admin_totp_secret or credentials
-            if str(k) in ("admin_totp_secret", "admin_password", "smtp_password", "ADMIN_TOTP_SECRET") and not is_admin:
-                continue
             val_str = json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v)
             set_user_setting(target_db, str(k), val_str, revision=revisions.get(k))
-            if not is_admin:
-                set_user_setting(db_path, f"guest:{session['id']}:setting:{k}", val_str)
-        if "proxy_list" in data or "proxy_mode" in data:
+        if is_admin and ("proxy_list" in data or "proxy_mode" in data):
             try:
                 raw_cp = get_user_setting(target_db, "sync_batch_progress", "")
                 if raw_cp:
@@ -483,7 +477,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
                     set_user_setting(target_db, "sync_batch_progress", json.dumps(cp))
             except Exception:
                 pass
-        settings = {k: v for k, v in get_all_user_settings(target_db).items() if k in public_settings}
+        settings = {k: v for k, v in get_all_user_settings(target_db).items() if k in allowed}
         if "target_stack" not in settings:
             settings["target_stack"] = DEFAULT_TARGET_STACK
         bottle.response.content_type = "application/json"
@@ -519,9 +513,6 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
             bottle.abort(400, "Stack must be text of at most 10000 characters")
 
         set_user_setting(target_db, "target_stack", stack)
-        session = get_current_session()
-        if session["role"] == "guest":
-            set_user_setting(db_path, f"guest:{session['id']}:setting:target_stack", stack)
         bottle.response.content_type = "application/json"
         return json.dumps({"success": True, "stack": stack})
 
@@ -603,7 +594,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
 
     @app.route("/api/sync/status", method="GET")
     def api_sync_status():
-        auth_err = require_auth()
+        auth_err = require_admin()
         if auth_err:
             return auth_err
         bottle.response.content_type = "application/json"
@@ -998,7 +989,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
     def api_proxy_status():
         if bottle.request.method == "OPTIONS":
             return ""
-        auth_err = require_auth()
+        auth_err = require_admin()
         if auth_err:
             return auth_err
         target_db = resolve_target_db()
@@ -1017,7 +1008,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
     def api_proxy_test():
         if bottle.request.method == "OPTIONS":
             return ""
-        auth_err = require_auth()
+        auth_err = require_admin()
         if auth_err:
             return auth_err
         target_db = resolve_target_db()
@@ -1042,6 +1033,9 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = False
 
     @app.route("/api/portfolio/views", method="GET")
     def api_portfolio_views():
+        denied = require_admin()
+        if denied:
+            return denied
         bottle.response.content_type = "application/json"
         force_refresh = str(bottle.request.query.get("refresh", "")).strip() in ("1", "true")
         now = time.time()

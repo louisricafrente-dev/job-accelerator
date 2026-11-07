@@ -11,7 +11,8 @@ from pathlib import Path
 import re
 from unittest.mock import patch
 
-from src.auth import resolve_guest_db_path, save_guest_changes, create_session_token, verify_session_token, _guest_sync_cache
+from src.auth import create_session_token, verify_session_token
+from src.guest_demo import ensure_guest_db
 from src.database import init_db, insert_jobs, get_jobs, get_stats, get_user_setting, set_user_setting, acquire_sync_lease, release_sync_lease, TursoConnection
 from src.models import Job
 from src.aggregator import Aggregator
@@ -41,7 +42,6 @@ class TestRegressions(unittest.TestCase):
         self.cookie = "job_accel_session=" + create_session_token("admin", "review")
 
     def tearDown(self):
-        _guest_sync_cache.clear()
         self.temp.cleanup()
 
     def job(self, url="https://example.com/1", location="Manila", **kwargs):
@@ -77,33 +77,31 @@ class TestRegressions(unittest.TestCase):
         self.assertFalse(second["has_more"])
         self.assertEqual(len({j["id"] for j in first["jobs"] + second["jobs"]}), 205)
 
-    def test_wal_jobs_and_stable_ids_reach_guest(self):
+    def test_master_wal_jobs_never_reach_guest(self):
         conn = sqlite3.connect(self.db)
         try:
             conn.execute("PRAGMA wal_autocheckpoint=0")
             insert_jobs(self.db, [self.job(date_posted="2026-10-10")])
             conn.execute("UPDATE jobs SET id=42")
             conn.commit()
-            guest = resolve_guest_db_path("guest_wal", self.db)
-            self.assertEqual(get_jobs(guest)[0]["id"], 42)
+            guest = ensure_guest_db("guest_wal", self.db)
+            self.assertEqual(get_stats(guest)["total"], 5)
+            self.assertTrue(all(j["company"] != "Example" for j in get_jobs(guest)))
             insert_jobs(self.db, [self.job("https://example.com/2", date_posted="2026-10-16")])
-            _guest_sync_cache.clear()
-            resolve_guest_db_path("guest_wal", self.db)
-            self.assertEqual(get_stats(guest)["total"], 2)
+            ensure_guest_db("guest_wal", self.db)
+            self.assertEqual(get_stats(guest)["total"], 5)
         finally:
             conn.close()
 
-    def test_guest_state_survives_instance_recreation_without_master_edits(self):
+    def test_guest_recreation_starts_clean_without_master_edits(self):
         insert_jobs(self.db, [self.job()])
-        guest = resolve_guest_db_path("guest_cold", self.db)
-        save_guest_changes("guest_cold", self.db, 1, {"status": "applied", "notes": "private guest note"})
-        set_user_setting(self.db, "guest:guest_cold:setting:target_stack", "Kotlin")
+        guest = ensure_guest_db("guest_cold", self.db)
+        from src.database import update_job_status
+        update_job_status(guest, 1, status="applied", notes="private guest note")
         os.remove(guest)
-        _guest_sync_cache.clear()
-        recreated = resolve_guest_db_path("guest_cold", self.db)
-        self.assertEqual(get_jobs(recreated)[0]["notes"], "private guest note")
-        self.assertEqual(get_jobs(recreated)[0]["status"], "applied")
-        self.assertEqual(get_user_setting(recreated, "target_stack"), "Kotlin")
+        recreated = ensure_guest_db("guest_cold", self.db)
+        self.assertEqual(get_jobs(recreated)[0]["status"], "new")
+        self.assertEqual(get_user_setting(recreated, "target_stack"), "Kotlin, React, JavaScript")
         self.assertEqual(get_jobs(self.db)[0]["status"], "new")
         self.assertIsNone(get_jobs(self.db)[0]["notes"])
 

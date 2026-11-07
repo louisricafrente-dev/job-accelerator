@@ -127,9 +127,14 @@ def test_full_auth_and_guest_isolation():
         assert res_guest["json"]["role"] == "guest"
         guest_token = res_guest["json"]["token"]
         
-        # 6. Guest modifies job status to 'applied' with custom note
+        # 6. Guest receives synthetic jobs, never master jobs or settings.
         cookie_guest = f"job_accel_session={guest_token}"
-        res_mod = wsgi_request(app, "POST", f"/api/jobs/{job_id}/status", body={
+        initial = wsgi_request(app, "GET", "/api/jobs?status=new", cookie=cookie_guest)
+        assert initial["status"] == 200
+        assert len(initial["json"]["jobs"]) == 5
+        assert all(job["company"] != "HeroApps" for job in initial["json"]["jobs"])
+        demo_id = initial["json"]["jobs"][0]["id"]
+        res_mod = wsgi_request(app, "POST", f"/api/jobs/{demo_id}/status", body={
             "status": "applied",
             "notes": "GUEST TEST NOTE - MUST NOT BE IN MASTER DB"
         }, cookie=cookie_guest)
@@ -140,6 +145,15 @@ def test_full_auth_and_guest_isolation():
         assert res_guest_jobs["status"] == 200
         assert len(res_guest_jobs["json"]["jobs"]) == 1
         assert res_guest_jobs["json"]["jobs"][0]["notes"] == "GUEST TEST NOTE - MUST NOT BE IN MASTER DB"
+
+        # Direct API calls cannot expose personal panels or credentials.
+        for path in ("/api/gmail/messages", "/api/auth/setup", "/api/sync/status",
+                     "/api/proxy/status", "/api/portfolio/views"):
+            denied = wsgi_request(app, "GET", path, cookie=cookie_guest)
+            assert denied["status"] == 403, (path, denied)
+        guest_settings = wsgi_request(app, "GET", "/api/settings", cookie=cookie_guest)
+        assert "admin_totp_secret" not in guest_settings["json"]
+        assert "proxy_list" not in guest_settings["json"]
         
         # 8. CRUCIAL CHECK: Verify MASTER DB is STILL in 'new' status and has NO guest note!
         master_jobs = get_jobs(master_db, status="new")

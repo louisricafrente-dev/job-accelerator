@@ -5595,3 +5595,29 @@ a {
   color: #94a3b8;
   border: 1px solid rgba(148, 163, 184, 0.35);
 }
+.guest-entry { padding: 18px 24px 24px; border-top: 1px solid var(--border-color, #303846); text-align: center; }
+.guest-entry p { margin: 0 0 12px; line-height: 1.5; color: var(--text-muted, #aab4c4); }
+.guest-entry .auth-submit-btn { width: 100%; min-height: 44px; justify-content: center; }
+body.guest-mode .status-tab[data-val="gmail"],
+body.guest-mode #btn-settings-hub,
+body.guest-mode #btn-sync-telemetry,
+body.guest-mode #btn-proxy-settings,
+body.guest-mode #btn-daily-digest,
+body.guest-mode #btn-portfolio-views,
+body.guest-mode .auto-sync-control,
+body.guest-mode #sync-media-unit,
+body.guest-mode #settings-modal,
+body.guest-mode #gmail-hub-container,
+body.guest-mode #gmail-message-modal,
+body.guest-mode #proxy-modal,
+body.guest-mode #portfolio-views-modal,
+body.guest-mode #sync-activity { display: none !important; }
+.feed-loading-indicator[hidden], .back-to-top[hidden] { display: none !important; }
+.feed-loading-indicator { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 10px; padding: 9px 16px; border: 1px solid #4a7288; border-radius: 999px; background: #10232f; color: #f2f7fa; box-shadow: 0 8px 24px #0008; font-size: 14px; font-weight: 600; }
+.feed-loading-indicator .loading-spinner { width: 17px; height: 17px; border-width: 2px; }
+.back-to-top { position: fixed; right: max(20px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); z-index: 900; width: 48px; height: 48px; border: 1px solid #517d94; border-radius: 50%; background: #143448; color: #fff; font-size: 25px; line-height: 1; cursor: pointer; box-shadow: 0 8px 24px #0008; }
+.back-to-top:hover { background: #20516a; }
+.back-to-top:focus-visible { outline: 3px solid #80d7ff; outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .back-to-top { scroll-behavior: auto; } }
+.guest-demo-banner { display: none; margin: 12px 20px; padding: 11px 14px; border: 1px solid #527b91; border-radius: 10px; background: #102a38; color: #e6f6ff; line-height: 1.45; }
+body.guest-mode .guest-demo-banner { display: block; }

@@ -9,3 +9,5 @@ data/*.log
 data/*.html
 data/guests/
 data/guests/*
+data/*.db
+data/*.db-*

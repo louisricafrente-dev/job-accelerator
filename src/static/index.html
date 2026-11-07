@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="shortcut icon" href="/static/favicon.ico">
   <meta name="theme-color" content="#080c14">
-  <link rel="stylesheet" href="/static/style.css?v=20261104-tag-filter-v3">
+  <link rel="stylesheet" href="/static/style.css?v=20261107-guest-demo-v1">
   <link rel="stylesheet" href="/static/gmail-hub.css?v=20261104-tag-filter-v3">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -109,7 +109,7 @@
             <span class="proxy-status-pill" id="proxy-status-pill" title="Proxy status">Hybrid</span>
           </button>
 
-          <button id="btn-daily-digest" class="btn-subtle sr-legacy-tool" onclick="triggerEmailDigest()" title="Send daily scraping summary to michael18ricafrente@gmail.com">
+          <button id="btn-daily-digest" class="btn-subtle sr-legacy-tool" onclick="triggerEmailDigest()" title="Send daily scraping summary">
             <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect width="20" height="16" x="2" y="4" rx="2"/>
               <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
@@ -510,6 +510,7 @@
 
 
     <!-- Context Bar & Feed Statistics -->
+    <div class="guest-demo-banner" role="note">Guest demo: sample jobs only. Changes are temporary; live applications and private Gmail are unavailable.</div>
     <div class="feed-summary-bar">
       <div class="summary-left">
         <span id="search-count" class="summary-count">Loading opportunities...</span>
@@ -746,16 +747,7 @@
             <button type="button" class="btn-text-action" onclick="resetToDefaultProxies()">Clear proxy list</button>
           </div>
           <p class="control-subhint">Enter one proxy per line (format: <code>ip:port:user:pass</code> or <code>http://user:pass@ip:port</code>):</p>
-          <textarea id="proxy-list-input" class="proxy-textarea" rows="8" placeholder="ip:port:user:pass">45.38.107.97:6014:REDACTED:REDACTED
-64.137.96.74:6641:REDACTED:REDACTED
-198.23.243.226:6361:REDACTED:REDACTED
-38.154.185.97:6370:REDACTED:REDACTED
-84.247.60.125:6095:REDACTED:REDACTED
-191.96.254.138:6185:REDACTED:REDACTED
-198.46.161.42:5092:REDACTED:REDACTED
-64.137.10.153:5803:REDACTED:REDACTED
-104.164.49.38:7693:REDACTED:REDACTED
-23.26.71.145:5628:REDACTED:REDACTED</textarea>
+          <textarea id="proxy-list-input" class="proxy-textarea" rows="8" placeholder="ip:port:user:pass"></textarea>
         </div>
 
         <!-- Live Proxy Health & Test Results -->
@@ -999,7 +991,7 @@
             <div>
               <div class="settings-feature-title-row">
                 <h3 class="settings-feature-title">Automation &amp; Email Digest</h3>
-                <span class="settings-pill-stat">michael18ricafrente@gmail.com</span>
+                <span class="settings-pill-stat">Private account</span>
               </div>
               <p class="settings-feature-desc">Automated 6-hour crawler scheduling and instant on-demand scraping reports delivered to your inbox.</p>
             </div>
@@ -1073,7 +1065,7 @@
           <span>Job Application Accelerator</span>
         </div>
         <h2 class="auth-gate-title">Workstation Access</h2>
-        <p class="auth-gate-sub">Sign in with your admin credentials.</p>
+        <p class="auth-gate-sub">Sign in to your private workspace or explore a sample demo.</p>
       </div>
 
       <!-- Tab Content: Admin Mode -->
@@ -1124,12 +1116,21 @@
           <span>Sign In as Admin</span>
         </button>
       </div>
+      <div class="guest-entry">
+        <p>Try filters, saved jobs, and pipeline stages with sample opportunities. No personal jobs or Gmail data appear in this demo.</p>
+        <button type="button" id="btn-enter-guest" class="btn-subtle auth-submit-btn" onclick="submitGuestAccess()">Explore Guest Demo</button>
+      </div>
 
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261105-full-rollback-v1"></script>
-  <script src="/static/gmail-hub.js?v=20261104-tag-filter-v3"></script>
+  <div id="feed-loading-indicator" class="feed-loading-indicator" role="status" aria-live="polite" hidden>
+    <span class="loading-spinner" aria-hidden="true"></span><span>Loading opportunities...</span>
+  </div>
+  <button type="button" id="back-to-top" class="back-to-top" onclick="scrollBackToTop()" aria-label="Back to top" title="Back to top" hidden>↑</button>
+
+  <script src="/static/app.js?v=20261107-guest-demo-v1"></script>
+  <script src="/static/gmail-hub.js?v=20261107-guest-demo-v1"></script>
 </body>
 </html>
 

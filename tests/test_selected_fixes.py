@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from src.auth import create_session_token
 from src.database import init_db, set_user_setting
+from src.guest_demo import ensure_guest_db
 from src.server import create_app
 from tests.test_server_auth import wsgi_request
 
@@ -21,14 +22,14 @@ class TestSelectedFixes(unittest.TestCase):
         self.app = create_app(self.db)
         self.admin = "job_accel_session=" + create_session_token("admin", "review")
 
-    def test_guest_login_and_existing_sessions_are_disabled(self):
-        self.assertEqual(wsgi_request(self.app, "POST", "/api/auth/login-guest", {})["status"], 403)
+    def test_guest_login_and_existing_sessions_use_demo_only(self):
+        self.assertEqual(wsgi_request(self.app, "POST", "/api/auth/login-guest", {})["status"], 200)
         cookie = "job_accel_session=" + create_session_token("guest", "existing")
-        with patch("src.server.resolve_guest_db_path") as resolve:
+        with patch("src.server.ensure_guest_db", wraps=ensure_guest_db) as resolve:
             for path in ("/api/jobs", "/api/stats", "/api/settings", "/api/jobs/export/csv"):
-                self.assertEqual(wsgi_request(self.app, "GET", path, cookie=cookie)["status"], 401)
-            self.assertFalse(wsgi_request(self.app, "GET", "/api/auth/status", cookie=cookie)["json"]["authenticated"])
-            resolve.assert_not_called()
+                self.assertEqual(wsgi_request(self.app, "GET", path, cookie=cookie)["status"], 200)
+            self.assertTrue(wsgi_request(self.app, "GET", "/api/auth/status", cookie=cookie)["json"]["authenticated"])
+            self.assertTrue(resolve.called)
         self.assertEqual(wsgi_request(self.app, "GET", "/api/stats", cookie=self.admin)["status"], 200)
 
     def test_cloud_pause_skips_scrape_but_manual_sync_still_works(self):

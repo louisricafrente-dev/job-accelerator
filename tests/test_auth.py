@@ -4,8 +4,9 @@ import sqlite3
 from src.auth import (
     get_or_create_admin_totp_secret, verify_totp, 
     create_session_token, verify_session_token,
-    resolve_guest_db_path, get_otpauth_uri, reset_guest_db
+    get_otpauth_uri
 )
+from src.guest_demo import ensure_guest_db, reset_guest_db
 from src.database import init_db
 
 def test_auth_and_isolation():
@@ -38,7 +39,7 @@ def test_auth_and_isolation():
         assert payload_g["id"] == "guest_abc123"
         
         # 4. Guest DB isolation
-        guest_db = resolve_guest_db_path("guest_abc123", master_db)
+        guest_db = ensure_guest_db("guest_abc123", master_db)
         assert os.path.exists(guest_db)
         assert os.path.abspath(guest_db) != os.path.abspath(master_db)
         

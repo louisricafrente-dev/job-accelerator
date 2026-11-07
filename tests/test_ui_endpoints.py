@@ -192,10 +192,7 @@ class TestUIEndpoints(unittest.TestCase):
         if hasattr(res_api, "close"):
             res_api.close()
         data = json.loads(body_api)
-        self.assertEqual(data.get("status"), "ok")
-        self.assertEqual(data.get("domain"), "louisricafrente-dev.vercel.app")
-        self.assertGreater(int(data.get("total", 0)), 0)
-        self.assertIsInstance(data.get("days"), list)
+        self.assertEqual(data.get("error"), "Admin access required")
 
 if __name__ == "__main__":
     unittest.main()

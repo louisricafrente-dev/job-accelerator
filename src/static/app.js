@@ -295,6 +295,19 @@ let currentUserRole = null; // 'admin' | 'guest'
 let currentSessionToken = localStorage.getItem('job_accel_session_token') || '';
 let isDashboardBootstrapped = false;
 
+// Retire proxy credentials left by earlier builds in browser storage.
+localStorage.removeItem('job_accel_proxy_list');
+for (const key of Object.keys(localStorage)) {
+  if (!key.endsWith(':settings')) continue;
+  try {
+    const pending = JSON.parse(localStorage.getItem(key) || '{}');
+    if (pending.proxy_list) {
+      delete pending.proxy_list;
+      localStorage.setItem(key, JSON.stringify(pending));
+    }
+  } catch (_) {}
+}
+
 // Universal fetch interceptor to attach bearer token and intercept 401s
 const originalFetch = window.fetch;
 window.fetch = function(url, options = {}) {
@@ -496,6 +509,11 @@ async function checkAuthStatus() {
     const data = await res.json();
     if (data.authenticated) {
       currentUserRole = data.role;
+      if (currentUserRole === 'guest') {
+        for (const key of Object.keys(localStorage)) {
+          if (key.startsWith('job_accel_') && key !== 'job_accel_session_token') localStorage.removeItem(key);
+        }
+      }
       updateAuthUI();
       return true;
     }
@@ -510,6 +528,8 @@ async function checkAuthStatus() {
 }
 
 function updateAuthUI() {
+  document.body.classList.toggle('guest-mode', currentUserRole === 'guest');
+  updateBackToTop();
   const pill = document.getElementById('auth-mode-pill');
   const pillText = document.getElementById('auth-pill-text');
   const btn2fa = document.getElementById('btn-2fa-setup');
@@ -591,7 +611,6 @@ function hideAuthGate() {
 }
 
 function switchAuthTab(tab) {
-  if (tab === 'guest') return;
   const tabAdmin = document.getElementById('tab-admin');
   const tabGuest = document.getElementById('tab-guest');
   const panelAdmin = document.getElementById('auth-panel-admin');
@@ -685,6 +704,7 @@ async function submitAdminLogin() {
     });
     const data = await res.json();
     if (res.ok && data.success) {
+      if (passwordInput) passwordInput.value = '';
       currentUserRole = 'admin';
       currentSessionToken = data.token;
       // Persistent login session: stored in localStorage and cookie
@@ -722,18 +742,26 @@ async function submitAdminLogin() {
 
 
 async function submitGuestAccess() {
+  const passwordInput = document.getElementById('admin-password');
+  if (passwordInput) passwordInput.value = '';
+  clearPrivateWorkspaceUI();
+  currentStatus = 'new';
+  currentViewMode = 'tech';
+  currentRole = 'All';
+  viewFilters = {};
   const btn = document.getElementById('btn-enter-guest');
   if (btn) btn.disabled = true;
   try {
     const res = await originalFetch('/api/auth/login-guest', { method: 'POST' });
     const data = await res.json();
     if (res.ok && data.success) {
+      clearLocalWorkspaceData();
       currentUserRole = 'guest';
       currentSessionToken = data.token;
       localStorage.setItem('job_accel_session_token', data.token);
       hideAuthGate();
       updateAuthUI();
-      showToast('🧪 Guest Sandbox initialized! Your edits are saved to your private local database.');
+      showToast('Guest demo ready. These are sample opportunities only.');
       await bootstrapDashboard();
     } else {
       showToast('Could not initialize sandbox: ' + (data.error || 'Unknown error'));
@@ -765,10 +793,13 @@ async function resetGuestSandbox() {
 }
 
 async function lockSession() {
+  const passwordInput = document.getElementById('admin-password');
+  if (passwordInput) passwordInput.value = '';
+  clearPrivateWorkspaceUI();
   try {
     await originalFetch('/api/auth/logout', { method: 'POST' });
   } catch (e) {}
-  localStorage.removeItem('job_accel_session_token');
+  clearLocalWorkspaceData();
   currentSessionToken = '';
   currentUserRole = null;
   startTelemetryPolling();
@@ -792,10 +823,33 @@ function handleAuthAction() {
   }
 }
 
+function clearLocalWorkspaceData() {
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith('job_accel_')) localStorage.removeItem(key);
+  }
+}
+
+function clearPrivateWorkspaceUI() {
+  if (typeof gmailListController !== 'undefined' && gmailListController) gmailListController.abort();
+  gmailMessages = [];
+  currentViewerMessageId = null;
+  for (const id of ['gmail-messages-feed', 'gmail-viewer-content', 'gmail-stats-strip', 'proxy-list-input', 'proxy-test-results']) {
+    const element = document.getElementById(id);
+    if (element) {
+      if ('value' in element) element.value = '';
+      else element.replaceChildren();
+    }
+  }
+  for (const id of ['gmail-hub-container', 'gmail-message-modal', 'proxy-modal', 'settings-modal', 'portfolio-views-modal']) {
+    const element = document.getElementById(id);
+    if (element) element.style.display = 'none';
+  }
+}
+
 async function bootstrapDashboard() {
   await loadAllUserSettings();
   flushPendingSettings();
-  startTelemetryPolling();
+  if (currentUserRole === 'admin') startTelemetryPolling();
   if (isDashboardBootstrapped) {
     await loadStats();
     await loadJobs();
@@ -806,10 +860,10 @@ async function bootstrapDashboard() {
   updateActiveSkillsBadge();
   const isTelemetryCollapsed = localStorage.getItem('job_accel_telemetry_collapsed') !== '0';
   toggleTelemetryCollapse(isTelemetryCollapsed);
-  loadPortfolioViews();
+  if (currentUserRole === 'admin') loadPortfolioViews();
   await loadStats();
   await loadJobs();
-  if (new URLSearchParams(location.search).get('view') === 'gmail') {
+  if (currentUserRole === 'admin' && new URLSearchParams(location.search).get('view') === 'gmail') {
     setStatus('gmail', document.querySelector('.status-tab[data-val="gmail"]'));
   }
 }
@@ -914,7 +968,7 @@ function persistSetting(key, value) {
   if (viewFilterKeys.has(key)) rememberViewFilters();
   try {
     const token = currentSessionToken;
-    localStorage.setItem('job_accel_' + key, String(value));
+    if (currentUserRole !== 'guest') localStorage.setItem('job_accel_' + key, String(value));
     const pending = pendingSettings(token);
     const clockKey = `${pendingSettingsKey(token)}:revision`;
     const revision = Math.max(Date.now() * 1000, Number(localStorage.getItem(clockKey) || 0) + 1);
@@ -927,10 +981,13 @@ function persistSetting(key, value) {
 
 // Load persistent user settings and filter toggle states from server SQLite (with localStorage fallback)
 async function loadAllUserSettings() {
+  const roleAtStart = currentUserRole;
+  const tokenAtStart = currentSessionToken;
   let settings = {};
 
   // 1. Immediate hydration from localStorage to prevent visual flicker
   try {
+    if (currentUserRole === 'guest') throw new Error('Guest uses demo settings');
     settings = {
       target_stack: localStorage.getItem('job_accel_target_stack') || localStorage.getItem('job_accel_user_stack') || CANDIDATE_DEFAULT_STACK,
       filter_skills_only: localStorage.getItem('job_accel_filter_skills_only'),
@@ -943,7 +1000,6 @@ async function loadAllUserSettings() {
       view_filters: localStorage.getItem('job_accel_view_filters'),
       status: localStorage.getItem('job_accel_status'),
       auto_sync_enabled: localStorage.getItem('job_accel_auto_sync_enabled'),
-      proxy_list: localStorage.getItem('job_accel_proxy_list'),
       proxy_mode: localStorage.getItem('job_accel_proxy_mode')
     };
   } catch (e) {}
@@ -961,16 +1017,20 @@ async function loadAllUserSettings() {
     console.warn('Could not load settings from server SQLite, using localStorage fallback:', err);
   }
 
+  if (roleAtStart !== currentUserRole || tokenAtStart !== currentSessionToken) return;
+
   for (const [key, entry] of Object.entries(pendingSettings())) settings[key] = entry.value;
 
   // 3. Hydrate state variables
   if (settings.target_stack && settings.target_stack.trim()) {
     userStack = settings.target_stack.trim();
   } else {
-    userStack = CANDIDATE_DEFAULT_STACK;
+    userStack = currentUserRole === 'guest' ? 'Kotlin, React, JavaScript' : CANDIDATE_DEFAULT_STACK;
   }
-  localStorage.setItem('job_accel_target_stack', userStack);
-  localStorage.setItem('job_accel_user_stack', userStack);
+  if (currentUserRole !== 'guest') {
+    localStorage.setItem('job_accel_target_stack', userStack);
+    localStorage.setItem('job_accel_user_stack', userStack);
+  }
 
   const stackInput = document.getElementById('user-stack-input');
   if (stackInput) stackInput.value = userStack;
@@ -1111,9 +1171,12 @@ async function loadStackSettings() {
 let gmailBadgeUpdatedAt = 0;
 
 async function loadStats() {
+  const roleAtStart = currentUserRole;
+  const tokenAtStart = currentSessionToken;
   try {
     const res = await fetch('/api/stats');
     const data = await res.json();
+    if (roleAtStart !== currentUserRole || tokenAtStart !== currentSessionToken) return;
     currentStats = data;
 
     const setNum = (id, val) => {
@@ -1131,11 +1194,12 @@ async function loadStats() {
 
     // Sync Gmail Hub count in nav
     const gmailNavBadge = document.getElementById('stat-gmail');
-    if (gmailNavBadge && Date.now() - gmailBadgeUpdatedAt > 300000) {
+    if (currentUserRole === 'admin' && gmailNavBadge && Date.now() - gmailBadgeUpdatedAt > 300000) {
       gmailBadgeUpdatedAt = Date.now();
       fetch('/api/gmail/messages?summary=1')
         .then(r => r.json())
         .then(gdata => {
+          if (currentUserRole !== 'admin' || tokenAtStart !== currentSessionToken) return;
           if (gdata && gdata.stats && typeof gdata.stats.total !== 'undefined') {
             gmailNavBadge.textContent = gdata.stats.unread || 0;
           }
@@ -1227,6 +1291,9 @@ async function loadJobs() {
   const sequence = ++loadJobsSequence;
   const token = currentSessionToken;
   const feed = document.getElementById('job-feed');
+  const loadingIndicator = document.getElementById('feed-loading-indicator');
+  if (loadingIndicator) loadingIndicator.hidden = false;
+  if (feed?.setAttribute) feed.setAttribute('aria-busy', 'true');
   feed.innerHTML = `
     <div class="state-loading">
       <div class="loading-spinner"></div>
@@ -1393,6 +1460,13 @@ async function loadJobs() {
         <p>Error retrieving opportunities: ${escapeHtml(err.message)}</p>
         <span class="sub-text">Check server connectivity on localhost:8000</span>
       </div>`;
+  } finally {
+    if (sequence === loadJobsSequence && token === currentSessionToken) {
+      if (feed?.setAttribute) feed.setAttribute('aria-busy', 'false');
+      if (loadingIndicator) setTimeout(() => {
+        if (sequence === loadJobsSequence) loadingIndicator.hidden = true;
+      }, 220);
+    }
   }
 }
 
@@ -2947,6 +3021,7 @@ function setupKeyboardNavigation() {
 
 // Filter button handlers
 function setStatus(status, elem) {
+  if (status === 'gmail' && currentUserRole !== 'admin') return;
   if (status === 'va') {
     switchToVAMode(elem);
     return;
@@ -2989,6 +3064,15 @@ function setStatus(status, elem) {
   syncFilterControlsUI();
   loadJobs();
 }
+
+function updateBackToTop() {
+  const button = document.getElementById('back-to-top');
+  if (button) button.hidden = !currentUserRole || window.scrollY < 500;
+}
+function scrollBackToTop() {
+  window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+}
+window.addEventListener('scroll', updateBackToTop, { passive: true });
 
 function setLevel(level, elem) {
   const target = level || 'All';
@@ -3215,7 +3299,7 @@ function startTelemetryPolling() {
   clearTimeout(telemetryTimer);
   telemetryTimer = null;
   const generation = ++telemetryPollGeneration;
-  if (!currentUserRole || document.visibilityState === 'hidden') return;
+  if (currentUserRole !== 'admin' || document.visibilityState === 'hidden') return;
   fetchSyncTelemetry().then(data => {
     if (generation !== telemetryPollGeneration) return;
     if (data) checkSyncCompletion(data);
@@ -3226,7 +3310,7 @@ function startTelemetryPolling() {
 }
 
 async function fetchSyncTelemetry() {
-  if (!currentUserRole) return;
+  if (currentUserRole !== 'admin') return;
   if (telemetryRequest) return telemetryRequest;
   const token = currentSessionToken;
   const generation = telemetryDataGeneration;
@@ -3859,6 +3943,7 @@ async function runProxyLiveTest() {
 }
 
 async function saveProxyConfiguration() {
+  if (currentUserRole !== 'admin') return;
   const modeSelect = document.getElementById('proxy-mode-select');
   const listInput = document.getElementById('proxy-list-input');
   const feedback = document.getElementById('proxy-save-feedback');
@@ -3871,8 +3956,11 @@ async function saveProxyConfiguration() {
   if (feedback) feedback.textContent = 'Saving...';
 
   try {
-    persistSetting('proxy_mode', mode);
-    persistSetting('proxy_list', rawList);
+    const response = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proxy_mode: mode, proxy_list: rawList })
+    });
+    if (!response.ok) throw new Error(`Proxy save failed (${response.status})`);
 
     const pill = document.getElementById('proxy-status-pill');
     if (pill) {
