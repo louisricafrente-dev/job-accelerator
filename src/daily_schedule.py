@@ -13,10 +13,17 @@ def day():
 
 def has_unfinished(db_path):
     for key in ("sync_status", "local_sync_request", "cloud_sync_run"):
-        value = json.loads(get_user_setting(db_path, key, "{}") or "{}")
+        try:
+            value = json.loads(get_user_setting(db_path, key, "{}") or "{}")
+        except Exception:
+            continue
+        if not isinstance(value, dict):
+            continue
         result = value.get("last_result") or value.get("result") or {}
+        if not isinstance(result, dict):
+            result = {}
         progress = value.get("progress") or result.get("progress") or {}
-        if progress:
+        if isinstance(progress, dict) and progress:
             return bool(progress.get("has_more") or progress.get("unfinished"))
     return False
 

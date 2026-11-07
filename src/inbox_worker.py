@@ -28,6 +28,7 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
     thread = threading.Thread(target=renew, daemon=True)
     thread.start()
     totals = command.get("totals") or {"added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}}
+    transient_retries = 0
     try:
         while not lost.is_set() and inbox.owned(db_path, command, key=key):
             command["daily_requested"] = inbox.read(db_path, key).get("daily_requested", False)
@@ -52,6 +53,15 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
             if not inbox.update_owned(db_path, command, key=key, totals=totals):
                 return
             progress = result.get("progress", {})
+            if result.get("status") != "error" and not progress.get("has_more") and progress.get("unfinished") and transient_retries < 3:
+                deferred = progress.get("deferred_boards", [])
+                if any(not any(code in item.get("error", "").lower() for code in (
+                    "429", "403", "404", "410", "captcha", "rate limit", "forbidden", "cloudflare challenge", "requires verification"
+                )) for item in deferred):
+                    transient_retries += 1
+                    command["resume"] = True
+                    stop.wait(5)
+                    continue
             if result.get("status") == "error" or not progress.get("has_more") or not progress.get("can_continue", True):
                 result = {**result, **totals}
                 if progress.get("unfinished") and result.get("status") != "error":

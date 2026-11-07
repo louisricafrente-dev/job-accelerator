@@ -257,3 +257,45 @@ class TestSourcePageBoundaries(unittest.TestCase):
         with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=lambda **kwargs: second)}):
             self.assertEqual(len(c.fetch("developer")), 1)
         self.assertFalse(c.has_more)
+
+    def test_onlinejobs_empty_search_page_with_cdn_cgi_is_not_flagged_as_challenge(self):
+        c = OnlineJobsConnector()
+        html = '<html><head><title>Online graduate software engineer in the Philippines at OnlineJobs.ph</title></head><body><form action="/jobseekers/jobsearch"><input name="jobkeyword"/></form><script src="/cdn-cgi/challenge-platform/h/g/scripts/jsd/main.js"></script></body></html>'
+        c.check_challenge(html)
+
+    def test_kalibrr_second_run_on_same_day_resets_last_date_at_offset_zero(self):
+        from src.connectors.ph_jobs import KalibrrConnector
+        c = KalibrrConnector()
+        start, _ = scrape_date_window()
+        c.feed_state = {"window_start": start.date().isoformat(), "offset": 0, "last_date": (start - timedelta(days=5)).date().isoformat(), "seen_pages": ["old"]}
+        payload = {"count": 1, "jobs": [{"id": "k1", "name": "Software Developer", "activation_date": "today", "company_code": "acme", "google_location": {"address_components": {"country": "Philippines"}}}]}
+        with patch.object(c, "open_url", return_value=response(payload)):
+            jobs = c.fetch()
+        self.assertEqual(c.last_error, "")
+        self.assertEqual(len(jobs), 1)
+        self.assertNotIn("last_date", c.next_feed_state)
+
+    def test_freelancer_short_continuation_page_stops_cleanly(self):
+        c = FreelancerConnector()
+        start, _ = scrape_date_window()
+        c.query_state = {"window_start": start.date().isoformat(), "query": "react", "offset": 25}
+        with patch.object(c, "open_url", return_value=response({"result": {"projects": [], "total_count": 50}})):
+            jobs = c.fetch("react")
+        self.assertEqual(jobs, [])
+        self.assertEqual(c.last_error, "")
+        self.assertFalse(c.has_more)
+
+    def test_jobspy_stops_after_two_consecutive_empty_pages(self):
+        import pandas as pd
+        from types import SimpleNamespace
+        from src.connectors.jobspy_adapter import JobSpyAdapter
+        c = JobSpyAdapter("LinkedIn", "linkedin", 1)
+        irrelevant = pd.DataFrame([{"job_url": f"https://example.com/{i}", "title": "Accountant", "date_posted": "today"} for i in range(15)])
+        with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=lambda **kwargs: irrelevant)}):
+            c.fetch("developer")
+            self.assertTrue(c.has_more)
+            c.query_state = dict(c.next_query_state)
+            irrelevant2 = pd.DataFrame([{"job_url": f"https://example.com/p2-{i}", "title": "Nurse", "date_posted": "today"} for i in range(15)])
+        with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=lambda **kwargs: irrelevant2)}):
+            c.fetch("developer")
+            self.assertFalse(c.has_more)

@@ -50,7 +50,9 @@ def run():
         return
 
     # Scheduled and website requests share atomic claims and renewable leases.
-    command = inbox.enqueue(db_path, automatic=not force)
+    from src.daily_schedule import has_unfinished
+    resume = not force and has_unfinished(db_path)
+    command = inbox.enqueue(db_path, automatic=not force, **({"resume": True} if resume else {}))
     now = time.time()
     if command.get("status") == "running" and command.get("lease_until", 0) > now:
         print(f"[*] Active {command.get('executor', 'unknown')} worker owns this cycle; scheduled runner yields.")

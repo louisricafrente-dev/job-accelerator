@@ -498,7 +498,7 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(all_settings["remote_only"], "1")
 
     def test_same_platform_same_timeline_keeps_requisitions(self):
-        """Different same-board URLs retain separate tracking even on the same date."""
+        """Same-board repost URLs merge into the existing card and preserve saved/applied tracking."""
         job1 = Job(
             title="Junior Full Stack Developer",
             company="Microgenesis Business Systems",
@@ -528,15 +528,16 @@ class TestDatabase(unittest.TestCase):
             date_posted="2026-10-14"
         )
         added2, skipped2 = insert_jobs(self.db_path, [job2])
-        self.assertEqual(added2, 1)
-        self.assertEqual(skipped2, 0)
+        self.assertEqual(added2, 0)
+        self.assertEqual(skipped2, 1)
         jobs = get_jobs(self.db_path, search="Microgenesis")
-        self.assertEqual(len(jobs), 2)
-        self.assertEqual(next(j for j in jobs if j["job_url"] == job1.job_url)["status"], "saved")
-        self.assertEqual(next(j for j in jobs if j["job_url"] == job2.job_url)["status"], "new")
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["status"], "saved")
+        self.assertEqual(jobs[0]["job_url"], job2.job_url)
+        self.assertEqual({s["url"] for s in jobs[0]["sources"]}, {job1.job_url, job2.job_url})
 
     def test_same_platform_diff_timeline_repost(self):
-        """Reposts on the same platform with different dates should be treated as new opportunities."""
+        """Reposts on the same platform with a new URL merge into one card and revive archived jobs."""
         job1 = Job(
             title="Associate Software Engineer",
             company="Finastra Philippines Inc",
@@ -548,6 +549,8 @@ class TestDatabase(unittest.TestCase):
         )
         added, skipped = insert_jobs(self.db_path, [job1])
         self.assertEqual(added, 1)
+        j_id = get_jobs(self.db_path, search="Finastra")[0]["id"]
+        update_job_status(self.db_path, j_id, status="ignored")
 
         # Repost weeks later with a newer date and new URL
         job2 = Job(
@@ -561,10 +564,15 @@ class TestDatabase(unittest.TestCase):
         )
         added2, skipped2 = insert_jobs(self.db_path, [job2])
         self.assertEqual(added2, 1)
+        self.assertEqual(skipped2, 0)
 
-        # Both records exist because timelines are different
+        # Single merged record revived to Inbox with latest URL and date
         jobs = get_jobs(self.db_path, search="Finastra")
-        self.assertEqual(len(jobs), 2)
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["status"], "new")
+        self.assertEqual(jobs[0]["date_posted"], "2026-10-16")
+        self.assertEqual(jobs[0]["job_url"], job2.job_url)
+        self.assertEqual([s["url"] for s in jobs[0]["sources"]], [job2.job_url, job1.job_url])
 
     def test_cross_platform_deduplication_indeed_glassdoor(self):
         """Cross-platform duplicate jobs (e.g. Indeed and Glassdoor) with varying location syntax must merge into single card with multi-sources."""

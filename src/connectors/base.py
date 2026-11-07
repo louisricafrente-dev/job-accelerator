@@ -199,7 +199,7 @@ class BaseConnector(ABC):
             content = content.decode("utf-8", errors="ignore")
         if isinstance(content, str) and ("<html" in content.lower() or "<title" in content.lower()) and any(
             marker in content for marker in ("/cdn-cgi/challenge-platform", "cf-chl-")):
-            if any(real in content for real in ("__NEXT_DATA__", "jobpost-cat-box", "itemListElement")) and "<title>just a moment" not in content.lower():
+            if any(real in content for real in ("__NEXT_DATA__", "jobpost-cat-box", "itemListElement", "jobkeyword", "jobsearch")) and "<title>just a moment" not in content.lower():
                 return
             raise RuntimeError("Cloudflare challenge; source requires verification")
 

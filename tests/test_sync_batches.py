@@ -35,7 +35,7 @@ class Board(BaseConnector):
         self.clock.value += 2
         if self.error:
             raise RuntimeError(self.error)
-        return [Job("Junior Android Developer", "Example", "Remote", self.platform, 1,
+        return [Job("Junior Android Developer", f"Example {query}", "Remote", self.platform, 1,
                     f"https://example.com/{query or 'feed'}", date_posted="today")]
 
 

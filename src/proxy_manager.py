@@ -205,6 +205,7 @@ def is_connection_error(error):
     return isinstance(error, (TimeoutError, ConnectionError)) or any(term in message for term in (
         "timed out", "timeout", "connection reset", "connection refused", "connection aborted",
         "could not resolve", "name resolution", "getaddrinfo", "remote end closed", "failed to connect", "unexpected_eof_while_reading",
+        "sslerror", "eof occurred", "proxyerror", "incompleteread", "chunkedencodingerror",
         "curl: (5)", "curl: (6)", "curl: (7)", "curl: (28)", "curl: (52)", "curl: (56)"))
 
 

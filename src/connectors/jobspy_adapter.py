@@ -139,13 +139,6 @@ class JobSpyAdapter(BaseConnector):
                     self.last_error = str(zr_exc) or self.last_error
             import pandas as pd
             rows = df.to_dict("records")
-            more = not errors and len(df) >= wanted
-            if offset + len(df) >= 1000:
-                more = False
-                self.coverage_warning = "Coverage limited: provider search reached its approximately 1000-result ceiling"
-            self.finish_page(state, [str(row.get("job_url") or "") for row in rows],
-                             [row.get("date_posted") for row in rows], more)
-            state["offset"] = offset + wanted if more else 0
             for _, row in df.iterrows():
                 title = str(row.get("title", "")).strip()
                 company = str(row.get("company", "")).strip()
@@ -183,6 +176,20 @@ class JobSpyAdapter(BaseConnector):
                     date_posted=date_str,
                     description=description
                 ))
+            seen = set(state.get("useful_urls", []))
+            useful = {job.job_url for job in jobs} - seen
+            state["useful_urls"] = sorted(seen | useful)
+            state["empty_streak"] = 0 if useful else state.get("empty_streak", 0) + 1
+            more = not errors and len(df) >= wanted
+            max_pages = 3 if self.site_name == "linkedin" else 4
+            if offset + len(df) >= 1000:
+                more = False
+                self.coverage_warning = "Coverage limited: provider search reached its approximately 1000-result ceiling"
+            elif not self.is_feed and (state["empty_streak"] >= 2 or state.get("pages_saved", 0) + 1 >= max_pages):
+                more = False
+            self.finish_page(state, [str(row.get("job_url") or "") for row in rows],
+                             [row.get("date_posted") for row in rows], more)
+            state["offset"] = offset + wanted if more else 0
         except Exception as e:
             self.last_error = str(e)
             logger.error(f"[{self.platform}] fetch failed: {e}")

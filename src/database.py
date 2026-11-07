@@ -498,9 +498,7 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                                     for source in sources_for(row))), None)
             if existing is None:
                 existing = next((row for row in candidates
-                                 if is_compatible_location(row["location"], job.location)
-                                 and not any(source.get("platform", "").lower() == job.platform.lower()
-                                             for source in sources_for(row))), None)
+                                 if is_compatible_location(row["location"], job.location)), None)
             if existing:
                 # Aggregate source platform and link
                 try:
@@ -514,8 +512,6 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                     clean_url(s.get("url", "")) == clean_url(job.job_url)
                     for s in sources_list
                 )
-                if not already_present:
-                    sources_list.append({"platform": job.platform, "url": job.job_url})
 
                 new_salary = job.salary or existing["salary"] or ""
                 old_description = existing.get("description") or ""
@@ -530,12 +526,26 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                     is_newer_date = bool(norm_date and not existing_date)
                     new_date = norm_date or existing_date
 
+                new_job_url = (
+                    job.job_url
+                    if (not already_present
+                        and existing["platform"].lower() == job.platform.lower()
+                        and (not existing_date or not norm_date or norm_date >= existing_date))
+                    else existing["job_url"]
+                )
+                if not already_present:
+                    new_source_entry = {"platform": job.platform, "url": job.job_url}
+                    if new_job_url == job.job_url:
+                        sources_list.insert(0, new_source_entry)
+                    else:
+                        sources_list.append(new_source_entry)
+
                 existing_status = existing["status"]
                 is_new_source = not already_present
                 is_new_post = is_newer_date or is_new_source
 
                 # Re-post / Archive handling:
-                # 1. If previously archived ('ignored') and a new post arrives (newer date or new platform),
+                # 1. If previously archived ('ignored') and a new post arrives (newer date or new platform/url),
                 #    bring it out again to Inbox ('new') so the candidate never misses refreshed opportunities!
                 # 2. If 'new', keep in Inbox with updated date and sources.
                 # 3. If 'applied' or 'saved', preserve applicant's tracking state.
@@ -553,6 +563,7 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                           ("Junior / Entry", existing["dedup_hash"]))
                     existing["experience_level"] = "Junior / Entry"
                 if (encoded_sources == existing["sources"]
+                        and new_job_url == existing["job_url"]
                         and new_salary == (existing["salary"] or "")
                         and new_date == existing_date
                         and new_description == old_description):
@@ -561,15 +572,17 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                 write(
                     """
                     UPDATE jobs
-                    SET sources = ?, salary = ?, date_posted = ?, description = ?,
+                    SET job_url = ?, sources = ?, salary = ?, date_posted = ?, description = ?,
                         status = CASE WHEN status = 'ignored' AND ? THEN 'new' ELSE status END,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE dedup_hash = ?
                     """,
-                    (encoded_sources, new_salary, new_date, new_description, int(is_new_post), existing["dedup_hash"]),
+                    (new_job_url, encoded_sources, new_salary, new_date, new_description, int(is_new_post), existing["dedup_hash"]),
                 )
                 if cloud:
-                    existing.update(sources=encoded_sources, salary=new_salary, description=new_description, date_posted=new_date, status=target_status)
+                    existing.update(job_url=new_job_url, sources=encoded_sources, salary=new_salary, description=new_description, date_posted=new_date, status=target_status)
+                    if clean_job_url and existing not in catalog_by_url.get(clean_job_url, []):
+                        catalog_by_url.setdefault(clean_job_url, []).append(existing)
             else:
                 initial_sources = json.dumps([{"platform": job.platform, "url": job.job_url}])
                 write(

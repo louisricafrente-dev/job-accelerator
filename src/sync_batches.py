@@ -91,12 +91,15 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 if "404" in state.get("last_error", ""):
                     state.update(blocked_until=0, next_at=0, last_error="", deferred=False)
                 state["revision"] = revision
-            if state.get("blocked_until", 0) > now and state.get("last_error"):
+            blocked_error = any(code in state.get("last_error", "").lower() for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden", "cloudflare challenge", "requires verification"))
+            if resume and not blocked_error:
+                state.update(deferred=False, blocked_until=0, next_at=0)
+            elif state.get("blocked_until", 0) > now and state.get("last_error"):
                 state["deferred"] = True
-            elif resume or cycle_id is None:
+            else:
                 state["deferred"] = False
             if refresh_completed and state["cursor"] >= total and not state["retry"] and state.get("next_at", 0) <= now:
-                state.update(cursor=0, retry=[], completed_queries={}, query_states={}, coverage_warning="")
+                state.update(cursor=0, retry=[], completed_queries={}, feed_state={}, query_states={}, coverage_warning="")
         result = {"status": "ok", "added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}, "is_syncing": True}
         telemetry = {connector.platform: {
             "status": ("deferred" if boards[connector.platform].get("deferred") else "complete" if boards[connector.platform]["cursor"] >= (1 if getattr(connector, "is_feed", False) else len(queries)) and not boards[connector.platform]["retry"]

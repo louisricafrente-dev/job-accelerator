@@ -29,7 +29,7 @@ class KalibrrConnector(BaseConnector):
         state = dict(getattr(self, "feed_state", {}))
         start, _ = scrape_date_window()
         window_start = start.date().isoformat()
-        if state.get("window_start") != window_start:
+        if state.get("window_start") != window_start or not state.get("offset", 0):
             state = {"window_start": window_start}
         self.next_feed_state = state
         offset = state.get("offset", 0)
@@ -85,6 +85,8 @@ class KalibrrConnector(BaseConnector):
                          previous_page=fingerprint if self.has_more else "", total=total,
                          pages_saved=offset // self.PAGE_SIZE + 1)
             if not self.has_more:
+                state.pop("last_date", None)
+                state.pop("seen_pages", None)
                 state["last_completed"] = time.time()
             self.next_feed_state = state
             return jobs

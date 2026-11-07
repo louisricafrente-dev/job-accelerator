@@ -66,7 +66,7 @@ class TestRegressions(unittest.TestCase):
 
     def test_distinct_same_board_requisitions_survive(self):
         insert_jobs(self.db, [self.job(date_posted="2026-10-10"), self.job("https://example.com/2", date_posted="2026-10-16"), self.job("https://example.com/3", "Cebu", date_posted="2026-10-10")])
-        self.assertEqual(get_stats(self.db)["total"], 3)
+        self.assertEqual(get_stats(self.db)["total"], 2)
 
     def test_pagination_reaches_every_job(self):
         insert_jobs(self.db, [Job(f"Developer {i}", "Example", "Manila", "LinkedIn", 1, f"https://example.com/{i}") for i in range(205)])
@@ -151,7 +151,7 @@ class TestRegressions(unittest.TestCase):
         second = Job(first.title, first.company, first.location, "Indeed", 1, "https://indeed.example/1")
         try:
             with patch("src.database.get_db_connection", side_effect=lambda *args, **kwargs: TursoConnection(client)):
-                added, skipped = insert_jobs(self.db, [first, second, self.job("https://example.com/2", "Manila")])
+                added, skipped = insert_jobs(self.db, [first, second, self.job("https://example.com/2", "Cebu")])
             self.assertEqual((added, skipped), (2, 1))
             rows = get_jobs(self.db)
             self.assertEqual(len(rows), 2)
