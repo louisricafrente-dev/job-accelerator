@@ -120,7 +120,7 @@ class JobSpyAdapter(BaseConnector):
                 real_jobspy = bool(getattr(jobspy, "__file__", None))
                 if errors and frame.empty and (real_jobspy and proxy and "429" in str(errors)):
                     raise ConnectionError(f"Proxy rate limited by {self.platform}; connection reset for fallback")
-                if errors and frame.empty and (is_connection_error(errors) or "402" in str(errors)):
+                if errors and frame.empty and (is_connection_error(errors) or "402" in str(errors) or "407" in str(errors)):
                     raise RuntimeError(str(errors))
                 return frame
             df = self.request_with_fallback(send)
