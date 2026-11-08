@@ -245,12 +245,23 @@ class BaseConnector(ABC):
 
     def open_url(self, request, timeout=12):
         def send(proxy):
+            req_obj = request
+            if hasattr(request, "full_url"):
+                req_obj = urllib.request.Request(
+                    request.full_url,
+                    data=getattr(request, "data", None),
+                    headers=dict(getattr(request, "headers", {})),
+                    origin_req_host=getattr(request, "origin_req_host", None),
+                    unverifiable=getattr(request, "unverifiable", False),
+                    method=request.get_method() if hasattr(request, "get_method") else None
+                )
             try:
                 if proxy:
                     opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-                    response = opener.open(request, timeout=timeout)
+                    response = opener.open(req_obj, timeout=timeout)
                 else:
-                    response = urllib.request.urlopen(request, timeout=timeout)
+                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                    response = opener.open(req_obj, timeout=timeout)
                 with response as opened:
                     body = opened.read(self.MAX_RESPONSE_BYTES + 1)
                     if len(body) > self.MAX_RESPONSE_BYTES:
