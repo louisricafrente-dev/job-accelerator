@@ -73,6 +73,13 @@ async function main() {
   context.renderTelemetry({is_syncing: true, telemetry: {'LinkedIn': {error: 'HTTP 403', status: 'fetching'}}});
   assert.match(elements.get('telemetry-boards-grid').innerHTML, /SCANNING/);
 
+  context.MONITORED_BOARDS = [{key: 'SmartRecruiters', label: 'SmartRecruiters', domain: 'api.smartrecruiters.com', type: 'Employer API'}];
+  context.renderTelemetry({is_syncing: true,
+    execution: {id: 'database-run', status: 'running', totals: {platforms: {SmartRecruiters: 3}}},
+    last_result: {platforms: {}},
+    telemetry: {SmartRecruiters: {status: 'complete', count: 0}}});
+  assert.match(elements.get('telemetry-boards-grid').innerHTML, /3 fetched/);
+
   for (const title of ['Software Engineer III', 'Senior Software Engineer, Backend (Identity International)']) {
     assert.equal(context.getSkillsMatch({ title, experience_level: 'Senior / Lead' }).count, 0);
   }

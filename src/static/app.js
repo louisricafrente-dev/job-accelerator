@@ -3514,7 +3514,7 @@ function renderTelemetry(data) {
   const grid = document.getElementById('telemetry-boards-grid');
   if (grid) {
     const telem = data.telemetry || {};
-    const platformCounts = runTotals?.platforms || (data.last_result && data.last_result.platforms) || data.platforms || {};
+    const platformCounts = data.execution?.totals?.platforms || runTotals?.platforms || data.last_result?.platforms || data.platforms || {};
 
     grid.innerHTML = MONITORED_BOARDS.map(b => {
       const boardInfo = telem[b.key] || telem[b.label] || {};
