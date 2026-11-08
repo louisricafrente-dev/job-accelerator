@@ -8,6 +8,11 @@ from src.database import ExecutionLeaseLost, get_user_setting, set_user_setting
 from src.sync_batches import is_rate_limited
 
 
+BATCH_SECONDS = 120
+# Allow in-flight fetches and checkpoint writes to finish before the lease expires.
+FINALIZE_RESERVE_SECONDS = 60
+
+
 def run_claimed(db_path, command, aggregator, key=inbox.KEY):
     guard = {**command, "key": key}
     aggregator.execution_guard = guard
@@ -30,6 +35,8 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
     thread.start()
     totals = command.get("totals") or {"added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}}
     transient_retries = 0
+    work_deadline = command["expires_at"] - FINALIZE_RESERVE_SECONDS
+    result = {"status": "partial"}
     try:
         while not lost.is_set() and inbox.owned(db_path, command, key=key):
             command["daily_requested"] = inbox.read(db_path, key).get("daily_requested", False)
@@ -37,24 +44,25 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
             if command.get("automatic") and get_user_setting(db_path, "auto_sync_enabled", "1") in ("0", "false"):
                 inbox.cancel(db_path, key=key, status="paused", claimed=command)
                 return
-            remaining = command["expires_at"] - time.time()
-            if remaining <= 0:
-                return
-            result = aggregator.run_sync(queries=command.get("queries"), budget_seconds=min(120, remaining),
-                                         cycle_id=command.get("cycle_id", command["id"]), resume=command.get("resume", False),
-                                         restart=command.get("restart", False))
-            if result.get("status") == "already_syncing":
-                stop.wait(15)
-                continue
-            command["restart"] = False
-            for field in ("added", "skipped", "total_fetched"):
-                totals[field] += result.get(field, 0)
-            for board, count in result.get("platforms", {}).items():
-                totals["platforms"][board] = totals["platforms"].get(board, 0) + count
-            if not inbox.update_owned(db_path, command, key=key, totals=totals):
-                return
+            remaining = work_deadline - time.time()
+            if remaining > 0:
+                batch = aggregator.run_sync(queries=command.get("queries"), budget_seconds=min(BATCH_SECONDS, remaining),
+                                            cycle_id=command.get("cycle_id", command["id"]), resume=command.get("resume", False),
+                                            restart=command.get("restart", False))
+                if batch.get("status") == "already_syncing":
+                    stop.wait(max(0, min(15, work_deadline - time.time())))
+                    continue
+                result = batch
+                command["restart"] = False
+                for field in ("added", "skipped", "total_fetched"):
+                    totals[field] += result.get(field, 0)
+                for board, count in result.get("platforms", {}).items():
+                    totals["platforms"][board] = totals["platforms"].get(board, 0) + count
+                if not inbox.update_owned(db_path, command, key=key, totals=totals):
+                    return
             progress = result.get("progress", {})
-            if result.get("status") != "error" and not progress.get("has_more") and progress.get("unfinished") and transient_retries < 3:
+            remaining = work_deadline - time.time()
+            if remaining > 5 and result.get("status") != "error" and not progress.get("has_more") and progress.get("unfinished") and transient_retries < 3:
                 deferred = progress.get("deferred_boards", [])
                 if any(not any(code in item.get("error", "").lower() for code in (
                     "429", "403", "404", "410", "captcha", "rate limit", "forbidden", "cloudflare challenge", "requires verification"
@@ -68,20 +76,21 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
                 retry_at = min((item["retry_at"] for item in progress.get("deferred_boards", [])
                                 if is_rate_limited(item.get("error", "")) and item.get("retry_at")),
                                default=command["expires_at"])
-                if retry_at < command["expires_at"]:
-                    lost.wait(max(1, retry_at - now))
+                delay = max(1, retry_at - now)
+                if now + delay < work_deadline:
+                    lost.wait(delay)
                     continue
-            if result.get("status") == "error" or not progress.get("has_more") or not progress.get("can_continue", True):
+            if remaining <= 0 or result.get("status") == "error" or not progress.get("has_more") or not progress.get("can_continue", True):
                 result = {**result, **totals}
-                if progress.get("unfinished") and result.get("status") != "error":
+                if (progress.get("unfinished") or progress.get("has_more")) and result.get("status") != "error":
                     result["status"] = "partial"
                 if inbox.update_owned(db_path, command, result, key=key):
-                    if aggregator.daily_run and result.get("status") != "error":
+                    if aggregator.daily_run and progress and result.get("status") != "error":
                         from src.daily_schedule import day
                         set_user_setting(db_path, "daily_scrape_day", day())
                     return result
                 continue
-            stop.wait(min(30, max(1, progress.get("next_run_at", time.time()) - time.time())))
+            stop.wait(min(remaining, 30, max(1, progress.get("next_run_at", time.time()) - time.time())))
     except ExecutionLeaseLost:
         return
     except Exception:
