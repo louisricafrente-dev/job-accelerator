@@ -229,7 +229,7 @@ class BaseConnector(ABC):
                 if not math.isfinite(getattr(self, "retry_after", 0)):
                     self.retry_after = 0
                 status = getattr(exc, "code", None) or getattr(getattr(exc, "response", None), "status_code", None)
-                if proxy and (status in (402, 407) or any(m in str(exc).lower() for m in ("402 payment required", "response 402", "407 proxy authentication", "tunnel connection failed: 407"))):
+                if proxy and (status in (402, 407) or any(m in str(exc).lower() for m in ("402 payment required", "response 402", "407 proxy authentication", "tunnel connection failed: 407", "response 407"))):
                     mark_proxy_quota_exhausted(self.db_path)
                     if None in routes[index + 1:]:
                         continue
