@@ -3232,6 +3232,7 @@ function safeJobUrl(value) {
 // TELEMETRY & SYNC LOGS MODAL ENGINE
 // --------------------------------------------------------------------------
 const MONITORED_BOARDS = [
+  { key: 'SmartRecruiters', label: 'SmartRecruiters', domain: 'api.smartrecruiters.com', type: 'Employer API' },
   ...['OnlineJobs.ph', 'Freelancer', 'Indeed', 'JobStreet'].map(source => ({key: `${source} (Video Editor)`, label: `${source} - Video Editor`, domain: source, type: 'Basic CapCut / 7 days'})),
   { key: 'JobStreet', label: 'JobStreet PH', domain: 'jobstreet.com.ph', type: 'HTML/Live' },
   { key: 'OnlineJobs.ph', label: 'OnlineJobs.ph', domain: 'onlinejobs.ph', type: 'Direct Client PH' },

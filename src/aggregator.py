@@ -29,6 +29,7 @@ from src.connectors.ph_jobs import (
     JobgetherPHConnector,
 )
 from src.connectors.jobspy_adapter import JobSpyAdapter
+from src.connectors.smartrecruiters import SmartRecruitersConnector
 from src.database import insert_jobs, get_user_setting, set_user_setting, acquire_sync_lease, release_sync_lease
 from src.classifier import is_relevant_opportunity
 import time
@@ -66,6 +67,7 @@ DEFAULT_QUERIES = [
 
 def get_default_connectors() -> List[BaseConnector]:
     return [
+        SmartRecruitersConnector(),
         # Tier 1 — Core PH & High-Yield Direct Client Boards
         JobSpyAdapter("LinkedIn", "linkedin", tier=1),
         JobSpyAdapter("Indeed", "indeed", tier=1),
