@@ -17,7 +17,7 @@ class TestWorkflowIsolation(unittest.TestCase):
             init_db(db)
             board_a = Job("Android Developer", "Example", "Manila", "Indeed", 1, "https://indeed.example/a", date_posted="2026-10-20")
             first = Job("Android Developer", "Example", "Manila", "LinkedIn", 1, "https://linkedin.example/111", date_posted="2026-10-20")
-            second = Job("Android Developer", "Example", "Manila", "LinkedIn", 1, "https://linkedin.example/222", date_posted="2026-10-20")
+            second = Job("Senior Android Developer", "Example", "Manila", "LinkedIn", 1, "https://linkedin.example/222", date_posted="2026-10-20")
             self.assertEqual(insert_jobs(db, [board_a, first, second]), (2, 1))
             rows = get_jobs(db)
             self.assertEqual(len(rows), 2)
@@ -76,7 +76,7 @@ class TestWorkflowIsolation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             db = os.path.join(temp, "workflow_test.db")
             init_db(db)
-            insert_jobs(db, [Job("Android Developer", "Example", "Manila", "LinkedIn", 1,
+            insert_jobs(db, [Job(f"Android Developer {i + 1}", "Example", "Manila", "LinkedIn", 1,
                                  f"https://example.com/{i}", date_posted=date)
                              for i, date in enumerate(("2026-10-10", "2026-10-16"))])
             rows = sorted(get_jobs(db), key=lambda row: row["id"])

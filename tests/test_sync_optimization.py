@@ -66,7 +66,8 @@ class TestSyncIngestionCache(unittest.TestCase):
         self.cache = {}
 
     def job(self, board="LinkedIn", ident="1"):
-        return Job("Junior Android Developer", "Example", "Remote", board, 1,
+        title = "Junior Android Developer" if ident == "1" else f"Junior Android Developer {ident}"
+        return Job(title, "Example", "Remote", board, 1,
                    f"https://{board.lower()}.example/jobs/{ident}", date_posted="today")
 
     def write(self, jobs):

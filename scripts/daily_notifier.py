@@ -240,6 +240,7 @@ def send_daily_email(db_path: str = "data/jobs.db", dashboard_url: str = "", new
     
     # Save local snapshot of digest
     out_dir = os.path.dirname(os.path.abspath(db_path))
+    os.makedirs(out_dir, exist_ok=True)
     digest_path = os.path.join(out_dir, "latest_email_digest.html")
     with open(digest_path, "w", encoding="utf-8") as f:
         f.write(html_content)
