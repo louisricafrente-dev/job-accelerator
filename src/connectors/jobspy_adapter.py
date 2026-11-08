@@ -88,7 +88,7 @@ class JobSpyAdapter(BaseConnector):
             query = query.strip() or "software developer"
             search_loc = "Remote" if self.site_name in ("glassdoor", "zip_recruiter") and location.lower() == "philippines" else location
             country = "philippines" if self.site_name == "indeed" else ("usa" if self.site_name == "glassdoor" else None)
-            wanted = 15 if self.site_name == "linkedin" else 35
+            wanted = 10 if self.site_name == "linkedin" else 35
             if group_size > 1:
                 wanted = wanted + 1 if getattr(self, "bounded_group_probe", False) else wanted * group_size + 1
             def send(proxy):
@@ -117,6 +117,9 @@ class JobSpyAdapter(BaseConnector):
                     frame.attrs["errors"] = {self.site_name: "; ".join(errors_log.messages[-5:])}
                 from src.proxy_manager import is_connection_error
                 errors = getattr(frame, "attrs", {}).get("errors")
+                real_jobspy = bool(getattr(jobspy, "__file__", None))
+                if errors and frame.empty and (real_jobspy and proxy and "429" in str(errors)):
+                    raise ConnectionError(f"Proxy rate limited by {self.platform}; connection reset for fallback")
                 if errors and frame.empty and (is_connection_error(errors) or "402" in str(errors)):
                     raise RuntimeError(str(errors))
                 return frame
