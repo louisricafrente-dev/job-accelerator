@@ -56,7 +56,7 @@ def run():
     previous = inbox.read(db_path)
     requested_day = datetime.fromtimestamp(previous.get("requested_at", 0), MANILA).date().isoformat()
     resume = (not force and requested_day == day() and inbox.public(previous).get("status") in {"partial", "error"}
-              and has_unfinished(db_path))
+              and has_unfinished(db_path, include_deferred_feeds=False))
     command = inbox.enqueue(db_path, automatic=not force, resume=resume)
     now = time.time()
     if command.get("status") == "running" and command.get("executor") == "cloud" and command.get("lease_until", 0) > now:

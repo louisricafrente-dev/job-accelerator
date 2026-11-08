@@ -63,11 +63,12 @@ class CloudCronGuardsTests(unittest.TestCase):
         from scripts.cloud_cron_sync import run
         command = {"id": "scheduled", "status": "queued"}
         now = time.time()
-        for requested_at, expected in ((now, True), (now - 86400, False)):
+        for requested_at, completed, expected in ((now, 2, True), (now - 86400, 2, False), (now, 3, False)):
             previous = {"id": "previous", "status": "partial", "requested_at": requested_at}
+            saved = {"progress": {"completed_searches": completed, "total_searches": 3, "unfinished": True}}
             with self.subTest(expected=expected), patch("scripts.cloud_cron_sync.is_turso_active", return_value=True), \
                     patch("scripts.cloud_cron_sync.init_db"), patch("scripts.cloud_cron_sync.get_user_setting", return_value="1"), \
-                    patch("scripts.cloud_cron_sync.has_unfinished", return_value=True), patch("scripts.cloud_cron_sync.Aggregator"), \
+                    patch("src.daily_schedule.get_user_setting", return_value=json.dumps(saved)), patch("scripts.cloud_cron_sync.Aggregator"), \
                     patch("src.execution_inbox.enqueue", return_value=command) as enqueue, \
                     patch("src.execution_inbox.read", side_effect=[previous, {**command, "status": "complete"}]), \
                     patch("src.inbox_worker.run_cloud", return_value=None), patch("sys.argv", ["cloud_cron_sync.py"]):

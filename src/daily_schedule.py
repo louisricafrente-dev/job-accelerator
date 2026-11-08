@@ -11,7 +11,7 @@ def day():
     return datetime.now(ZoneInfo("Asia/Manila")).date().isoformat()
 
 
-def has_unfinished(db_path):
+def has_unfinished(db_path, *, include_deferred_feeds=True):
     for key in ("sync_status", "local_sync_request", "cloud_sync_run"):
         try:
             value = json.loads(get_user_setting(db_path, key, "{}") or "{}")
@@ -24,6 +24,8 @@ def has_unfinished(db_path):
             result = {}
         progress = value.get("progress") or result.get("progress") or {}
         if isinstance(progress, dict) and progress:
+            if not include_deferred_feeds and "total_searches" in progress:
+                return bool(progress.get("has_more") or progress.get("completed_searches", 0) < progress["total_searches"])
             return bool(progress.get("has_more") or progress.get("unfinished"))
     return False
 
