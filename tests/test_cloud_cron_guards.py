@@ -88,7 +88,7 @@ class CloudCronGuardsTests(unittest.TestCase):
             "executor": "cloud",
             "lease_until": time.time() + 100
         }
-        with patch("sys.argv", ["cloud_cron_sync.py"]):
+        with patch("sys.argv", ["cloud_cron_sync.py"]), patch("src.execution_inbox.read", return_value={}):
             run()
         mock_run_sync.assert_not_called()
 
