@@ -45,18 +45,34 @@ class CloudCronGuardsTests(unittest.TestCase):
     @patch("scripts.cloud_cron_sync.init_db")
     @patch("scripts.cloud_cron_sync.get_user_setting")
     @patch("src.execution_inbox.enqueue")
-    @patch("src.aggregator.Aggregator.run_sync")
-    def test_cloud_cron_yields_when_local_worker_running(self, mock_run_sync, mock_inbox_read, mock_get_setting, mock_init, mock_turso):
+    @patch("src.inbox_worker.run_cloud", return_value=None)
+    def test_cloud_cron_supervises_existing_local_worker(self, supervise, enqueue, mock_get_setting, mock_init, mock_turso):
         from scripts.cloud_cron_sync import run
         mock_get_setting.return_value = "1"
-        mock_inbox_read.return_value = {
+        enqueue.return_value = {
+            "id": "local-cycle",
             "status": "running",
             "executor": "local",
             "lease_until": time.time() + 100
         }
-        with patch("sys.argv", ["cloud_cron_sync.py"]):
+        with patch("sys.argv", ["cloud_cron_sync.py"]), patch("src.execution_inbox.read", return_value={"id": "local-cycle", "status": "complete"}), patch("scripts.cloud_cron_sync.Aggregator"):
             run()
-        mock_run_sync.assert_not_called()
+        self.assertEqual(supervise.call_args.args[1], "local-cycle")
+
+    def test_cron_resumes_only_same_manila_day_partial_checkpoint(self):
+        from scripts.cloud_cron_sync import run
+        command = {"id": "scheduled", "status": "queued"}
+        now = time.time()
+        for requested_at, expected in ((now, True), (now - 86400, False)):
+            previous = {"id": "previous", "status": "partial", "requested_at": requested_at}
+            with self.subTest(expected=expected), patch("scripts.cloud_cron_sync.is_turso_active", return_value=True), \
+                    patch("scripts.cloud_cron_sync.init_db"), patch("scripts.cloud_cron_sync.get_user_setting", return_value="1"), \
+                    patch("scripts.cloud_cron_sync.has_unfinished", return_value=True), patch("scripts.cloud_cron_sync.Aggregator"), \
+                    patch("src.execution_inbox.enqueue", return_value=command) as enqueue, \
+                    patch("src.execution_inbox.read", side_effect=[previous, {**command, "status": "complete"}]), \
+                    patch("src.inbox_worker.run_cloud", return_value=None), patch("sys.argv", ["cloud_cron_sync.py"]):
+                run()
+            self.assertIs(enqueue.call_args.kwargs["resume"], expected)
 
     @patch("scripts.cloud_cron_sync.is_turso_active", return_value=True)
     @patch("scripts.cloud_cron_sync.init_db")

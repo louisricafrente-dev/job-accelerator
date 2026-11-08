@@ -5,6 +5,7 @@ import threading
 import time
 from src import execution_inbox as inbox
 from src.database import ExecutionLeaseLost, get_user_setting, set_user_setting
+from src.sync_batches import is_rate_limited
 
 
 def run_claimed(db_path, command, aggregator, key=inbox.KEY):
@@ -61,6 +62,14 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
                     transient_retries += 1
                     command["resume"] = True
                     stop.wait(5)
+                    continue
+            if result.get("status") != "error" and progress.get("unfinished") and not progress.get("can_continue", True):
+                now = time.time()
+                retry_at = min((item["retry_at"] for item in progress.get("deferred_boards", [])
+                                if is_rate_limited(item.get("error", "")) and item.get("retry_at")),
+                               default=command["expires_at"])
+                if retry_at < command["expires_at"]:
+                    lost.wait(max(1, retry_at - now))
                     continue
             if result.get("status") == "error" or not progress.get("has_more") or not progress.get("can_continue", True):
                 result = {**result, **totals}

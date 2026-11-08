@@ -299,3 +299,27 @@ class TestSourcePageBoundaries(unittest.TestCase):
         with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=lambda **kwargs: irrelevant2)}):
             c.fetch("developer")
             self.assertFalse(c.has_more)
+
+    def test_installed_linkedin_adapter_continues_full_pages_and_reports_cap(self):
+        from datetime import datetime
+        import jobspy
+        import pandas as pd
+        from src.connectors.jobspy_adapter import JobSpyAdapter
+        from src.models import MANILA
+
+        def fetch(**kwargs):
+            offset = kwargs["offset"]
+            return pd.DataFrame([
+                {"job_url": f"https://example.com/{i}", "title": "Junior Software Developer",
+                 "location": "Philippines", "date_posted": datetime.now(MANILA).date()}
+                for i in range(offset, offset + kwargs["results_wanted"])
+            ])
+
+        board = JobSpyAdapter("LinkedIn", "linkedin", 1)
+        with patch.object(jobspy, "scrape_jobs", side_effect=fetch) as scrape, patch("src.connectors.jobspy_adapter.time.sleep"):
+            for index in range(3):
+                self.assertEqual(len(board.fetch("developer")), 10)
+                self.assertEqual(board.has_more, index < 2)
+                board.query_state = board.next_query_state
+        self.assertEqual([call.kwargs["offset"] for call in scrape.call_args_list], [0, 10, 20])
+        self.assertIn("3-page limit", board.coverage_warning)

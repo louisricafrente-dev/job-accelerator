@@ -1,13 +1,14 @@
 """
 Cloud Cron Scraper Runner (GitHub Actions)
 Executes scheduled multi-board job scrapes in the cloud with strict Local-First priority.
-Safely yields if candidate PC local worker is actively running or acknowledging commands.
+Supervises local execution and takes over only after the local lease expires.
 Uses the same fenced worker and checkpoint reporting as website commands.
 """
 import os
 import sys
 import time
 import json
+from datetime import datetime
 
 if sys.platform == "win32":
     try:
@@ -27,6 +28,8 @@ from src.database import (
 )
 from src import execution_inbox as inbox
 from src.aggregator import Aggregator
+from src.daily_schedule import day, has_unfinished
+from src.models import MANILA
 
 def run():
     force = "--force" in sys.argv or os.environ.get("FORCE_SYNC") == "1"
@@ -50,10 +53,14 @@ def run():
         return
 
     # Scheduled and website requests share atomic claims and renewable leases.
-    command = inbox.enqueue(db_path, automatic=not force)
+    previous = inbox.read(db_path)
+    requested_day = datetime.fromtimestamp(previous.get("requested_at", 0), MANILA).date().isoformat()
+    resume = (not force and requested_day == day() and inbox.public(previous).get("status") in {"partial", "error"}
+              and has_unfinished(db_path))
+    command = inbox.enqueue(db_path, automatic=not force, resume=resume)
     now = time.time()
-    if command.get("status") == "running" and command.get("lease_until", 0) > now:
-        print(f"[*] Active {command.get('executor', 'unknown')} worker owns this cycle; scheduled runner yields.")
+    if command.get("status") == "running" and command.get("executor") == "cloud" and command.get("lease_until", 0) > now:
+        print("[*] Active cloud worker owns this cycle; scheduled runner yields.")
         return
 
     from src.inbox_worker import run_cloud

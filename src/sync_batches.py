@@ -15,8 +15,13 @@ QUERY_DELAY_SECONDS = 2
 REFRESH_SECONDS = 6 * 3600
 ERROR_COOLDOWN_SECONDS = 15 * 60
 BLOCK_COOLDOWN_SECONDS = 6 * 3600
+RATE_LIMIT_COOLDOWN_SECONDS = 15 * 60
 CYCLE_SECONDS = 2 * 3600
 OWNERSHIP_CHECK_SECONDS = 15
+
+
+def is_rate_limited(error):
+    return "429" in error or "rate limit" in error.lower()
 
 
 def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None, resume=False, restart=False):
@@ -292,7 +297,10 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                             if index not in state["retry"]:
                                 state["retry"].append(index)
                         blocked = any(code in error.lower() for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden", "cloudflare challenge", "requires verification"))
-                        cooldown_secs = BLOCK_COOLDOWN_SECONDS if blocked else ERROR_COOLDOWN_SECONDS
+                        if is_rate_limited(error):
+                            cooldown_secs = RATE_LIMIT_COOLDOWN_SECONDS
+                        else:
+                            cooldown_secs = BLOCK_COOLDOWN_SECONDS if blocked else ERROR_COOLDOWN_SECONDS
                         state["next_at"] = time.time() + max(cooldown_secs, getattr(connector, "retry_after", 0))
                         state["blocked_until"] = state["next_at"]
                         result["status"] = "partial"

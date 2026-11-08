@@ -81,6 +81,25 @@ class InboxWorkerTests(unittest.TestCase):
         self.assertEqual(result["added"], 1)
         self.assertEqual(inbox.read(self.db)["executor"], "cloud")
 
+    def test_worker_waits_for_rate_limit_without_restarting_cycle(self):
+        aggregator = Aggregator(self.db, [Feed()])
+        for within_budget in (True, False):
+            inbox.enqueue(self.db, ["developer"])
+            command = inbox.claim(self.db, "local", "pc")
+            retry_at = time.time() + 900 if within_budget else command["expires_at"] + 60
+            partial = {"status": "partial", "progress": {"unfinished": True, "has_more": False, "can_continue": False,
+                       "deferred_boards": [{"error": "HTTP 429", "retry_at": retry_at}]}}
+            stop, lost = Mock(), Mock()
+            lost.is_set.return_value = False
+            with self.subTest(within_budget=within_budget), patch("src.inbox_worker.threading.Event", side_effect=[stop, lost]), \
+                    patch("src.inbox_worker.threading.Thread"), \
+                    patch.object(aggregator, "run_sync", side_effect=[partial, {"status": "ok", "progress": {"unfinished": False}}]) as sync:
+                result = run_claimed(self.db, command, aggregator)
+            self.assertEqual(result["status"], "ok" if within_budget else "partial")
+            self.assertEqual(sync.call_count, 2 if within_budget else 1)
+            self.assertEqual(lost.wait.call_count, int(within_budget))
+            self.assertEqual({call.kwargs["cycle_id"] for call in sync.call_args_list}, {command["id"]})
+
     def test_idle_worker_only_reads_small_inbox(self):
         stop = Mock()
         stop.is_set.side_effect = [False, True]

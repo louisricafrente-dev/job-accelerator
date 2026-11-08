@@ -104,21 +104,16 @@ class JobSpyAdapter(BaseConnector):
                 if real_jobspy and self.site_name == "linkedin" and not proxy:
                     time.sleep(2.0)
                 try:
-                    for attempt in range(2 if (real_jobspy and self.site_name == "linkedin" and not proxy) else 1):
-                        errors_log.messages.clear()
-                        frame = scrape_jobs(
-                            site_name=[self.site_name],
-                            search_term=query,
-                            location=search_loc,
-                            results_wanted=wanted,
-                            offset=offset,
-                            country_indeed=country,
-                            hours_old=scrape_request_hours(days=self.window_days),
-                            proxies=[proxy] if proxy else None
-                        )
-                        if not (attempt == 0 and frame.empty and any("429" in m for m in errors_log.messages)):
-                            break
-                        time.sleep(12)
+                    frame = scrape_jobs(
+                        site_name=[self.site_name],
+                        search_term=query,
+                        location=search_loc,
+                        results_wanted=wanted,
+                        offset=offset,
+                        country_indeed=country,
+                        hours_old=scrape_request_hours(days=self.window_days),
+                        proxies=[proxy] if proxy else None
+                    )
                 finally:
                     for scraper_logger in scraper_loggers:
                         scraper_logger.removeHandler(errors_log)
@@ -126,8 +121,6 @@ class JobSpyAdapter(BaseConnector):
                     frame.attrs["errors"] = {self.site_name: "; ".join(errors_log.messages[-5:])}
                 from src.proxy_manager import is_connection_error
                 errors = getattr(frame, "attrs", {}).get("errors")
-                if errors and frame.empty and (real_jobspy and proxy and "429" in str(errors)):
-                    raise ConnectionError(f"Proxy rate limited by {self.platform}; connection reset for fallback")
                 if errors and frame.empty and (is_connection_error(errors) or "402" in str(errors) or "407" in str(errors)):
                     raise RuntimeError(str(errors))
                 return frame
@@ -135,7 +128,7 @@ class JobSpyAdapter(BaseConnector):
             errors = getattr(df, "attrs", {}).get("errors")
             self.last_raw_count = len(df)
             self.last_search_complete = not errors and len(df) < wanted
-            if errors and (df.empty or group_size > 1):
+            if errors:
                 from src.proxy_manager import redact_proxy_error
                 self.last_error = redact_proxy_error(errors, self.db_path)
             if df.empty and self.site_name == "zip_recruiter" and getattr(jobspy, "__file__", None):
@@ -192,12 +185,16 @@ class JobSpyAdapter(BaseConnector):
             state["useful_urls"] = sorted(seen | useful)
             state["empty_streak"] = 0 if useful else state.get("empty_streak", 0) + 1
             more = not errors and len(df) >= wanted
-            max_pages = (1 if getattr(jobspy, "__file__", None) else 3) if self.site_name == "linkedin" else 4
+            max_pages = 3 if self.site_name == "linkedin" else 4
             if offset + len(df) >= 1000:
                 more = False
                 self.coverage_warning = "Coverage limited: provider search reached its approximately 1000-result ceiling"
-            elif not self.is_feed and (state["empty_streak"] >= 2 or state.get("pages_saved", 0) + 1 >= max_pages):
+            elif more and not self.is_feed and state.get("pages_saved", 0) + 1 >= max_pages:
                 more = False
+                self.coverage_warning = f"Coverage limited: search reached the {max_pages}-page limit on a full page"
+            elif more and not self.is_feed and state["empty_streak"] >= 2:
+                more = False
+                self.coverage_warning = "Coverage limited: two full pages returned no new eligible jobs"
             self.finish_page(state, [str(row.get("job_url") or "") for row in rows],
                              [row.get("date_posted") for row in rows], more)
             state["offset"] = offset + wanted if more else 0

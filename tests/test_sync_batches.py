@@ -139,7 +139,7 @@ class TestSyncBatches(unittest.TestCase):
         self.assertEqual(result["progress"]["completed_searches"], 0)
         self.run_batch(["a", "b"])
         self.assertEqual(self.board.calls, ["a"])
-        self.clock.value += 6 * 3600 + 1
+        self.clock.value += 15 * 60 + 1
         self.board.error = ""
         self.run_batch(["a", "b"], budget=10)
         self.assertEqual(self.board.calls, ["a", "b", "a"])
