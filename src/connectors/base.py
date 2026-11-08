@@ -260,8 +260,7 @@ class BaseConnector(ABC):
                     opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
                     response = opener.open(req_obj, timeout=timeout)
                 else:
-                    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-                    response = opener.open(req_obj, timeout=timeout)
+                    response = urllib.request.urlopen(req_obj, timeout=timeout)
                 with response as opened:
                     body = opened.read(self.MAX_RESPONSE_BYTES + 1)
                     if len(body) > self.MAX_RESPONSE_BYTES:
