@@ -11,7 +11,7 @@ from src.aggregator import Aggregator
 from src.connectors.base import BaseConnector
 from src.connectors.ph_jobs import OnlineJobsConnector, BossjobConnector, JobStreetConnector
 from src.connectors.remote_feed import JobicyConnector, HimalayasConnector, FreelancerConnector
-from src.database import init_db, get_jobs, get_user_setting
+from src.database import init_db, get_jobs, get_user_setting, set_user_setting
 from src.models import Job, MANILA, scrape_date_window
 from src.sync_batches import PROGRESS_KEY
 from tests.test_sync_batches import Clock
@@ -59,32 +59,35 @@ class TestDurableQueryPages(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def run_batch(self, budget=1, resume=False):
-        return Aggregator(self.db, [self.board]).run_sync(["a", "b"], budget_seconds=budget, cycle_id="coverage", resume=resume)
+    def run_batch(self, budget=1, resume=False, queries=None):
+        return Aggregator(self.db, [self.board]).run_sync(queries or ["a", "b"], budget_seconds=budget, cycle_id="coverage", resume=resume)
 
     def test_cursor_survives_instances_and_keyword_is_not_complete_at_first_page(self):
         first = self.run_batch()
+        self.assertEqual(first["status"], "partial")
         self.assertEqual(first["progress"]["completed_searches"], 0)
         saved = json.loads(get_user_setting(self.db, PROGRESS_KEY))["boards"][self.board.platform]
         self.assertEqual(saved["query_states"]["a"]["page"], 1)
         self.assertNotIn("a", saved.get("completed_queries", {}))
         for _ in range(5):
             result = self.run_batch()
-        self.assertEqual(self.board.calls, [("a", 0), ("a", 1), ("a", 2), ("b", 0), ("b", 1), ("b", 2)])
+        self.assertEqual(self.board.calls, [("a", 0), ("b", 0), ("a", 1), ("b", 1), ("a", 2), ("b", 2)])
         self.assertFalse(result["progress"]["has_more"])
         self.assertEqual(len(get_jobs(self.db)), 6)
 
     def test_error_on_later_page_keeps_its_cursor_while_other_keyword_finishes(self):
+        self.run_batch()
         self.run_batch()
         self.board.fail_once = True
         result = self.run_batch()
         self.assertEqual(result["status"], "partial")
         self.clock.value += 901
         result = self.run_batch(budget=100, resume=True)
-        self.assertEqual(self.board.calls, [("a", 0), ("a", 1), ("b", 0), ("b", 1), ("b", 2), ("a", 1), ("a", 2)])
+        self.assertEqual(self.board.calls, [("a", 0), ("b", 0), ("a", 1), ("a", 1), ("b", 1), ("a", 2), ("b", 2)])
         self.assertFalse(result["progress"]["unfinished"])
 
     def test_ingestion_failure_cannot_commit_next_page(self):
+        self.run_batch()
         self.run_batch()
         with patch("src.sync_batches.insert_jobs", side_effect=RuntimeError("database unavailable")):
             result = self.run_batch()
@@ -94,6 +97,59 @@ class TestDurableQueryPages(unittest.TestCase):
         self.clock.value += 901
         self.run_batch(resume=True)
         self.assertEqual(self.board.calls[-2:], [("a", 1), ("a", 1)])
+
+    def test_legacy_cursor_resumes_and_reaches_other_core_queries_within_budget(self):
+        self.run_batch()
+        saved = json.loads(get_user_setting(self.db, PROGRESS_KEY))
+        saved["boards"][self.board.platform].update(cursor=0, retry=[])
+        set_user_setting(self.db, PROGRESS_KEY, json.dumps(saved))
+        result = self.run_batch(budget=3)
+        self.assertEqual(self.board.calls, [("a", 0), ("b", 0), ("a", 1)])
+        self.assertEqual(result["progress"]["completed_searches"], 0)
+
+    def test_empty_core_page_and_rate_limit_keep_pending_page_for_next_worker(self):
+        fetch = self.board.fetch
+
+        def rate_limited(query="", location=""):
+            if query == "a" and self.board.query_state.get("page") == 1:
+                raise RuntimeError("HTTP 429")
+            jobs = fetch(query, location)
+            return [] if self.board.calls[-1] == ("a", 0) else jobs
+
+        with patch.object(self.board, "fetch", side_effect=rate_limited):
+            result = self.run_batch(budget=20)
+        self.assertEqual(self.board.calls, [("a", 0), ("b", 0)])
+        deferred, = result["progress"]["deferred_boards"]
+        self.assertEqual(deferred["retry_at"], self.clock.time() + 900)
+        self.run_batch(resume=True)
+        self.assertEqual(len(self.board.calls), 2)
+        self.clock.value += 901
+        result = self.run_batch(budget=100, resume=True)
+        self.assertIn(("a", 1), self.board.calls)
+        self.assertEqual(result["progress"]["completed_searches"], 2)
+
+    def test_supplemental_queries_alternate_with_saved_core_pages(self):
+        queries = [str(index) for index in range(36)]
+        self.run_batch(budget=75, queries=queries)
+        self.assertEqual(self.board.calls[:34], [(query, 0) for query in queries[:34]])
+        self.assertEqual(self.board.calls[34:38], [("0", 1), ("34", 0), ("1", 1), ("35", 0)])
+
+    def test_query_yield_counts_only_new_rows_after_dedup(self):
+        fetch = self.board.fetch
+
+        def overlapping(query="", location=""):
+            jobs = fetch(query, location)
+            jobs[0].job_url = "https://example.com/shared"
+            return jobs
+
+        with patch.object(self.board, "fetch", side_effect=overlapping):
+            self.run_batch()
+            result = self.run_batch(budget=100)
+        self.assertEqual(len(get_jobs(self.db)), 1)
+        self.assertEqual(result["progress"]["boards"][self.board.platform]["yield_counts"], {
+            "a": {"fetches": 3, "eligible": 3, "new": 1},
+            "b": {"fetches": 3, "eligible": 3, "new": 0},
+        })
 
     def test_limited_source_finishes_partial_without_an_automatic_retry_loop(self):
         self.board.coverage_limit = "Coverage limited: no verified public continuation"

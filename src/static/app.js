@@ -3326,6 +3326,9 @@ function renderTelemetry(data) {
   const runTotals = data.run_totals?.request_id === data.local_request?.id ? data.run_totals : null;
   const waiting = data.is_syncing && progress?.has_more && progress.can_continue === false && progress.next_run_at > Date.now() / 1000;
   const retryTime = timestamp => new Date(timestamp * 1000).toLocaleTimeString();
+  const scheduleTime = timestamp => new Date(timestamp * 1000).toLocaleString(undefined, {
+    timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  }) + ' Manila';
 
   // 1. Status overview bar
   const syncStateEl = document.getElementById('telemetry-sync-state');
@@ -3345,6 +3348,11 @@ function renderTelemetry(data) {
       syncStateEl.textContent += ' · Complete';
     } else {
       syncStateEl.textContent += ' · Idle';
+    }
+    if (data.schedule?.paused) {
+      syncStateEl.textContent += ' · Auto-sync paused';
+    } else if (data.schedule?.next_check_at) {
+      syncStateEl.textContent += ` · Next scheduled check ${scheduleTime(data.schedule.next_check_at)}`;
     }
     if (['queued', 'running'].includes(data.local_request?.status)) {
       syncStateEl.textContent += data.local_request.status === 'running' ? ' · Running on this PC' : ' · Queued on this PC';
@@ -3554,8 +3562,10 @@ function renderTelemetry(data) {
       }
       const retryAt = boardProgress.blocked_until || boardProgress.next_at;
       const nextRetry = needsSetup ? 'Configure this source before syncing'
-        : boardError ? `${retryAt > Date.now() / 1000 ? `Retry allowed after ${retryTime(retryAt)}` : 'Retry allowed next cycle'}${verification ? '; browser verification may be needed. Scraper access must be checked separately.' : accessBlocked ? '; access may remain blocked after cooldown.' : ''}` : '';
+        : boardError ? `${retryAt > Date.now() / 1000 ? `Retry allowed after ${scheduleTime(retryAt)}` : 'Retry cooldown cleared'}${verification ? ' · Browser verification may be needed' : accessBlocked ? ' · Access may remain blocked after cooldown' : ''}` : '';
       const detail = boardError ? `${boardError} · ${nextRetry}` : coverageWarning;
+      const yieldCounts = Object.values(boardProgress.yield_counts || {});
+      const newJobs = yieldCounts.reduce((total, counts) => total + counts.new, 0);
 
       return `
         <div class="telemetry-board-card">
@@ -3565,7 +3575,7 @@ function renderTelemetry(data) {
           </div>
           <div class="board-meta-row">
             <span>${escapeHtml(b.type)}${boardInfo.route ? ` · ${escapeHtml(boardInfo.route)}${boardInfo.connection_retries ? ' (fallback)' : ''}` : ''}</span>
-            <span class="board-count-pill">${count} fetched</span>
+            <span class="board-count-pill">${count} fetched${yieldCounts.length ? ` · ${newJobs} new in checkpoint` : ''}</span>
           </div>
           ${detail ? `<div class="board-error" role="status">${escapeHtml(detail)}</div>` : ''}
         </div>

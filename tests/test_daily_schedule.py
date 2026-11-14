@@ -2,11 +2,12 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 from src.database import init_db, get_user_setting, set_user_setting
 from src import execution_inbox as inbox
-from src.daily_schedule import has_unfinished, start_daily, send_digest
+from src.daily_schedule import has_unfinished, scraper_schedule, start_daily, send_digest
 from src.connectors.remote_feed import UpworkConnector
 
 
@@ -16,6 +17,13 @@ class DailyScheduleTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.db = str(Path(self.temp.name) / "daily_test.db")
         init_db(self.db)
+
+    def test_next_scraper_check_rolls_over_at_manila_midnight_and_respects_pause(self):
+        now = datetime.fromisoformat("2026-11-14T23:55:00+08:00").timestamp()
+        expected = datetime.fromisoformat("2026-11-15T00:00:00+08:00").timestamp()
+        self.assertEqual(scraper_schedule(self.db, now), {"paused": False, "next_check_at": expected})
+        set_user_setting(self.db, "auto_sync_enabled", "0")
+        self.assertEqual(scraper_schedule(self.db, now), {"paused": True})
 
     def test_midnight_resumes_unfinished_and_duplicate_cron_is_ignored(self):
         set_user_setting(self.db, "sync_status", json.dumps({"progress": {"unfinished": True}}))

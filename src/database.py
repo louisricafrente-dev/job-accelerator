@@ -376,13 +376,15 @@ def execution_condition(guard):
             [guard["key"], guard["id"], guard["fence"]])
 
 
-def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = None, execution_guard=None) -> Tuple[int, int]:
+def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = None, execution_guard=None,
+                inserted_positions: Optional[List[int]] = None) -> Tuple[int, int]:
     if not jobs:
         return 0, 0
     conn = get_db_connection(db_path)
     conn.row_factory = sqlite3.Row
     added = 0
     skipped = 0
+    new_rows = []
     try:
         cursor = conn.cursor()
         cloud = isinstance(conn, TursoConnection)
@@ -429,7 +431,7 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
             else:
                 cursor.execute(sql, params)
 
-        for job in jobs:
+        for position, job in enumerate(jobs):
             if classify_experience_level(job.title, job.description or "") == "Junior / Entry":
                 job.experience_level = "Junior / Entry"
             if not is_work_authorized_location(job.location, job.title, job.platform, job.description):
@@ -610,6 +612,8 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                 inserted = job.dedup_hash not in known_hashes if cloud else cursor.rowcount > 0
                 if inserted:
                     added += 1
+                    if inserted_positions is not None:
+                        new_rows.append(position)
                     known_hashes.add(job.dedup_hash)
                     if cloud:
                         new_item = {**vars(job), "date_posted": norm_date, "sources": initial_sources, "status": "new"}
@@ -622,6 +626,8 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
             for start in range(0, len(pending), 50):
                 conn._client.batch(pending[start:start + 50])
         conn.commit()
+        if inserted_positions is not None:
+            inserted_positions.extend(new_rows)
         if cloud and sync_cache is not None:
             sync_cache.update(db_path=db_path, catalog=catalog, catalog_by_url=catalog_by_url, known_hashes=known_hashes)
     except Exception:

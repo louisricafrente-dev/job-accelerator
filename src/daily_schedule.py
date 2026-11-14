@@ -2,13 +2,23 @@
 import json
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from src.database import acquire_sync_lease, release_sync_lease, get_user_setting, set_user_setting
 
 
 def day():
     return datetime.now(ZoneInfo("Asia/Manila")).date().isoformat()
+
+
+def scraper_schedule(db_path, now=None):
+    if get_user_setting(db_path, "auto_sync_enabled", "1").strip().lower() in ("0", "false"):
+        return {"paused": True}
+    timestamp = time.time() if now is None else now
+    manila = datetime.fromtimestamp(timestamp, ZoneInfo("Asia/Manila"))
+    # Matches the three-hour Manila schedule in scraper-cron.yml.
+    next_check = manila.replace(minute=0, second=0, microsecond=0) + timedelta(hours=3 - manila.hour % 3)
+    return {"paused": False, "next_check_at": int(next_check.timestamp())}
 
 
 def has_unfinished(db_path, *, include_deferred_feeds=True):

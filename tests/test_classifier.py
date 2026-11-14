@@ -1,7 +1,16 @@
 import unittest
-from src.classifier import classify_experience_level, classify_role
+from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity
 
 class TestClassifier(unittest.TestCase):
+    def test_technical_titles_with_no_description(self):
+        for title in ("Prompt Engineer", "NOC Engineer", "Network Administrator", "SOC Analyst",
+                      "Product Support Engineer", "Test Analyst", "AI Agent Builder", "RAG Developer"):
+            with self.subTest(title=title):
+                self.assertTrue(is_relevant_opportunity(title, location="Philippines"))
+                self.assertFalse(is_relevant_opportunity(f"Senior {title}", location="Philippines"))
+        self.assertFalse(is_relevant_opportunity("Mechanical Test Analyst", location="Philippines"))
+        self.assertEqual(classify_role("Prompt Engineer"), "Data/AI/ML")
+
     def test_description_entry_eligibility(self):
         for title, description in [
             ("Front-End Developer", "At least 1 year of web development experience, or equivalent project background."),

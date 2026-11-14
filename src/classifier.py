@@ -227,7 +227,8 @@ WEB_PATTERNS = [
     r"\bjava (?:developer|dev|engineer)?\b", r"\bc#(?:[\s/,\.-]|$)", r"\b\.net\b", r"\basp\.net\b",
     r"\bphp\b", r"\blaravel\b", r"\bsymfony\b", r"\bruby\b", r"\brails\b", r"\bruby on rails\b",
     r"\bshopify\b", r"\bwordpress\b", r"\bdatabase administrator\b", r"\bdba\b",
-    r"\bsysadmin\b", r"\bsystem(?:s)? administrator\b", r"\bnetwork engineer\b",
+    r"\bsysadmin\b", r"\bsystem(?:s)? administrator\b", r"\bnetwork (?:engineer|administrator)\b",
+    r"\bnoc engineer\b", r"\bsoc analyst\b", r"\bproduct support engineer\b", r"\btest analyst\b",
     r"\bsecurity analyst\b", r"\bapplication security engineer\b", r"\bsecurity engineer\b",
     r"\bspring boot\b", r"\bspring framework\b", r"\bfastapi\b", r"\bdjango\b", r"\bflask\b",
     r"\bmobile\b", r"\bandroid\b", r"\bios\b", r"\bflutter\b", r"\breact native\b",
@@ -251,7 +252,7 @@ DATA_AI_PATTERNS = [
     r"\bbi developer\b", r"\bbusiness intelligence\b", r"\banalytics engineer\b",
     r"\bartificial intelligence\b", r"\bbig data\b", r"\bspark\b", r"\bpyspark\b",
     r"\bairflow\b", r"\bdbt\b", r"\bdatabricks\b", r"\bsnowflake\b", r"\bbigquery\b",
-    r"\blangchain\b", r"\blanggraph\b", r"\bllamaindex\b", r"\brag\b", r"\bprompt engineering\b"
+    r"\blangchain\b", r"\blanggraph\b", r"\bllamaindex\b", r"\brag\b", r"\bprompt engineer(?:ing)?\b"
 ]
 
 NON_TECH_BLACKLIST = [
@@ -371,7 +372,7 @@ def is_non_tech(title: str, description: str = "") -> bool:
 
     # Physical, traditional engineering & construction roles (catches multi-word titles like Mechanical Design Engineer)
     physical_role = re.search(
-        r"\b(?:civil|structural|mechanical|construction|chemical|mining|petroleum|sanitary|geotechnical|marine|architectural|draftsman|cad|hvac|refrigeration|plumbing|piping|electrical|electronics|instrumentation|site|field|facilities|building)\b.*?\b(?:engineer|engineering|technician|estimator|draftsman|inspector|supervisor)\b",
+        r"\b(?:civil|structural|mechanical|construction|chemical|mining|petroleum|sanitary|geotechnical|marine|architectural|draftsman|cad|hvac|refrigeration|plumbing|piping|electrical|electronics|instrumentation|site|field|facilities|building)\b.*?\b(?:engineer|engineering|technician|estimator|draftsman|inspector|supervisor|test analyst)\b",
         title_lower
     )
     if physical_role and not ("site reliability" in title_lower or re.search(r"\bsre\b", title_lower)):

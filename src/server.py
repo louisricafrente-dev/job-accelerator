@@ -598,10 +598,13 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = True)
         if auth_err:
             return auth_err
         bottle.response.content_type = "application/json"
+        from src.daily_schedule import scraper_schedule
+        schedule = scraper_schedule(db_path)
         if database_execution():
             from src.execution_dispatch import telemetry as database_telemetry
-            return json.dumps(database_telemetry(db_path))
+            return json.dumps({**database_telemetry(db_path), "schedule": schedule})
         telemetry = aggregator.get_telemetry()
+        telemetry["schedule"] = schedule
         telemetry.setdefault("last_result", aggregator.last_sync_result)
         upwork_feed = json.loads(get_user_setting(db_path, "upwork_feed_status", "{}") or "{}")
         from src.cloud_sync import read_run, public_run, ACTIVE
