@@ -75,6 +75,11 @@ class TestSelectedFixes(unittest.TestCase):
 
 
 class TestLauncher(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_running_app_is_opened_without_restart(self):
         import run
         health = io.BytesIO(json.dumps({"service": "job-accelerator", "status": "ok"}).encode())

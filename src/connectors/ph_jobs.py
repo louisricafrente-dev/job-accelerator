@@ -146,23 +146,14 @@ class BossjobConnector(BaseConnector):
                         experience_level=classify_experience_level(title),
                         date_posted=pub_date
                     ))
-                seen = set(state.get("useful_urls", []))
-                useful = {job.job_url for job in jobs} - seen
-                state["useful_urls"] = sorted(seen | useful)
-                state["empty_streak"] = 0 if useful else state.get("empty_streak", 0) + 1
                 # Refreshed ranking mixes old and new publication dates.
-                more = bool(items) and payload.get("total_pages", page) > page
-                reason = "provider end"
-                if state["empty_streak"] >= 3:
-                    more, reason = False, "three consecutive pages without new eligible jobs"
-                elif page >= 8:
-                    more, reason = False, "eight-page safety budget per keyword"
-                elif more:
-                    reason = "continuing bounded sample"
+                total_pages = payload.get("total_pages")
+                more = isinstance(total_pages, int) and total_pages > page
                 self.finish_page(state, [str(item.get("id") or item.get("job_url") or "") for item in items],
                                  [item.get("published_at") for item in items], more)
                 state["page"] = page + 1
-                self.coverage_warning = f"Coverage limited: Bossjob refreshed ranking has no publication cutoff; {reason}"
+                if not isinstance(total_pages, int):
+                    self.coverage_warning = "Coverage limited: Bossjob did not report its page count"
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
             logger.error(f"[{self.platform}] fetch failed: {e}")
@@ -426,7 +417,7 @@ class FounditPHConnector(NewPlatformConnectorMixin, BaseConnector):
                 headers={"Accept": "application/json, text/plain, */*", "Referer": referer},
                 timeout=15,
             )
-            if resp.status_code != 200:
+            if resp.status_code not in (200, 403, 429):
                 self._session_primed = False
                 sess = self._get_session()
                 resp = sess.get(
@@ -460,9 +451,7 @@ class FounditPHConnector(NewPlatformConnectorMixin, BaseConnector):
                 raw_dates.append(pub_date)
                 parsed_rows.append((item, jid, pub_date))
 
-            has_in_window = any(self.accepts_date(d) for d in raw_dates if d)
-            max_start = 240 if self.window_days > 2 else 120
-            more_available = has_in_window and len(parsed_rows) >= self.PAGE_SIZE - 5 and start + self.PAGE_SIZE <= max_start
+            more_available = len(items) >= self.PAGE_SIZE
             self.finish_page(state, raw_ids, raw_dates, more_available, ordered=False)
             state["start"] = start + self.PAGE_SIZE if self.has_more else 0
 

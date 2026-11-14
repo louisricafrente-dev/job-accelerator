@@ -180,21 +180,10 @@ class JobSpyAdapter(BaseConnector):
                     date_posted=date_str,
                     description=description
                 ))
-            seen = set(state.get("useful_urls", []))
-            useful = {job.job_url for job in jobs} - seen
-            state["useful_urls"] = sorted(seen | useful)
-            state["empty_streak"] = 0 if useful else state.get("empty_streak", 0) + 1
             more = not errors and len(df) >= wanted
-            max_pages = 3 if self.site_name == "linkedin" else 4
             if offset + len(df) >= 1000:
                 more = False
-                self.coverage_warning = "Coverage limited: provider search reached its approximately 1000-result ceiling"
-            elif more and not self.is_feed and state.get("pages_saved", 0) + 1 >= max_pages:
-                more = False
-                self.coverage_warning = f"Coverage limited: search reached the {max_pages}-page limit on a full page"
-            elif more and not self.is_feed and state["empty_streak"] >= 2:
-                more = False
-                self.coverage_warning = "Coverage limited: two full pages returned no new eligible jobs"
+                self.coverage_warning = "Coverage limited: search reached the 1000-result paging boundary"
             self.finish_page(state, [str(row.get("job_url") or "") for row in rows],
                              [row.get("date_posted") for row in rows], more)
             state["offset"] = offset + wanted if more else 0

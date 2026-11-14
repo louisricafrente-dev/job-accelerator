@@ -18,31 +18,23 @@ class TestSafeSourceSampling(unittest.TestCase):
                 self.assertFalse(is_today_or_yesterday(normalize_date(raw)))
         self.assertEqual(normalize_date("today", datetime(2026, 10, 28, 16, 30, tzinfo=timezone.utc)), "2026-10-29")
 
-    def boss_page(self, board, page, *, useful=True, url=None):
+    def boss_page(self, board, page, *, useful=True, total=10):
         item = {"id": page, "job_title": "Software Developer", "job_country": "Philippines",
-                "published_at": "today" if useful else "2020-01-01", "job_url": url or f"/job/{page}"}
-        payload = {"code": 0, "data": {"jobs": [item], "total_pages": 1000}}
+                "published_at": "today" if useful else "2020-01-01", "job_url": f"/job/{page}"}
+        payload = {"code": 0, "data": {"jobs": [item], "total_pages": total}}
         with patch.object(board, "open_url", return_value=io.BytesIO(json.dumps(payload).encode())):
             jobs = board.fetch("developer")
         self.assertFalse(board.last_error)
         board.query_state = dict(board.next_query_state)
         return jobs
 
-    def test_bossjob_preserves_later_matches_and_stops_at_safe_ceiling(self):
+    def test_bossjob_reaches_provider_end_past_old_page_cap(self):
         board = BossjobConnector()
-        for page in range(1, 9):
-            self.boss_page(board, page, useful=page > 2)
-            self.assertEqual(board.has_more, page < 8)
-        self.assertIn("eight-page", board.coverage_warning)
-        self.assertEqual(board.query_state["raw_seen"], 8)
-
-    def test_bossjob_stops_after_three_pages_with_no_new_eligible_jobs(self):
-        board = BossjobConnector()
-        self.boss_page(board, 1)
-        for page in range(2, 5):
-            self.boss_page(board, page, url="/job/1")
-            self.assertEqual(board.has_more, page < 4)
-        self.assertIn("three consecutive", board.coverage_warning)
+        for page in range(1, 11):
+            jobs = self.boss_page(board, page, useful=page == 10)
+            self.assertEqual(board.has_more, page < 10)
+            self.assertEqual(len(jobs), int(page == 10))
+        self.assertEqual(board.coverage_warning, "")
 
     def test_urllib_size_limit_stops_reading_and_does_not_retry(self):
         board = RemoteOKConnector()

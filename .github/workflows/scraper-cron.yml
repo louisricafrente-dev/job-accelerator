@@ -2,10 +2,8 @@ name: Scheduled cloud scraper
 
 on:
   schedule:
-    # 00:00 Manila time (16:00 UTC)
-    - cron: '0 16 * * *'
-    # 10:00 AM Manila time (02:00 UTC)
-    - cron: '0 2 * * *'
+    # Every three hours, starting at 00:00 Manila time.
+    - cron: '0 1,4,7,10,13,16,19,22 * * *'
   workflow_dispatch:
     inputs:
       force:

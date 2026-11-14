@@ -54,9 +54,16 @@ def run():
 
     # Scheduled and website requests share atomic claims and renewable leases.
     previous = inbox.read(db_path)
-    requested_day = datetime.fromtimestamp(previous.get("requested_at", 0), MANILA).date().isoformat()
-    resume = (not force and requested_day == day() and inbox.public(previous).get("status") in {"partial", "error"}
-              and has_unfinished(db_path, include_deferred_feeds=False))
+    requested_at = datetime.fromtimestamp(previous.get("requested_at", 0), MANILA)
+    previous_status = inbox.public(previous).get("status")
+    same_day = requested_at.date().isoformat() == day()
+    unfinished = same_day and previous_status in {"partial", "error"} and has_unfinished(db_path)
+    evening_refresh = datetime.now(MANILA).hour >= 21 and requested_at.hour < 21
+    if (not force and same_day and previous.get("automatic") and not unfinished
+            and previous_status in {"complete", "partial"} and not evening_refresh):
+        print("[*] Today's automatic scrape has no pending pages or source retries.")
+        return
+    resume = not force and unfinished
     command = inbox.enqueue(db_path, automatic=not force, resume=resume)
     now = time.time()
     if command.get("status") == "running" and command.get("executor") == "cloud" and command.get("lease_until", 0) > now:

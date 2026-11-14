@@ -144,6 +144,17 @@ class TestSyncBatches(unittest.TestCase):
         self.run_batch(["a", "b"], budget=10)
         self.assertEqual(self.board.calls, ["a", "b", "a"])
 
+    def test_forbidden_recheck_backs_off_and_resets_after_recovery(self):
+        self.board.error = "HTTP 403"
+        for delay in (1800, 3600, 7200):
+            result = self.run_batch(["a"])
+            deferred = result["progress"]["deferred_boards"][0]
+            self.assertEqual(deferred["retry_at"] - self.clock.time(), delay)
+            self.clock.value += delay + 1
+        self.board.error = ""
+        result = self.run_batch(["a"])
+        self.assertNotIn("access_failures", result["progress"]["boards"][self.board.platform])
+
     def test_explicit_restart_preserves_provider_cooldown_and_success_clears_block(self):
         from src.sync_batches import run_batch
         original = self.board.fetch

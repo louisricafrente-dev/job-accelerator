@@ -50,7 +50,7 @@ class TestDurableQueryPages(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
-        self.db = os.path.join(temp.name, "coverage.db")
+        self.db = os.path.join(temp.name, "coverage_test.db")
         init_db(self.db)
         self.clock = Clock()
         self.board = PagedQuery(self.clock)
@@ -142,7 +142,7 @@ class TestSourcePageBoundaries(unittest.TestCase):
             return pd.DataFrame([{"job_url": f"https://example.com/{kwargs['offset']+i}", "title": "Software Developer",
                                   "date_posted": "today", "location": "Philippines"} for i in range(count)])
         with tempfile.TemporaryDirectory() as temp:
-            db = os.path.join(temp, "zip.db")
+            db = os.path.join(temp, "zip_test.db")
             init_db(db)
             with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=scrape)}), patch("src.sync_batches.QUERY_DELAY_SECONDS", 0):
                 result = Aggregator(db, [c]).run_sync(["developer"], budget_seconds=5)
@@ -232,7 +232,7 @@ class TestSourcePageBoundaries(unittest.TestCase):
         self.assertEqual(params["from_time"], [str(int(start.timestamp()))])
         self.assertEqual(params["to_time"], [str(int(end.timestamp())-1)])
 
-    def test_bossjob_old_first_page_does_not_hide_recent_second_page_or_claim_full_coverage(self):
+    def test_bossjob_old_first_page_does_not_hide_recent_second_page(self):
         c = BossjobConnector()
         for page, date in [(1, "2020-01-01"), (2, "today")]:
             item = {"id": page, "job_title": "Software Developer", "published_at": date, "job_url": f"/job/{page}", "job_country": "Philippines"}
@@ -241,7 +241,6 @@ class TestSourcePageBoundaries(unittest.TestCase):
             self.assertEqual(len(jobs), page-1)
             c.query_state = dict(c.next_query_state)
         self.assertTrue(c.has_more)
-        self.assertIn("Coverage limited", c.coverage_warning)
 
     def test_jobspy_continues_when_first_raw_page_has_no_relevant_jobs(self):
         import pandas as pd
@@ -275,51 +274,73 @@ class TestSourcePageBoundaries(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
         self.assertNotIn("last_date", c.next_feed_state)
 
-    def test_freelancer_short_continuation_page_stops_cleanly(self):
+    def test_freelancer_empty_page_with_more_reported_retains_progress(self):
         c = FreelancerConnector()
         start, _ = scrape_date_window()
         c.query_state = {"window_start": start.date().isoformat(), "query": "react", "offset": 25}
         with patch.object(c, "open_url", return_value=response({"result": {"projects": [], "total_count": 50}})):
             jobs = c.fetch("react")
         self.assertEqual(jobs, [])
-        self.assertEqual(c.last_error, "")
+        self.assertIn("empty continuation page", c.last_error)
         self.assertFalse(c.has_more)
 
-    def test_jobspy_stops_after_two_consecutive_empty_pages(self):
+    def test_freelancer_fetches_past_previous_offset_cap(self):
+        c = FreelancerConnector()
+        start, _ = scrape_date_window()
+        c.query_state = {"window_start": start.date().isoformat(), "query": "react", "offset": 75}
+        rows = [{"id": i, "title": "Accountant", "submitdate": int(start.timestamp())} for i in range(76, 101)]
+        with patch.object(c, "open_url", return_value=response({"result": {"projects": rows, "total_count": 101}})):
+            self.assertEqual(c.fetch("react"), [])
+        self.assertTrue(c.has_more)
+        self.assertEqual(c.next_query_state["offset"], 100)
+
+    def test_jobspy_continues_past_two_full_pages_without_eligible_jobs(self):
         import pandas as pd
         from types import SimpleNamespace
         from src.connectors.jobspy_adapter import JobSpyAdapter
         c = JobSpyAdapter("LinkedIn", "linkedin", 1)
-        irrelevant = pd.DataFrame([{"job_url": f"https://example.com/{i}", "title": "Accountant", "date_posted": "today"} for i in range(15)])
+        irrelevant = pd.DataFrame([{"job_url": f"https://example.com/{i}", "title": "Accountant", "date_posted": "today"} for i in range(10)])
         with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=lambda **kwargs: irrelevant)}):
             c.fetch("developer")
             self.assertTrue(c.has_more)
             c.query_state = dict(c.next_query_state)
-            irrelevant2 = pd.DataFrame([{"job_url": f"https://example.com/p2-{i}", "title": "Nurse", "date_posted": "today"} for i in range(15)])
+            irrelevant2 = pd.DataFrame([{"job_url": f"https://example.com/p2-{i}", "title": "Nurse", "date_posted": "today"} for i in range(10)])
         with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=lambda **kwargs: irrelevant2)}):
             c.fetch("developer")
-            self.assertFalse(c.has_more)
+            self.assertTrue(c.has_more)
+            self.assertEqual(c.next_query_state["offset"], 20)
 
-    def test_installed_linkedin_adapter_continues_full_pages_and_reports_cap(self):
+    def test_installed_jobspy_continues_past_old_page_caps(self):
         from datetime import datetime
         import jobspy
         import pandas as pd
         from src.connectors.jobspy_adapter import JobSpyAdapter
         from src.models import MANILA
 
-        def fetch(**kwargs):
-            offset = kwargs["offset"]
-            return pd.DataFrame([
-                {"job_url": f"https://example.com/{i}", "title": "Junior Software Developer",
-                 "location": "Philippines", "date_posted": datetime.now(MANILA).date()}
-                for i in range(offset, offset + kwargs["results_wanted"])
-            ])
+        today = datetime.now(MANILA).date()
+        for platform, site, size, old_cap in (
+            ("LinkedIn", "linkedin", 10, 3),
+            ("Indeed", "indeed", 35, 4),
+            ("Glassdoor", "glassdoor", 35, 4),
+        ):
+            with self.subTest(platform=platform):
+                rows = pd.DataFrame([
+                    {"job_url": f"https://example.com/{i}", "title": "Junior Software Developer",
+                     "location": "Philippines", "date_posted": today}
+                    for i in range(size * old_cap + 1)
+                ])
 
-        board = JobSpyAdapter("LinkedIn", "linkedin", 1)
-        with patch.object(jobspy, "scrape_jobs", side_effect=fetch) as scrape, patch("src.connectors.jobspy_adapter.time.sleep"):
-            for index in range(3):
-                self.assertEqual(len(board.fetch("developer")), 10)
-                self.assertEqual(board.has_more, index < 2)
-                board.query_state = board.next_query_state
-        self.assertEqual([call.kwargs["offset"] for call in scrape.call_args_list], [0, 10, 20])
-        self.assertIn("3-page limit", board.coverage_warning)
+                def fetch(*, offset, results_wanted, **kwargs):
+                    return rows.iloc[offset:offset + results_wanted]
+
+                board = JobSpyAdapter(platform, site, 1)
+                with patch.object(jobspy, "scrape_jobs", side_effect=fetch) as scrape, patch("src.connectors.jobspy_adapter.time.sleep"):
+                    for _ in range(old_cap):
+                        self.assertEqual(len(board.fetch("developer")), size)
+                        self.assertTrue(board.has_more)
+                        board.query_state = board.next_query_state
+                    self.assertEqual(len(board.fetch("developer")), 1)
+                    self.assertFalse(board.has_more)
+                    self.assertEqual(board.coverage_warning, "")
+                self.assertEqual([call.kwargs["offset"] for call in scrape.call_args_list],
+                                 [index * size for index in range(old_cap + 1)])

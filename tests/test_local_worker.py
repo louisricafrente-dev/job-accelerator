@@ -319,8 +319,7 @@ class TestLocalWorker(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         scraper = (root / ".github/workflows/scraper-cron.yml").read_text()
         digest = (root / ".github/workflows/daily-digest-cron.yml").read_text()
-        self.assertIn("cron: '0 16 * * *'", scraper)
-        self.assertIn("cron: '0 2 * * *'", scraper)
+        self.assertIn("cron: '0 1,4,7,10,13,16,19,22 * * *'", scraper)
         self.assertIn("cron: '0 2 * * *'", digest)
         midnight = datetime(2026, 10, 21, 16, tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Asia/Manila"))
         self.assertEqual((midnight.hour, midnight.minute), (0, 0))

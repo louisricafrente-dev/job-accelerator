@@ -185,8 +185,7 @@ class DailyApiTests(unittest.TestCase):
         self.assertNotIn("crons", config, "Vercel crons must be removed to avoid quota exhaustion and duplicates")
 
         scraper_cron = (root / ".github" / "workflows" / "scraper-cron.yml").read_text()
-        self.assertIn("0 16 * * *", scraper_cron)
-        self.assertIn("0 2 * * *", scraper_cron)
+        self.assertIn("0 1,4,7,10,13,16,19,22 * * *", scraper_cron)
 
         digest_cron = (root / ".github" / "workflows" / "daily-digest-cron.yml").read_text()
         self.assertIn("0 2 * * *", digest_cron)

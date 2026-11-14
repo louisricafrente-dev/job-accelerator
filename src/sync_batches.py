@@ -15,6 +15,7 @@ QUERY_DELAY_SECONDS = 2
 REFRESH_SECONDS = 6 * 3600
 ERROR_COOLDOWN_SECONDS = 15 * 60
 BLOCK_COOLDOWN_SECONDS = 6 * 3600
+FORBIDDEN_RECHECK_SECONDS = 30 * 60
 RATE_LIMIT_COOLDOWN_SECONDS = 15 * 60
 CYCLE_SECONDS = 2 * 3600
 OWNERSHIP_CHECK_SECONDS = 15
@@ -22,6 +23,13 @@ OWNERSHIP_CHECK_SECONDS = 15
 
 def is_rate_limited(error):
     return "429" in error or "rate limit" in error.lower()
+
+
+def is_forbidden(error):
+    error = error.lower()
+    return ("403" in error or "forbidden" in error) and not any(
+        marker in error for marker in ("captcha", "challenge", "requires verification")
+    )
 
 
 def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None, resume=False, restart=False):
@@ -72,6 +80,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         min(completed_queries.values()) + REFRESH_SECONDS if completed_queries and not pending_queries else 0,
                     ),
                     "blocked_until": old.get("blocked_until", 0),
+                    "access_failures": old.get("access_failures", 0),
+                    "rate_limit_failures": old.get("rate_limit_failures", 0),
                     "last_error": old.get("last_error", ""),
                     "revision": old.get("revision", 1),
                 }
@@ -298,7 +308,13 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                                 state["retry"].append(index)
                         blocked = any(code in error.lower() for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden", "cloudflare challenge", "requires verification"))
                         if is_rate_limited(error):
-                            cooldown_secs = RATE_LIMIT_COOLDOWN_SECONDS
+                            failures = min(state.get("rate_limit_failures", 0), 2)
+                            state["rate_limit_failures"] = failures + 1
+                            cooldown_secs = RATE_LIMIT_COOLDOWN_SECONDS * 2 ** failures
+                        elif is_forbidden(error):
+                            failures = min(state.get("access_failures", 0), 4)
+                            state["access_failures"] = failures + 1
+                            cooldown_secs = min(BLOCK_COOLDOWN_SECONDS, FORBIDDEN_RECHECK_SECONDS * 2 ** failures)
                         else:
                             cooldown_secs = BLOCK_COOLDOWN_SECONDS if blocked else ERROR_COOLDOWN_SECONDS
                         state["next_at"] = time.time() + max(cooldown_secs, getattr(connector, "retry_after", 0))
@@ -307,6 +323,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                     else:
                         state["last_error"] = ""
                         state["blocked_until"] = 0
+                        state.pop("access_failures", None)
+                        state.pop("rate_limit_failures", None)
                         state["deferred"] = False
                         warning = getattr(connector, "coverage_warning", "")
                         if warning:

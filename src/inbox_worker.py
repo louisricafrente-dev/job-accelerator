@@ -5,7 +5,7 @@ import threading
 import time
 from src import execution_inbox as inbox
 from src.database import ExecutionLeaseLost, get_user_setting, set_user_setting
-from src.sync_batches import is_rate_limited
+from src.sync_batches import is_forbidden, is_rate_limited
 
 
 BATCH_SECONDS = 120
@@ -74,7 +74,8 @@ def run_claimed(db_path, command, aggregator, key=inbox.KEY):
             if result.get("status") != "error" and progress.get("unfinished") and not progress.get("can_continue", True):
                 now = time.time()
                 retry_at = min((item["retry_at"] for item in progress.get("deferred_boards", [])
-                                if is_rate_limited(item.get("error", "")) and item.get("retry_at")),
+                                if (is_rate_limited(item.get("error", "")) or is_forbidden(item.get("error", "")))
+                                and item.get("retry_at")),
                                default=command["expires_at"])
                 delay = max(1, retry_at - now)
                 if now + delay < work_deadline:

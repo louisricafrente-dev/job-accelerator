@@ -407,17 +407,13 @@ class FreelancerConnector(BaseConnector):
                         description=desc,
                         date_posted=pub_date
                     ))
-                seen = set(state.get("useful_urls", []))
-                useful = {job.job_url for job in jobs} - seen
-                state["useful_urls"] = sorted(seen | useful)
-                state["empty_streak"] = 0 if useful else state.get("empty_streak", 0) + 1
                 total = payload.get("total_count")
-                more = len(items) == 25 and (offset + len(items) < total if isinstance(total, int) else True)
-                if state["empty_streak"] >= 2 or offset >= 75:
-                    more = False
+                more = offset + len(items) < total if isinstance(total, int) else len(items) == 25
+                if more and not items:
+                    raise RuntimeError("Source returned an empty continuation page; progress retained")
                 self.finish_page(state, [str(item.get("id") or item.get("seo_url") or "") for item in items],
                                  [item.get("submitdate") for item in items], more)
-                state["offset"] = offset + 25 if more else 0
+                state["offset"] = offset + len(items) if self.has_more else 0
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
             logger.warning(f"[{self.platform}] fetch failed for query '{query}': {e}")
