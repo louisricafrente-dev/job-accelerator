@@ -14,12 +14,21 @@ from src.connectors.jobspy_adapter import JobSpyAdapter
 
 class TestRawDateRequests(unittest.TestCase):
     def test_request_window_tracks_manila_midnight_and_rounds_hours_up(self):
-        for hour, minute, expected in [(0, 0, 24), (0, 1, 25), (12, 0, 36), (23, 59, 48)]:
+        for hour, minute, expected in [(0, 0, 1), (0, 1, 1), (12, 0, 12), (23, 59, 24)]:
             now = datetime(2026, 10, 30, hour, minute, tzinfo=MANILA)
             start, end = scrape_date_window(now.astimezone(timezone.utc))
-            self.assertEqual(start, datetime(2026, 10, 29, tzinfo=MANILA))
+            self.assertEqual(start, datetime(2026, 10, 30, tzinfo=MANILA))
             self.assertEqual(end, datetime(2026, 10, 31, tzinfo=MANILA))
             self.assertEqual(scrape_request_hours(now), expected)
+        for hour, minute, expected in [(0, 0, 24), (0, 1, 25), (12, 0, 36), (23, 59, 48)]:
+            now = datetime(2026, 10, 30, hour, minute, tzinfo=MANILA)
+            start, end = scrape_date_window(now.astimezone(timezone.utc), days=2)
+            self.assertEqual(start, datetime(2026, 10, 29, tzinfo=MANILA))
+            self.assertEqual(end, datetime(2026, 10, 31, tzinfo=MANILA))
+            self.assertEqual(scrape_request_hours(now, days=2), expected)
+        now = datetime(2026, 10, 30, 14, 15, tzinfo=MANILA)
+        since = datetime(2026, 10, 30, 9, 0, tzinfo=MANILA)
+        self.assertEqual(scrape_request_hours(now, since=since), 6)
 
     @staticmethod
     def kalibrr_item(i, date):
@@ -74,12 +83,12 @@ class TestRawDateRequests(unittest.TestCase):
 
     def test_jobstreet_rollover_restarts_at_first_recent_page(self):
         c = JobStreetCatalogConnector()
-        c.feed_state = {"days": 2, "window_start": "2020-01-01", "page": 15}
+        c.feed_state = {"days": 1, "window_start": "2020-01-01", "page": 15}
         with patch.object(c, "get_url", return_value=MagicMock(status_code=200, text='{"data": [], "totalCount": 0}')) as fetch:
             c.fetch()
         params = parse_qs(urlsplit(fetch.call_args.args[0]).query)
         self.assertEqual(params["page"], ["1"])
-        self.assertEqual(params["daterange"], ["2"])
+        self.assertEqual(params["daterange"], ["1"])
 
     def test_freelancer_passes_both_calendar_bounds_to_server(self):
         c = FreelancerConnector()
@@ -120,6 +129,12 @@ class TestRawDateRequests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 2)
         for call in fetch.call_args_list:
             params = parse_qs(urlsplit(call.args[0]).query)
-            self.assertEqual(params["days"], ["2"])
+            self.assertEqual(params["days"], ["1"])
             self.assertIn("search", params)
+        c.window_since = (datetime.now(MANILA) - timedelta(days=2, hours=1)).timestamp()
+        with patch.object(c, "get_url", return_value=MagicMock(status_code=200, text="")) as fetch:
+            c._fetch_ziprecruiter_ldjson()
+        for call in fetch.call_args_list:
+            params = parse_qs(urlsplit(call.args[0]).query)
+            self.assertEqual(params["days"], ["3"])
 

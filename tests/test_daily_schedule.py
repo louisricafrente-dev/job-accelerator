@@ -40,6 +40,16 @@ class DailyScheduleTests(unittest.TestCase):
         start_daily(self.db, start)
         start.assert_called_once_with(automatic=True, resume=False)
 
+    def test_previous_day_deferred_only_partial_starts_fresh_today(self):
+        from datetime import timedelta
+        from src.models import MANILA
+        yesterday_ts = (datetime.now(MANILA) - timedelta(days=1)).timestamp()
+        set_user_setting(self.db, "sync_status", json.dumps({
+            "last_sync_time": yesterday_ts,
+            "progress": {"has_more": False, "unfinished": True},
+        }))
+        self.assertFalse(has_unfinished(self.db))
+
     def test_failed_start_can_retry_same_day(self):
         with self.assertRaises(RuntimeError):
             start_daily(self.db, Mock(side_effect=RuntimeError("network")))

@@ -5,7 +5,9 @@ import json
 import time
 import uuid
 
-from src.database import acquire_sync_lease, release_sync_lease, get_user_setting, set_sync_checkpoint, insert_jobs
+from src.connectors.base import BaseConnector
+from src.database import acquire_sync_lease, release_sync_lease, get_user_setting, set_sync_checkpoint, set_user_setting, insert_jobs
+from src.models import resolve_scrape_since
 from src.video_editor import collectable_job
 
 PROGRESS_KEY = "sync_batch_progress"
@@ -54,10 +56,20 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         restart = restart and (cycle_id is None or checkpoint.get("cycle_id") != cycle_id)
         saved_status = json.loads(get_user_setting(aggregator.db_path, "sync_status", "{}") or "{}")
         aggregator.last_sync_time = saved_status.get("last_successful_fetch", 0)
+        now_ts = time.time()
         new_cycle = restart or (cycle_id is not None and checkpoint.get("cycle_id") != cycle_id)
+        refresh_completed = cycle_id is None or checkpoint.get("cycle_id") != cycle_id
+        cycle_expired = refresh_completed and checkpoint.get("cycle_started_at", 0) > 0 and checkpoint.get("cycle_started_at", 0) < now_ts - REFRESH_SECONDS
         if checkpoint.get("signature") != signature or new_cycle:
             previous = checkpoint.get("boards", {})
-            checkpoint = {"signature": signature, "boards": {}, "next_board": 0}
+            window_since_ts = resolve_scrape_since(aggregator.db_path, now=now_ts)
+            checkpoint = {
+                "signature": signature,
+                "boards": {},
+                "next_board": 0,
+                "cycle_started_at": now_ts,
+                "window_since_ts": window_since_ts,
+            }
             for connector in aggregator.connectors:
                 old = previous.get(connector.platform, {})
                 reuse_feed = not restart and getattr(connector, "is_feed", False) and old.get("next_at", 0) > time.time() and not old.get("last_error")
@@ -86,7 +98,13 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                     "last_error": old.get("last_error", ""),
                     "revision": old.get("revision", 1),
                 }
-        refresh_completed = cycle_id is None or checkpoint.get("cycle_id") != cycle_id
+        else:
+            if cycle_expired or "window_since_ts" not in checkpoint:
+                checkpoint["cycle_started_at"] = now_ts
+                checkpoint["window_since_ts"] = resolve_scrape_since(aggregator.db_path, now=now_ts)
+            elif "cycle_started_at" not in checkpoint:
+                checkpoint["cycle_started_at"] = now_ts
+        window_since_ts = checkpoint.get("window_since_ts")
         if cycle_id is not None:
             checkpoint["cycle_id"] = cycle_id
         valid_platforms = {c.platform for c in aggregator.connectors}
@@ -116,6 +134,10 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             return unpaged if unpaged < total else None
 
         for connector in aggregator.connectors:
+            if isinstance(connector, BaseConnector):
+                connector.window_since = window_since_ts
+                if getattr(connector, "source", None) is not None and isinstance(connector.source, BaseConnector):
+                    connector.source.window_since = window_since_ts
             state = boards.setdefault(connector.platform, {"cursor": 0, "retry": [], "next_at": 0})
             connector.daily_sync = bool(getattr(aggregator, "daily_run", False))
             if connector.platform == "Upwork" and connector.daily_sync:
@@ -293,7 +315,14 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 for future in [future for future in pending if future in done]:
                     connector, indices = pending.pop(future)
                     jobs, error, fetch_seconds = future.result()
-                    relevant = [job for job in jobs if collectable_job(job, window_days=connector.window_days)]
+                    if isinstance(connector, BaseConnector):
+                        relevant = [job for job in jobs if collectable_job(
+                            job,
+                            window_days=connector.window_days,
+                            window_since=connector._effective_since(),
+                        )]
+                    else:
+                        relevant = [job for job in jobs if collectable_job(job, window_days=connector.window_days)]
                     completed.append((connector, indices, jobs, error, fetch_seconds, relevant))
                     combined_jobs.extend(relevant)
                 save_started_at = time.monotonic()
@@ -436,6 +465,9 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         aggregator.last_sync_result = result
         aggregator.platform_telemetry = telemetry
         persist()
+        if (not ingestion_failed and not result["progress"]["has_more"]
+                and any(not boards[c.platform].get("last_error") and is_complete(c, boards[c.platform]) for c in connectors)):
+            set_user_setting(aggregator.db_path, "last_completed_scrape_at", str(checkpoint.get("cycle_started_at") or time.time()))
         return result
     finally:
         aggregator.is_syncing = False

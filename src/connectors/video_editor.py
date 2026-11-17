@@ -11,8 +11,7 @@ from src.video_editor import VIDEO_QUERIES, VIDEO_SOURCES, attention_check, coll
 class VideoEditorConnector(BaseConnector):
     is_feed = True
     checkpointed_feed = True
-    revision = 1
-    window_days = 7
+    revision = 2
 
     def __init__(self, source):
         if source.platform not in VIDEO_SOURCES:
@@ -21,7 +20,6 @@ class VideoEditorConnector(BaseConnector):
         self.platform = source.platform + " (Video Editor)"
         self.tier = source.tier
         source.video_editor_mode = True
-        source.window_days = 7
 
     def _description(self, job):
         from bs4 import BeautifulSoup
@@ -64,12 +62,14 @@ class VideoEditorConnector(BaseConnector):
         term = VIDEO_QUERIES[index]
         source = self.source
         source.db_path = self.db_path
+        source._window_days_override = self._window_days_override
+        source.window_since = self.window_since
         source.query_state = state.get("source_state", {})
         source.feed_state = state.get("source_state", {})
         if source.platform == "JobStreet":
             source.search_query = term
         self.last_error = ""
-        self.last_fetch_mode = f"basic CapCut / 7 days / {term}"
+        self.last_fetch_mode = f"basic CapCut / {self.window_days}d / {term}"
         jobs = source.fetch(query=term, location=location)
         self.last_error = source.last_error
         self.last_raw_count = getattr(source, "last_raw_count", 0)
@@ -91,7 +91,7 @@ class VideoEditorConnector(BaseConnector):
             if flagged:
                 logger.warning("[%s] Employer attention check/prompt-injection signal: %s", self.platform, job.job_url)
             reason = video_fit(job.title, description)
-            if reason or not collectable_job(job):
+            if reason or not collectable_job(job, window_days=self.window_days, window_since=self._effective_since()):
                 rejected[reason or "date/location not eligible"] += 1
                 continue
             job.experience_level = classify_experience_level(job.title, description)
@@ -108,7 +108,7 @@ class VideoEditorConnector(BaseConnector):
         more = getattr(source, "has_more", False)
         self.next_feed_state["source_state"] = getattr(source, "next_feed_state" if getattr(source, "is_feed", False) else "next_query_state", {}) if more else {}
         self.next_feed_state["query_index"] = index if more else index + 1
-        self.next_feed_state["days"] = 7
+        self.next_feed_state["days"] = self.window_days
         self.next_feed_state["pages_saved"] = state.get("pages_saved", 0) + 1
         self.has_more = more or index + 1 < len(VIDEO_QUERIES)
         if not self.has_more:

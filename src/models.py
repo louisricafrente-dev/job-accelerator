@@ -1,29 +1,166 @@
 import hashlib
+import math
 import urllib.parse
 import re
 import email.utils
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 
 MANILA = timezone(timedelta(hours=8))
+DEFAULT_SCRAPE_WINDOW_DAYS = 1
+MAX_SCRAPE_WINDOW_DAYS = 15
+_VAGUE_DATE_TOKENS = ("recently", "recent", "posted recently", "posted recent", "new", "active today")
 
 
-def scrape_date_window(now: Optional[datetime] = None, days: int = 2):
+def coerce_manila_datetime(value: Any, ref_date: Optional[Any] = None) -> Optional[datetime]:
+    """Convert a datetime, date, epoch timestamp, or date string into an aware Manila datetime."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(MANILA) if value.tzinfo else value.replace(tzinfo=MANILA)
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time(), tzinfo=MANILA)
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            return None
+        val = value / 1000.0 if abs(value) >= 1e11 else float(value)
+        try:
+            return datetime.fromtimestamp(val, tz=MANILA)
+        except (OverflowError, OSError, ValueError):
+            return None
+    s = str(value).strip()
+    if not s:
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", s):
+        val = float(s)
+        if len(s.split(".", 1)[0]) >= 12:
+            val /= 1000.0
+        try:
+            return datetime.fromtimestamp(val, tz=MANILA)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        try:
+            return datetime.combine(date.fromisoformat(s), datetime.min.time(), tzinfo=MANILA)
+        except ValueError:
+            return None
+    if re.match(r"^\d{4}-\d{2}-\d{2}", s):
+        try:
+            parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return parsed.astimezone(MANILA) if parsed.tzinfo else parsed.replace(tzinfo=MANILA)
+        except ValueError:
+            return None
+    try:
+        parsed_dt = email.utils.parsedate_to_datetime(s)
+        if parsed_dt is not None:
+            return parsed_dt.astimezone(MANILA) if parsed_dt.tzinfo else parsed_dt.replace(tzinfo=MANILA)
+    except Exception:
+        pass
+    norm = normalize_date(s, ref_date=ref_date)
+    if norm:
+        try:
+            return datetime.combine(date.fromisoformat(norm), datetime.min.time(), tzinfo=MANILA)
+        except ValueError:
+            return None
+    return None
+
+
+def parse_precise_scrape_instant(raw: Any, ref_date: Optional[Any] = None) -> Optional[datetime]:
+    """Parse raw inputs that carry verified sub-day time precision into a Manila datetime."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, datetime):
+        if raw.tzinfo is not None:
+            return raw.astimezone(MANILA)
+        return None
+    if isinstance(raw, date):
+        return None
+    if isinstance(raw, (int, float)):
+        if not math.isfinite(raw):
+            return None
+        val = raw / 1000.0 if abs(raw) >= 1e11 else float(raw)
+        try:
+            return datetime.fromtimestamp(val, tz=MANILA)
+        except (OverflowError, OSError, ValueError):
+            return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    now = coerce_manila_datetime(ref_date) if ref_date is not None else None
+    if now is None:
+        now = datetime.now(MANILA)
+    s_lower = s.lower()
+    if s_lower in ("just now", "moments ago", "just posted"):
+        return now
+    relative_time = re.fullmatch(r"(?:posted\s+)?(\d+)\s*(hours?|hrs?|h|minutes?|mins?)(?:\s+ago)?", s_lower)
+    if relative_time:
+        amount = int(relative_time.group(1))
+        unit = relative_time.group(2)
+        try:
+            delta = timedelta(hours=amount) if unit.startswith("h") else timedelta(minutes=amount)
+            return now - delta
+        except OverflowError:
+            return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", s):
+        val = float(s)
+        if len(s.split(".", 1)[0]) >= 12:
+            val /= 1000.0
+        try:
+            return datetime.fromtimestamp(val, tz=MANILA)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", s):
+        try:
+            parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(MANILA)
+        except ValueError:
+            return None
+    if ":" in s:
+        try:
+            parsed_dt = email.utils.parsedate_to_datetime(s)
+            if parsed_dt is not None and parsed_dt.tzinfo is not None:
+                return parsed_dt.astimezone(MANILA)
+        except Exception:
+            pass
+    return None
+
+
+def scrape_date_window(now: Optional[datetime] = None, days: Optional[int] = None, since: Optional[Any] = None):
     """Philippine publication window, with an exclusive upper bound."""
     now = now or datetime.now(MANILA)
     now = now.astimezone(MANILA) if now.tzinfo else now.replace(tzinfo=MANILA)
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return midnight - timedelta(days=days - 1), midnight + timedelta(days=1)
+    end = midnight + timedelta(days=1)
+    earliest = midnight - timedelta(days=MAX_SCRAPE_WINDOW_DAYS - 1)
+    if since is not None:
+        since_dt = coerce_manila_datetime(since, ref_date=now)
+        if since_dt is not None:
+            start = max(earliest, min(since_dt, now))
+            return start, end
+    effective_days = DEFAULT_SCRAPE_WINDOW_DAYS if days is None else max(1, min(int(days), MAX_SCRAPE_WINDOW_DAYS))
+    return midnight - timedelta(days=effective_days - 1), end
 
 
-def scrape_request_hours(now: Optional[datetime] = None, days: int = 2) -> int:
-    import math
-    now = now or datetime.now(MANILA)
-    now = now.astimezone(MANILA) if now.tzinfo else now.replace(tzinfo=MANILA)
-    start, _ = scrape_date_window(now, days=days)
-    # JobSpy's hour-only filters must round up to keep yesterday's first hour.
-    return max(24, math.ceil((now - start).total_seconds() / 3600))
+def scrape_window_days(now: Optional[datetime] = None, days: Optional[int] = None, since: Optional[Any] = None) -> int:
+    """Number of Manila calendar days spanned by the active scrape window."""
+    now_dt = now or datetime.now(MANILA)
+    now_dt = now_dt.astimezone(MANILA) if now_dt.tzinfo else now_dt.replace(tzinfo=MANILA)
+    start, _ = scrape_date_window(now_dt, days=days, since=since)
+    return max(1, min((now_dt.date() - start.date()).days + 1, MAX_SCRAPE_WINDOW_DAYS))
+
+
+def scrape_request_hours(now: Optional[datetime] = None, days: Optional[int] = None, since: Optional[Any] = None) -> int:
+    now_dt = now or datetime.now(MANILA)
+    now_dt = now_dt.astimezone(MANILA) if now_dt.tzinfo else now_dt.replace(tzinfo=MANILA)
+    start, _ = scrape_date_window(now_dt, days=days, since=since)
+    raw_hours = math.ceil((now_dt - start).total_seconds() / 3600)
+    if since is not None and coerce_manila_datetime(since, ref_date=now_dt) is not None:
+        return max(1, min(raw_hours, MAX_SCRAPE_WINDOW_DAYS * 24))
+    effective_days = DEFAULT_SCRAPE_WINDOW_DAYS if days is None else max(1, min(int(days), MAX_SCRAPE_WINDOW_DAYS))
+    floor = 24 if effective_days >= 2 else 1
+    return max(floor, min(raw_hours, MAX_SCRAPE_WINDOW_DAYS * 24))
 
 
 def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
@@ -122,18 +259,81 @@ def normalize_date(raw: Any, ref_date: Optional[Any] = None) -> str:
 
     return ""
 
-def is_today_or_yesterday(raw: Any, ref_date: Optional[Any] = None) -> bool:
-    """Accept only the current and previous Philippine calendar dates."""
-    if isinstance(ref_date, datetime):
-        now = ref_date.astimezone(MANILA) if ref_date.tzinfo else ref_date.replace(tzinfo=MANILA)
-    elif ref_date is not None:
-        now = datetime.combine(ref_date, datetime.min.time(), tzinfo=MANILA)
-    else:
-        now = datetime.now(MANILA)
-    if str(raw).strip().lower() in ("recently", "recent", "posted recently", "posted recent", "new", "active today"):
+def is_within_scrape_window(raw: Any, ref_date: Optional[Any] = None, *, days: Optional[int] = None, since: Optional[Any] = None) -> bool:
+    """Return True if raw falls within the dynamic Philippine scrape window."""
+    if raw is None or isinstance(raw, bool):
         return False
+    if str(raw).strip().lower() in _VAGUE_DATE_TOKENS:
+        return False
+    now = coerce_manila_datetime(ref_date) if ref_date is not None else None
+    if now is None:
+        now = datetime.now(MANILA)
+    start, end = scrape_date_window(now, days=days, since=since)
+    instant = parse_precise_scrape_instant(raw, ref_date=now)
+    if instant is not None:
+        return start <= instant < end
     normalized = normalize_date(raw, ref_date=now)
-    return normalized in (now.date().isoformat(), (now.date() - timedelta(days=1)).isoformat())
+    return bool(normalized) and start.date().isoformat() <= normalized < end.date().isoformat()
+
+
+def is_today_or_yesterday(raw: Any, ref_date: Optional[Any] = None, *, days: Optional[int] = 2, since: Optional[Any] = None) -> bool:
+    """Accept dates in the scrape window (defaults to today and yesterday for 2-day callers)."""
+    return is_within_scrape_window(raw, ref_date=ref_date, days=days, since=since)
+
+
+def resolve_scrape_since(db_path: Optional[str], now: Optional[float] = None) -> Optional[float]:
+    """Resolve the timestamp watermark from which the next scrape cycle should pull."""
+    if not db_path:
+        return None
+    import json
+    from src.database import get_user_setting
+    now_ts = datetime.now(MANILA).timestamp() if now is None else float(now)
+    now_dt = datetime.fromtimestamp(now_ts, MANILA)
+    try:
+        raw_last = get_user_setting(db_path, "last_completed_scrape_at", "")
+    except Exception:
+        return None
+    if raw_last:
+        try:
+            ts = float(raw_last)
+            if 0 < ts <= now_ts:
+                return ts
+        except (ValueError, TypeError):
+            pass
+    sync_ts = None
+    try:
+        raw_status = get_user_setting(db_path, "sync_status", "")
+        if raw_status:
+            status = json.loads(raw_status)
+            if isinstance(status, dict):
+                progress = status.get("progress")
+                if not isinstance(progress, dict) or not progress:
+                    last_res = status.get("last_result")
+                    progress = last_res.get("progress") if isinstance(last_res, dict) else None
+                has_more = progress.get("has_more") if isinstance(progress, dict) and progress else None
+                raw_ts = status.get("last_successful_fetch") or status.get("last_sync_time") or 0
+                if has_more is False and raw_ts:
+                    cand = float(raw_ts)
+                    if 0 < cand <= now_ts:
+                        sync_ts = cand
+    except Exception:
+        sync_ts = None
+    try:
+        daily_day = (get_user_setting(db_path, "daily_scrape_day", "") or "").strip()
+    except Exception:
+        daily_day = ""
+    if daily_day:
+        try:
+            daily_date = date.fromisoformat(daily_day)
+            if sync_ts is not None and datetime.fromtimestamp(sync_ts, MANILA).date() == daily_date:
+                return sync_ts
+            if daily_date < now_dt.date():
+                return datetime.combine(daily_date + timedelta(days=1), datetime.min.time(), tzinfo=MANILA).timestamp()
+            if daily_date == now_dt.date():
+                return sync_ts or datetime.combine(daily_date, datetime.min.time(), tzinfo=MANILA).timestamp()
+        except ValueError:
+            pass
+    return sync_ts
 
 
 def is_within_15_days(raw_or_norm: Any, max_days: int = 15, ref_date: Optional[Any] = None) -> bool:
@@ -239,7 +439,8 @@ class Job:
         self.job_url = clean_url(str(self.job_url or "").strip())
         if not self.dedup_hash:
             self.dedup_hash = hash_job(self.platform, self.company, self.title, self.job_url)
+        self._raw_date_posted = str(self.date_posted or "").strip() if self.date_posted is not None else ""
         if self.date_posted:
-            self.date_posted = ("" if str(self.date_posted).strip().lower() in
-                                ("recently", "recent", "posted recently", "posted recent", "new", "active today")
+            self.date_posted = ("" if self._raw_date_posted.lower() in _VAGUE_DATE_TOKENS
                                 else normalize_date(self.date_posted))
+        self._normalized_date_posted = self.date_posted

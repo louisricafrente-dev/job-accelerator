@@ -4,7 +4,7 @@ import urllib.request
 import urllib.parse
 from typing import List
 from src.connectors.base import BaseConnector, NewPlatformConnectorMixin, logger
-from src.models import Job, is_today_or_yesterday, normalize_date, scrape_date_window
+from src.models import Job, normalize_date
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 import time
@@ -27,7 +27,7 @@ class KalibrrConnector(BaseConnector):
         self.has_more = False
         self.coverage_warning = ""
         state = dict(getattr(self, "feed_state", {}))
-        start, _ = scrape_date_window()
+        start, _ = self.date_window()
         window_start = start.date().isoformat()
         if state.get("window_start") != window_start or not state.get("offset", 0):
             state = {"window_start": window_start}
@@ -48,15 +48,15 @@ class KalibrrConnector(BaseConnector):
                 raise RuntimeError("Kalibrr returned a listing without a job ID")
             if offset and items and fingerprint == state.get("previous_page"):
                 raise RuntimeError("Kalibrr repeated a catalogue page; progress retained")
-            dates = [normalize_date(item.get("activation_date") or item.get("published") or item.get("created_at"))
-                     for item in items]
+            raw_dates = [item.get("activation_date") or item.get("published") or item.get("created_at") for item in items]
+            dates = [normalize_date(raw_date) for raw_date in raw_dates]
             self.finish_page(state, ids, dates, offset + len(items) < total, ordered=True)
             if self.has_more and len(items) < self.PAGE_SIZE:
                 raise RuntimeError("Kalibrr catalogue page is truncated; progress retained")
             jobs = []
             self.last_raw_count = len(items)
-            for item, ident, date in zip(items, ids, dates):
-                if not is_today_or_yesterday(date):
+            for item, ident, date, raw_date in zip(items, ids, dates, raw_dates):
+                if not self.accepts_date(raw_date):
                     continue
                 title = item.get("name", "")
                 desc = BeautifulSoup(" ".join(filter(None, [item.get("description"), item.get("qualifications")])), "html.parser").get_text(" ", strip=True)
@@ -80,7 +80,7 @@ class KalibrrConnector(BaseConnector):
                                 location=loc, platform=self.platform, tier=self.tier,
                                 job_url=f"https://www.kalibrr.com/c/{code}/jobs/{ident}", salary=salary,
                                 role_category=classify_role(title, desc), experience_level=classify_experience_level(title, desc),
-                                description=desc, date_posted=date))
+                                description=desc, date_posted=raw_date or date))
             state.update(offset=offset + len(items) if self.has_more else 0,
                          previous_page=fingerprint if self.has_more else "", total=total,
                          pages_saved=offset // self.PAGE_SIZE + 1)
@@ -121,8 +121,9 @@ class BossjobConnector(BaseConnector):
                     title = item.get("job_title", "")
                     if not is_relevant_opportunity(title, ""):
                         continue
-                    pub_date = normalize_date(item.get("published_at"))
-                    if not is_today_or_yesterday(pub_date):
+                    raw_pub = item.get("published_at")
+                    pub_date = normalize_date(raw_pub)
+                    if not self.accepts_date(raw_pub):
                         continue
                     company = item.get("company_name", "")
                     link = urllib.parse.urljoin("https://bossjob.ph", ("/en" + item["job_url"]) if item.get("job_url", "").startswith("/job/") else item.get("job_url", ""))
@@ -144,7 +145,7 @@ class BossjobConnector(BaseConnector):
                         salary=salary,
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=pub_date
+                        date_posted=raw_pub or pub_date
                     ))
                 # Refreshed ranking mixes old and new publication dates.
                 total_pages = payload.get("total_pages")
@@ -179,8 +180,9 @@ class JobStreetConnector(BaseConnector):
             desc = " ".join(filter(None, [item.get("teaser", ""), " ".join(str(b) for b in bullets)]))
             if not title or not self.accepts_opportunity(title, desc):
                 continue
-            date_val = normalize_date(item.get("listingDate") or "")
-            if not self.accepts_date(date_val):
+            raw_date = item.get("listingDate") or ""
+            date_val = normalize_date(raw_date)
+            if not self.accepts_date(raw_date):
                 continue
             comp = (item.get("advertiser") or {}).get("description") or "Company Confidential"
             locs = item.get("locations") or []
@@ -200,7 +202,7 @@ class JobStreetConnector(BaseConnector):
                 role_category=self.job_role(title, desc),
                 experience_level=classify_experience_level(title, desc),
                 description=desc,
-                date_posted=date_val
+                date_posted=raw_date or date_val
             ))
         return jobs
 
@@ -219,7 +221,7 @@ class JobStreetConnector(BaseConnector):
                     "page": page,
                     "pageSize": 50,
                     "sortmode": "ListedDate",
-                    "daterange": 2,
+                    "daterange": self.window_days,
                 })
                 url = f"https://ph.jobstreet.com/api/jobsearch/v5/search?{params}"
                 resp = self.get_url(url, impersonate="chrome120", timeout=12)
@@ -439,24 +441,27 @@ class FounditPHConnector(NewPlatformConnectorMixin, BaseConnector):
                 jid = str(item.get("jobId") or item.get("id") or "")
                 ts = item.get("createdAt") or item.get("freshness") or item.get("postedAt")
                 pub_date = ""
+                raw_ts = ""
                 if ts is not None:
                     try:
                         ts_int = int(ts)
                         if ts_int > 10_000_000_000:
                             ts_int = ts_int // 1000
+                        raw_ts = ts_int
                         pub_date = normalize_date(ts_int)
                     except (ValueError, TypeError):
-                        pub_date = normalize_date(str(ts))
+                        raw_ts = str(ts)
+                        pub_date = normalize_date(raw_ts)
                 raw_ids.append(jid or str(len(raw_ids)))
                 raw_dates.append(pub_date)
-                parsed_rows.append((item, jid, pub_date))
+                parsed_rows.append((item, jid, raw_ts if raw_ts != "" else pub_date, pub_date))
 
             more_available = len(items) >= self.PAGE_SIZE
             self.finish_page(state, raw_ids, raw_dates, more_available, ordered=False)
             state["start"] = start + self.PAGE_SIZE if self.has_more else 0
 
-            for item, jid, pub_date in parsed_rows:
-                if not self.accepts_date(pub_date):
+            for item, jid, raw_pub, pub_date in parsed_rows:
+                if not self.accepts_date(raw_pub):
                     continue
                 title = str(item.get("title") or "").strip()
                 exp_str = str(item.get("exp") or "").strip()
@@ -495,7 +500,7 @@ class FounditPHConnector(NewPlatformConnectorMixin, BaseConnector):
                     role_category=self.job_role(title, desc),
                     experience_level=classify_experience_level(title, desc),
                     description=desc,
-                    date_posted=pub_date,
+                    date_posted=raw_pub or pub_date,
                 ))
         except Exception as exc:
             self.last_error = str(exc) or type(exc).__name__
@@ -511,7 +516,7 @@ class VirtualStaffPHConnector(NewPlatformConnectorMixin, BaseConnector):
     PAGE_SIZE = 60
     _cached_jobs = None
     _last_fetch = 0
-    _cached_window = 2
+    _cached_window = None
 
     def fetch(self, query: str = "", location: str = "Philippines") -> List[Job]:
         self.last_error = ""
@@ -519,10 +524,11 @@ class VirtualStaffPHConnector(NewPlatformConnectorMixin, BaseConnector):
         import time
 
         now = time.time()
+        window_key = (self.window_days, self._effective_since())
         if (
             VirtualStaffPHConnector._cached_jobs is None
             or (now - VirtualStaffPHConnector._last_fetch > 180)
-            or VirtualStaffPHConnector._cached_window != self.window_days
+            or VirtualStaffPHConnector._cached_window != window_key
         ):
             jobs: List[Job] = []
             try:
@@ -551,7 +557,7 @@ class VirtualStaffPHConnector(NewPlatformConnectorMixin, BaseConnector):
                     jid = str(item.get("_id") or "")
                     raw_dt = str(item.get("created_time") or item.get("updated_time") or "")
                     pub_date = normalize_date(raw_dt)
-                    if not jid or not self.accepts_date(pub_date):
+                    if not jid or not self.accepts_date(raw_dt or pub_date):
                         continue
                     title = str(item.get("job_title") or item.get("job_name") or "").strip()
                     exp_raw = str(item.get("experience") or "").strip().lower()
@@ -598,11 +604,11 @@ class VirtualStaffPHConnector(NewPlatformConnectorMixin, BaseConnector):
                         role_category=self.job_role(title, desc),
                         experience_level=classify_experience_level(title, desc),
                         description=desc,
-                        date_posted=pub_date,
+                        date_posted=raw_dt or pub_date,
                     ))
                 VirtualStaffPHConnector._cached_jobs = jobs
                 VirtualStaffPHConnector._last_fetch = now
-                VirtualStaffPHConnector._cached_window = self.window_days
+                VirtualStaffPHConnector._cached_window = window_key
             except Exception as exc:
                 self.last_error = str(exc) or type(exc).__name__
                 logger.warning("[%s] fetch notice: %s", self.platform, self.last_error)
@@ -625,7 +631,7 @@ class PhilJobNetConnector(NewPlatformConnectorMixin, BaseConnector):
     SEARCH_TERMS = ["developer", "software", "programmer", "quality assurance", "virtual assistant", "information technology", "web", "system", "network", "data", "technical support", "computer"]
     _cached_jobs = None
     _last_fetch = 0
-    _cached_window = 2
+    _cached_window = None
 
     def fetch(self, query: str = "", location: str = "Philippines") -> List[Job]:
         self.last_error = ""
@@ -635,10 +641,11 @@ class PhilJobNetConnector(NewPlatformConnectorMixin, BaseConnector):
         from curl_cffi import requests as cffi_requests
 
         now = time.time()
+        window_key = (self.window_days, self._effective_since())
         if (
             PhilJobNetConnector._cached_jobs is None
             or (now - PhilJobNetConnector._last_fetch > 180)
-            or PhilJobNetConnector._cached_window != self.window_days
+            or PhilJobNetConnector._cached_window != window_key
         ):
             all_jobs: List[Job] = []
             seen_urls = set()
@@ -715,7 +722,7 @@ class PhilJobNetConnector(NewPlatformConnectorMixin, BaseConnector):
                         ))
                 PhilJobNetConnector._cached_jobs = all_jobs
                 PhilJobNetConnector._last_fetch = now
-                PhilJobNetConnector._cached_window = self.window_days
+                PhilJobNetConnector._cached_window = window_key
             except Exception as exc:
                 self.last_error = str(exc) or type(exc).__name__
                 logger.warning("[%s] fetch notice: %s", self.platform, self.last_error)
@@ -751,7 +758,7 @@ class JobgetherPHConnector(NewPlatformConnectorMixin, BaseConnector):
     ]
     _cached_jobs = None
     _last_fetch = 0
-    _cached_window = 2
+    _cached_window = None
 
     def fetch(self, query: str = "", location: str = "Philippines") -> List[Job]:
         self.last_error = ""
@@ -759,10 +766,11 @@ class JobgetherPHConnector(NewPlatformConnectorMixin, BaseConnector):
         from bs4 import BeautifulSoup
 
         now = time.time()
+        window_key = (self.window_days, self._effective_since())
         if (
             JobgetherPHConnector._cached_jobs is None
             or (now - JobgetherPHConnector._last_fetch > 180)
-            or JobgetherPHConnector._cached_window != self.window_days
+            or JobgetherPHConnector._cached_window != window_key
         ):
             all_jobs: List[Job] = []
             seen_urls = set()
@@ -787,10 +795,14 @@ class JobgetherPHConnector(NewPlatformConnectorMixin, BaseConnector):
                         card_text = card.get_text(" | ", strip=True) if card else title
 
                         pub_date = ""
+                        raw_pub = ""
                         m_oid = re.search(r"/offer/([0-9a-f]{8})[0-9a-f]{16}-", href)
                         if m_oid:
                             try:
-                                pub_date = normalize_date(int(m_oid.group(1), 16))
+                                oid_ts = int(m_oid.group(1), 16)
+                                pub_date = normalize_date(oid_ts)
+                                if pub_date:
+                                    raw_pub = oid_ts
                             except ValueError:
                                 pub_date = ""
                         if not pub_date and card:
@@ -799,8 +811,9 @@ class JobgetherPHConnector(NewPlatformConnectorMixin, BaseConnector):
                                 if st and (st.lower() in ("today", "yesterday") or "ago" in st.lower()):
                                     pub_date = normalize_date(st)
                                     if pub_date:
+                                        raw_pub = st
                                         break
-                        if not self.accepts_date(pub_date):
+                        if not self.accepts_date(raw_pub or pub_date):
                             continue
                         if not self.accepts_opportunity(title, card_text):
                             continue
@@ -832,7 +845,7 @@ class JobgetherPHConnector(NewPlatformConnectorMixin, BaseConnector):
                             role_category=self.job_role(title, card_text),
                             experience_level=classify_experience_level(title, card_text),
                             description=card_text,
-                            date_posted=pub_date,
+                            date_posted=raw_pub or pub_date,
                         ))
                 except Exception as exc:
                     self.last_error = str(exc) or type(exc).__name__
@@ -840,7 +853,7 @@ class JobgetherPHConnector(NewPlatformConnectorMixin, BaseConnector):
 
             JobgetherPHConnector._cached_jobs = all_jobs
             JobgetherPHConnector._last_fetch = now if not self.last_error else 0
-            JobgetherPHConnector._cached_window = self.window_days
+            JobgetherPHConnector._cached_window = window_key
 
         cached = JobgetherPHConnector._cached_jobs or []
         if not query:

@@ -35,7 +35,7 @@ from src.classifier import is_relevant_opportunity
 import time
 import json
 import uuid
-from src.models import Job, is_today_or_yesterday
+from src.models import DEFAULT_SCRAPE_WINDOW_DAYS, Job, resolve_scrape_since
 from src.video_editor import collectable_job
 from src.connectors.video_editor import video_connectors
 
@@ -233,6 +233,13 @@ class Aggregator:
             raise
         all_jobs: List[Job] = []
         platform_reports: Dict[str, int] = {}
+        cycle_started_at = time.time()
+        window_since_ts = resolve_scrape_since(self.db_path, now=cycle_started_at)
+        for conn in self.connectors:
+            if isinstance(conn, BaseConnector):
+                conn.window_since = window_since_ts
+                if getattr(conn, "source", None) is not None and isinstance(conn.source, BaseConnector):
+                    conn.source.window_since = window_since_ts
 
         try:
             set_user_setting(self.db_path, "sync_status", json.dumps({"is_syncing": True, "total_boards": len(self.connectors), "last_result": {"status": "running"}, "logs": [], "telemetry": {}}))
@@ -242,7 +249,8 @@ class Aggregator:
                 limit = getattr(conn, "coverage_limit", "")
                 conn.coverage_warning = limit if isinstance(limit, str) else ""
                 # 1. Check connector cache (prevents 429 rate limits & duplicate network overhead)
-                cache_key = (conn.platform, tuple(sorted(str(q).strip().lower() for q in search_queries)))
+                win_key = conn.window_days
+                cache_key = (conn.platform, tuple(sorted(str(q).strip().lower() for q in search_queries)), win_key)
                 if not force and cache_key in self._cache:
                     cached_entry = self._cache[cache_key]
                     if now - cached_entry["timestamp"] < self.cache_ttl:
@@ -349,10 +357,20 @@ class Aggregator:
 
             ingestion_error = None
             try:
-                windows = {conn.platform: conn.window_days for conn in self.connectors}
+                windows = {
+                    conn.platform: (
+                        conn.window_days,
+                        conn._effective_since() if isinstance(conn, BaseConnector) else None,
+                    )
+                    for conn in self.connectors
+                }
                 relevant_jobs = [
                     j for j in all_jobs
-                    if collectable_job(j, window_days=windows.get(j.platform, 2))
+                    if collectable_job(
+                        j,
+                        window_days=windows.get(j.platform, (DEFAULT_SCRAPE_WINDOW_DAYS, None))[0],
+                        window_since=windows.get(j.platform, (DEFAULT_SCRAPE_WINDOW_DAYS, None))[1],
+                    )
                 ]
                 dropped_cnt = len(all_jobs) - len(relevant_jobs)
                 if dropped_cnt > 0:
@@ -379,6 +397,8 @@ class Aggregator:
             self.last_sync_result = summary
             if not ingestion_error:
                 self.last_sync_time = time.time()
+                if any(t.get("status") != "error" for t in self.platform_telemetry.values()):
+                    set_user_setting(self.db_path, "last_completed_scrape_at", str(cycle_started_at))
             set_user_setting(self.db_path, "sync_status", json.dumps({"is_syncing": False, "last_sync_time": self.last_sync_time, "total_boards": len(self.connectors), "last_result": summary, "logs": summary["logs"], "telemetry": self.platform_telemetry}))
             return summary
         finally:

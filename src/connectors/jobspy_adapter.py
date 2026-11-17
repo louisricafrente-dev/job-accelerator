@@ -3,7 +3,7 @@ import json
 import logging
 from typing import List
 from src.connectors.base import BaseConnector, logger
-from src.models import Job, is_today_or_yesterday, scrape_request_hours
+from src.models import Job
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 class _JobSpyErrors(logging.Handler):
@@ -41,7 +41,7 @@ class JobSpyAdapter(BaseConnector):
             from urllib.parse import urlencode
             import math
             url = "https://www.ziprecruiter.com/jobs-search?" + urlencode({
-                "search": term, "location": "Remote", "days": math.ceil(scrape_request_hours() / 24)})
+                "search": term, "location": "Remote", "days": max(1, math.ceil(self.request_hours() / 24))})
             resp = self.get_url(url, impersonate="safari17_0", timeout=12)
             if resp.status_code == 200 and resp.text:
                 soup = BeautifulSoup(resp.text, "html.parser")
@@ -53,7 +53,7 @@ class JobSpyAdapter(BaseConnector):
                         title = str(item.get("name") or "").strip()
                         job_url = str(item.get("url") or "").strip()
                         if (not title or not job_url or job_url in seen
-                                or not is_today_or_yesterday(item.get("datePosted", ""))
+                                or not self.accepts_date(item.get("datePosted", ""))
                                 or not is_relevant_opportunity(title, "")):
                             continue
                         seen.add(job_url)
@@ -111,7 +111,7 @@ class JobSpyAdapter(BaseConnector):
                         results_wanted=wanted,
                         offset=offset,
                         country_indeed=country,
-                        hours_old=scrape_request_hours(days=self.window_days),
+                        hours_old=self.request_hours(),
                         proxies=[proxy] if proxy else None
                     )
                 finally:

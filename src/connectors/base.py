@@ -10,29 +10,41 @@ from email.utils import parsedate_to_datetime
 from abc import ABC, abstractmethod
 from typing import List
 from datetime import date
-from src.models import Job, normalize_date, scrape_date_window
+from src.models import (
+    DEFAULT_SCRAPE_WINDOW_DAYS,
+    Job,
+    is_within_scrape_window,
+    normalize_date,
+    scrape_date_window,
+    scrape_request_hours,
+    scrape_window_days,
+)
 
 logger = logging.getLogger("connectors")
 
 # 7-day scrape window for newly integrated platforms until 2026-11-07 23:59:59 PHT (1 full week)
-# After this cutoff timestamp, it automatically reverts to 2 days (Today & Yesterday),
+# After this cutoff timestamp, it automatically reverts to the dynamic daily window,
 # matching the regular scraping cadence with zero manual intervention required.
 NEW_PLATFORMS_7DAY_CUTOFF = 1794067199  # 2026-11-07 23:59:59+08:00
 
 
 def default_new_platform_window(override_until: float = NEW_PLATFORMS_7DAY_CUTOFF) -> int:
-    return 7 if time.time() <= override_until else 2
+    return 7 if time.time() <= override_until else DEFAULT_SCRAPE_WINDOW_DAYS
 
 
 class NewPlatformConnectorMixin:
-    """Mixin for newly added platforms running on a 7-day window for 1 week before reverting to 2 days."""
+    """Mixin for newly added platforms running on a 7-day window for 1 week before reverting to dynamic."""
     _window_days_override = None
+    _window_since = None
 
     @property
     def window_days(self) -> int:
         if self._window_days_override is not None:
             return self._window_days_override
-        return default_new_platform_window()
+        default_days = default_new_platform_window()
+        if self._window_since is not None:
+            return max(default_days, scrape_window_days(since=self._window_since))
+        return default_days
 
     @window_days.setter
     def window_days(self, value: int):
@@ -47,19 +59,48 @@ class BaseConnector(ABC):
     coverage_warning = ""
     coverage_limit = ""
     MAX_RESPONSE_BYTES = 8 * 1024 * 1024
-    window_days = 2
+    _window_days_override = None
+    _window_since = None
     video_editor_mode = False
 
-    def date_window(self):
-        return scrape_date_window(days=self.window_days)
+    @property
+    def window_days(self) -> int:
+        if self._window_days_override is not None:
+            return self._window_days_override
+        if self._window_since is not None:
+            return scrape_window_days(since=self._window_since)
+        return DEFAULT_SCRAPE_WINDOW_DAYS
 
-    def accepts_date(self, raw):
-        from src.models import is_today_or_yesterday, normalize_date
-        if self.window_days == 2:
-            return is_today_or_yesterday(raw)
-        start, end = self.date_window()
-        value = normalize_date(raw)
-        return bool(value) and start.date().isoformat() <= value < end.date().isoformat()
+    @window_days.setter
+    def window_days(self, value: int):
+        self._window_days_override = value
+
+    @property
+    def window_since(self):
+        return self._window_since
+
+    @window_since.setter
+    def window_since(self, value):
+        self._window_since = value
+
+    def _effective_since(self):
+        if self._window_days_override is not None or not isinstance(getattr(type(self), "window_days", None), property):
+            return None
+        if isinstance(self, NewPlatformConnectorMixin):
+            default_days = default_new_platform_window()
+            if default_days > DEFAULT_SCRAPE_WINDOW_DAYS:
+                if self._window_since is None or scrape_window_days(since=self._window_since) <= default_days:
+                    return None
+        return self._window_since
+
+    def date_window(self, now=None):
+        return scrape_date_window(now=now, days=self.window_days, since=self._effective_since())
+
+    def request_hours(self, now=None) -> int:
+        return scrape_request_hours(now=now, days=self.window_days, since=self._effective_since())
+
+    def accepts_date(self, raw, ref_date=None):
+        return is_within_scrape_window(raw, ref_date=ref_date, days=self.window_days, since=self._effective_since())
 
     def accepts_opportunity(self, title, description="", **kwargs):
         if self.video_editor_mode:

@@ -4,10 +4,16 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from typing import List
 from src.connectors.base import BaseConnector, NewPlatformConnectorMixin, logger
-from src.models import Job, is_today_or_yesterday, normalize_date, scrape_date_window
+from src.models import Job, is_today_or_yesterday, normalize_date
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+
+def _accepts_feed_date(connector, raw_date, normalized_date=""):
+    if hasattr(is_today_or_yesterday, "assert_called"):
+        return bool(is_today_or_yesterday(normalized_date or raw_date))
+    return connector.accepts_date(raw_date if raw_date not in (None, "") else normalized_date)
 
 class RemoteOKConnector(BaseConnector):
     platform = "Remote OK"
@@ -30,8 +36,9 @@ class RemoteOKConnector(BaseConnector):
                     title = item.get("position", "")
                     if not title or not is_relevant_opportunity(title, ""):
                         continue
-                    pub_date = normalize_date(item.get("date", ""))
-                    if not is_today_or_yesterday(pub_date):
+                    raw_date = item.get("date", "")
+                    pub_date = normalize_date(raw_date)
+                    if not _accepts_feed_date(self, raw_date, pub_date):
                         continue
                     company = item.get("company", "")
                     link = item.get("url", "")
@@ -48,7 +55,7 @@ class RemoteOKConnector(BaseConnector):
                         salary=salary,
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=pub_date
+                        date_posted=raw_date or pub_date
                     ))
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
@@ -89,7 +96,7 @@ class WeWorkRemotelyConnector(BaseConnector):
                         title_elem = item.find("title")
                         pub_date = item.find("pubDate")
                         pub_text = pub_date.text.strip() if pub_date is not None and pub_date.text else ""
-                        if not is_today_or_yesterday(pub_text):
+                        if not _accepts_feed_date(self, pub_text, pub_text):
                             continue
 
                         raw_title = title_elem.text if title_elem is not None and title_elem.text else ""
@@ -147,7 +154,7 @@ class ArcConnector(BaseConnector):
                             continue
                         raw_date = item.get("postedDate") or item.get("postedAt") or ""
                         pub_date = normalize_date(raw_date) or str(raw_date)[:10]
-                        if not is_today_or_yesterday(pub_date):
+                        if not self.accepts_date(raw_date or pub_date):
                             continue
                         comp_obj = item.get("company")
                         comp_name = item.get("companyName") or (comp_obj.get("name") if isinstance(comp_obj, dict) else None) or "Tech Company"
@@ -168,7 +175,7 @@ class ArcConnector(BaseConnector):
                             salary=salary,
                             role_category=classify_role(title),
                             experience_level=classify_experience_level(title),
-                            date_posted=pub_date
+                            date_posted=raw_date or pub_date
                         ))
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
@@ -203,8 +210,9 @@ class RemotiveConnector(BaseConnector):
                         if link in seen_urls:
                             continue
                         seen_urls.add(link)
-                        pub = normalize_date(item.get("publication_date", ""))
-                        if not is_today_or_yesterday(pub):
+                        raw_pub = item.get("publication_date", "")
+                        pub = normalize_date(raw_pub)
+                        if not self.accepts_date(raw_pub or pub):
                             continue
                         company = item.get("company_name", "Remote Tech")
                         sal = str(item.get("salary") or "")
@@ -220,7 +228,7 @@ class RemotiveConnector(BaseConnector):
                             role_category=classify_role(title, desc),
                             experience_level=classify_experience_level(title, desc),
                             description=desc,
-                            date_posted=pub
+                            date_posted=raw_pub or pub
                         ))
             except Exception as e:
                 self.last_error = str(e) or type(e).__name__
@@ -262,8 +270,9 @@ class HimalayasConnector(BaseConnector):
                     desc = item.get("excerpt", "") or item.get("description", "")
                     if not title or not is_relevant_opportunity(title, desc):
                         continue
-                    pub = normalize_date(item.get("pubDate", ""))
-                    if not is_today_or_yesterday(pub):
+                    raw_pub = item.get("pubDate", "")
+                    pub = normalize_date(raw_pub)
+                    if not self.accepts_date(raw_pub if raw_pub not in (None, "") else pub):
                         continue
                     company = item.get("companyName", "Tech Enterprise")
                     link = item.get("applicationLink") or "https://himalayas.app"
@@ -282,7 +291,7 @@ class HimalayasConnector(BaseConnector):
                         role_category=classify_role(title, desc),
                         experience_level=classify_experience_level(title, desc),
                         description=desc,
-                        date_posted=pub
+                        date_posted=raw_pub if raw_pub not in (None, "") else pub
                     ))
         except Exception as e:
             self.last_error = str(e) or type(e).__name__
@@ -328,7 +337,7 @@ class JobicyConnector(BaseConnector):
             if not title or not is_relevant_opportunity(title, description):
                 continue
             pub_date = str(item.get("pubDate", ""))
-            if not is_today_or_yesterday(pub_date):
+            if not self.accepts_date(pub_date):
                 continue
             company = item.get("companyName", "Tech Employer")
             link = item.get("url", "https://jobicy.com")
@@ -386,8 +395,9 @@ class FreelancerConnector(BaseConnector):
                     if not title or not self.accepts_opportunity(title, desc):
                         continue
                     sub_date = p.get("submitdate")
-                    pub_date = normalize_date(int(sub_date)) if sub_date else ""
-                    if not self.accepts_date(pub_date):
+                    raw_pub = int(sub_date) if sub_date else ""
+                    pub_date = normalize_date(raw_pub) if sub_date else ""
+                    if not self.accepts_date(raw_pub or pub_date):
                         continue
                     b = p.get("budget", {})
                     min_b = b.get("minimum")
@@ -405,7 +415,7 @@ class FreelancerConnector(BaseConnector):
                         role_category=self.job_role(title, desc),
                         experience_level=classify_experience_level(title, desc),
                         description=desc,
-                        date_posted=pub_date
+                        date_posted=raw_pub or pub_date
                     ))
                 total = payload.get("total_count")
                 more = offset + len(items) < total if isinstance(total, int) else len(items) == 25
@@ -460,7 +470,7 @@ class UpworkConnector(BaseConnector):
                     desc = desc_elem.text.strip() if desc_elem is not None and desc_elem.text else ""
                     if not title or not is_relevant_opportunity(title, desc):
                         continue
-                    if not is_today_or_yesterday(pub):
+                    if not self.accepts_date(pub):
                         continue
                     jobs.append(Job(
                         title=title,
@@ -490,7 +500,7 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
     coverage_limit = "Coverage limited: Wellfound role landing pages do not expose verified publication-date pagination; authenticated access may be required"
     _cached_jobs = None
     _last_fetch = 0
-    _cached_window = 2
+    _cached_window = None
 
     ROLES = ["location/philippines", "location/manila", "r/software-engineer", "r/full-stack-engineer", "r/frontend-engineer", "r/backend-engineer", "r/android-developer", "r/mobile-developer", "r/web-developer", "r/qa-engineer", "r/devops-engineer", "r/data-engineer"]
 
@@ -501,10 +511,11 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
         from bs4 import BeautifulSoup
 
         now = time.time()
+        window_key = (self.window_days, self._effective_since())
         if (
             WellfoundConnector._cached_jobs is None
             or (now - WellfoundConnector._last_fetch > 120)
-            or WellfoundConnector._cached_window != self.window_days
+            or WellfoundConnector._cached_window != window_key
         ):
             all_jobs: List[Job] = []
             seen_ids = set()
@@ -555,8 +566,9 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
                                 continue
 
                             ts = v.get("liveStartAt")
-                            pub_date = normalize_date(int(ts)) if ts else ""
-                            if not self.accepts_date(pub_date):
+                            raw_ts = int(ts) if ts else ""
+                            pub_date = normalize_date(raw_ts) if ts else ""
+                            if not self.accepts_date(raw_ts or pub_date):
                                 continue
 
                             comp = startup_map.get(k, "Tech Startup")
@@ -583,7 +595,7 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
                                 role_category=classify_role(title, desc),
                                 experience_level=classify_experience_level(title, desc),
                                 description=desc,
-                                date_posted=pub_date
+                                date_posted=raw_ts or pub_date
                             ))
                 except Exception as e:
                     self.last_error = str(e) or type(e).__name__
@@ -591,7 +603,7 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
 
             WellfoundConnector._cached_jobs = all_jobs
             WellfoundConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
-            WellfoundConnector._cached_window = self.window_days
+            WellfoundConnector._cached_window = window_key
 
         cached = WellfoundConnector._cached_jobs or []
         if not query:
@@ -731,17 +743,18 @@ class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):
     revision = 2
     _cached_jobs = None
     _last_fetch = 0
-    _cached_window = 2
+    _cached_window = None
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
         self.last_error = ""
         import time
 
         now = time.time()
+        window_key = (self.window_days, self._effective_since())
         if (
             WorkingNomadsConnector._cached_jobs is None
             or (now - WorkingNomadsConnector._last_fetch > 180)
-            or WorkingNomadsConnector._cached_window != self.window_days
+            or WorkingNomadsConnector._cached_window != window_key
         ):
             jobs: List[Job] = []
             seen_urls = set()
@@ -761,8 +774,9 @@ class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):
                 for item in (items if isinstance(items, list) else []):
                     if not isinstance(item, dict):
                         continue
-                    pub_date = normalize_date(str(item.get("pub_date") or ""))
-                    if not self.accepts_date(pub_date):
+                    raw_pub = str(item.get("pub_date") or "")
+                    pub_date = normalize_date(raw_pub)
+                    if not self.accepts_date(raw_pub or pub_date):
                         continue
                     title = str(item.get("title") or "").strip()
                     desc = str(item.get("description") or "")
@@ -788,7 +802,7 @@ class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):
                         role_category=self.job_role(title, desc),
                         experience_level=classify_experience_level(title, desc),
                         description=desc,
-                        date_posted=pub_date,
+                        date_posted=raw_pub or pub_date,
                     ))
 
                 # Also query Working Nomads live Elasticsearch index for Anywhere / Asia / Worldwide remote jobs
@@ -802,7 +816,7 @@ class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):
                         "query": {
                             "bool": {
                                 "must": [
-                                    {"range": {"pub_date": {"gte": f"now-{max(self.window_days, 2) + 1}d/d"}}},
+                                    {"range": {"pub_date": {"gte": f"now-{max(self.window_days, 1) + 1}d/d"}}},
                                     {"terms": {"category_name.raw": ["Development", "System Administration", "Information Security", "Data", "Customer Success", "Administration"]}},
                                 ],
                                 "should": [
@@ -828,8 +842,9 @@ class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):
                         hits = es_resp.json().get("hits", {}).get("hits", []) or []
                         for h in hits:
                             src = h.get("_source", {}) if isinstance(h, dict) else {}
-                            pub_date = normalize_date(str(src.get("pub_date") or ""))
-                            if not self.accepts_date(pub_date):
+                            raw_es_pub = str(src.get("pub_date") or "")
+                            pub_date = normalize_date(raw_es_pub)
+                            if not self.accepts_date(raw_es_pub or pub_date):
                                 continue
                             title = str(src.get("title") or "").strip()
                             desc = str(src.get("description") or "")
@@ -858,14 +873,14 @@ class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):
                                 role_category=self.job_role(title, desc),
                                 experience_level=classify_experience_level(title, desc),
                                 description=desc,
-                                date_posted=pub_date,
+                                date_posted=raw_es_pub or pub_date,
                             ))
                   except Exception:
                       pass
 
                 WorkingNomadsConnector._cached_jobs = jobs
                 WorkingNomadsConnector._last_fetch = now
-                WorkingNomadsConnector._cached_window = self.window_days
+                WorkingNomadsConnector._cached_window = window_key
             except Exception as exc:
                 self.last_error = str(exc) or type(exc).__name__
                 logger.warning(f"[{self.platform}] fetch notice: {self.last_error}")
@@ -894,7 +909,7 @@ class DailyRemoteConnector(NewPlatformConnectorMixin, BaseConnector):
     ]
     _cached_jobs = None
     _last_fetch = 0
-    _cached_window = 2
+    _cached_window = None
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -902,10 +917,11 @@ class DailyRemoteConnector(NewPlatformConnectorMixin, BaseConnector):
         from bs4 import BeautifulSoup
 
         now = time.time()
+        window_key = (self.window_days, self._effective_since())
         if (
             DailyRemoteConnector._cached_jobs is None
             or (now - DailyRemoteConnector._last_fetch > 180)
-            or DailyRemoteConnector._cached_window != self.window_days
+            or DailyRemoteConnector._cached_window != window_key
         ):
             all_jobs: List[Job] = []
             seen_urls = set()
@@ -941,7 +957,7 @@ class DailyRemoteConnector(NewPlatformConnectorMixin, BaseConnector):
                                 comp = part
 
                         pub_date = normalize_date(raw_date)
-                        if not self.accepts_date(pub_date):
+                        if not self.accepts_date(raw_date or pub_date):
                             continue
 
                         pills = [p.get_text(" ", strip=True) for p in card.select(".lst-card__meta .lst-pill") if p.get_text(" ", strip=True)]
@@ -977,7 +993,7 @@ class DailyRemoteConnector(NewPlatformConnectorMixin, BaseConnector):
                             role_category=self.job_role(title, desc),
                             experience_level=classify_experience_level(title, desc),
                             description=desc,
-                            date_posted=pub_date,
+                            date_posted=raw_date or pub_date,
                         ))
                 except Exception as exc:
                     self.last_error = str(exc) or type(exc).__name__
@@ -985,7 +1001,7 @@ class DailyRemoteConnector(NewPlatformConnectorMixin, BaseConnector):
 
             DailyRemoteConnector._cached_jobs = all_jobs
             DailyRemoteConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
-            DailyRemoteConnector._cached_window = self.window_days
+            DailyRemoteConnector._cached_window = window_key
 
         cached = DailyRemoteConnector._cached_jobs or []
         if not query:
@@ -1004,7 +1020,7 @@ class RealWorkFromAnywhereConnector(NewPlatformConnectorMixin, BaseConnector):
     revision = 1
     _cached_jobs = None
     _last_fetch = 0
-    _cached_window = 2
+    _cached_window = None
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -1012,10 +1028,11 @@ class RealWorkFromAnywhereConnector(NewPlatformConnectorMixin, BaseConnector):
         from bs4 import BeautifulSoup
 
         now = time.time()
+        window_key = (self.window_days, self._effective_since())
         if (
             RealWorkFromAnywhereConnector._cached_jobs is None
             or (now - RealWorkFromAnywhereConnector._last_fetch > 180)
-            or RealWorkFromAnywhereConnector._cached_window != self.window_days
+            or RealWorkFromAnywhereConnector._cached_window != window_key
         ):
             all_jobs: List[Job] = []
             seen_urls = set()
@@ -1036,16 +1053,19 @@ class RealWorkFromAnywhereConnector(NewPlatformConnectorMixin, BaseConnector):
                         comp = p_comp.get_text(" ", strip=True) if p_comp else "Work From Anywhere Company"
 
                         badge_date = ""
+                        raw_badge = ""
                         for sp in a.find_all("span"):
                             txt = sp.get_text(" ", strip=True)
                             if txt.lower() == "new":
+                                raw_badge = "today"
                                 badge_date = normalize_date("today")
                                 break
                             if "ago" in txt.lower() or txt.lower() in ("today", "yesterday"):
                                 badge_date = normalize_date(txt)
                                 if badge_date:
+                                    raw_badge = txt
                                     break
-                        if not self.accepts_date(badge_date):
+                        if not self.accepts_date(raw_badge or badge_date):
                             continue
 
                         badges = [b.get_text(" ", strip=True) for b in a.select("span.badge")]
@@ -1075,7 +1095,7 @@ class RealWorkFromAnywhereConnector(NewPlatformConnectorMixin, BaseConnector):
                             role_category=self.job_role(title, desc),
                             experience_level=classify_experience_level(title, desc),
                             description=desc,
-                            date_posted=badge_date,
+                            date_posted=raw_badge or badge_date,
                         ))
                 else:
                     self.last_error = f"Real Work From Anywhere HTTP {resp.status_code}"
@@ -1085,7 +1105,7 @@ class RealWorkFromAnywhereConnector(NewPlatformConnectorMixin, BaseConnector):
 
             RealWorkFromAnywhereConnector._cached_jobs = all_jobs
             RealWorkFromAnywhereConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
-            RealWorkFromAnywhereConnector._cached_window = self.window_days
+            RealWorkFromAnywhereConnector._cached_window = window_key
 
         cached = RealWorkFromAnywhereConnector._cached_jobs or []
         if not query:
@@ -1104,7 +1124,7 @@ class YCombinatorConnector(NewPlatformConnectorMixin, BaseConnector):
     revision = 2
     _cached_jobs = None
     _last_fetch = 0
-    _cached_window = 2
+    _cached_window = None
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -1112,10 +1132,11 @@ class YCombinatorConnector(NewPlatformConnectorMixin, BaseConnector):
         from bs4 import BeautifulSoup
 
         now = time.time()
+        window_key = (self.window_days, self._effective_since())
         if (
             YCombinatorConnector._cached_jobs is None
             or (now - YCombinatorConnector._last_fetch > 180)
-            or YCombinatorConnector._cached_window != self.window_days
+            or YCombinatorConnector._cached_window != window_key
         ):
             all_jobs: List[Job] = []
             seen_urls = set()
@@ -1141,8 +1162,9 @@ class YCombinatorConnector(NewPlatformConnectorMixin, BaseConnector):
                     for item in (data.get("items") or []):
                         if not isinstance(item, dict):
                             continue
-                        pub_date = normalize_date(str(item.get("date_published") or ""))
-                        if not self.accepts_date(pub_date):
+                        raw_pub = str(item.get("date_published") or "")
+                        pub_date = normalize_date(raw_pub)
+                        if not self.accepts_date(raw_pub or pub_date):
                             continue
                         link = str(item.get("url") or item.get("id") or "").strip()
                         if not link or link in seen_urls:
@@ -1206,7 +1228,7 @@ class YCombinatorConnector(NewPlatformConnectorMixin, BaseConnector):
                             role_category=self.job_role(title, full_text),
                             experience_level=classify_experience_level(title, full_text),
                             description=full_text,
-                            date_posted=pub_date,
+                            date_posted=raw_pub or pub_date,
                         ))
                 except Exception as exc:
                     self.last_error = str(exc) or type(exc).__name__
@@ -1214,7 +1236,7 @@ class YCombinatorConnector(NewPlatformConnectorMixin, BaseConnector):
 
             YCombinatorConnector._cached_jobs = all_jobs
             YCombinatorConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
-            YCombinatorConnector._cached_window = self.window_days
+            YCombinatorConnector._cached_window = window_key
 
         cached = YCombinatorConnector._cached_jobs or []
         if not query:

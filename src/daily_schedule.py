@@ -34,6 +34,17 @@ def has_unfinished(db_path, *, include_deferred_feeds=True):
             result = {}
         progress = value.get("progress") or result.get("progress") or {}
         if isinstance(progress, dict) and progress:
+            if not progress.get("has_more"):
+                ts = (value.get("last_successful_fetch") or value.get("last_sync_time")
+                      or result.get("timestamp") or value.get("updated_at") or value.get("completed_at") or 0)
+                try:
+                    ts_val = float(ts)
+                except (TypeError, ValueError):
+                    ts_val = 0
+                if ts_val > 0:
+                    sync_day = datetime.fromtimestamp(ts_val, ZoneInfo("Asia/Manila")).date().isoformat()
+                    if sync_day != day():
+                        return False
             if not include_deferred_feeds and "total_searches" in progress:
                 return bool(progress.get("has_more") or progress.get("completed_searches", 0) < progress["total_searches"])
             return bool(progress.get("has_more") or progress.get("unfinished"))

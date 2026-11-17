@@ -62,7 +62,7 @@ class ScraperHandoffTests(unittest.TestCase):
         with patch("src.connectors.base.time.time", return_value=NEW_PLATFORMS_7DAY_CUTOFF):
             self.assertEqual(default_new_platform_window(), 7)
         with patch("src.connectors.base.time.time", return_value=NEW_PLATFORMS_7DAY_CUTOFF + 1):
-            self.assertEqual(default_new_platform_window(), 2)
+            self.assertEqual(default_new_platform_window(), 1)
 
     def test_cloud_takeover_keeps_checkpoint_even_before_restart_consumption_is_saved(self):
         calls = []

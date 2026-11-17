@@ -2,7 +2,7 @@
 import re
 
 from src.classifier import is_relevant_opportunity, is_work_authorized_location
-from src.models import is_today_or_yesterday, normalize_date, scrape_date_window
+from src.models import is_within_scrape_window
 
 VIDEO_SOURCES = {"OnlineJobs.ph", "Freelancer", "Indeed", "JobStreet"}
 VIDEO_QUERIES = ("CapCut", "short form video editor", "gaming video editor", "reels editor")
@@ -59,17 +59,16 @@ def attention_check(description):
                 or re.search("[\u200b-\u200d\ufeff]", description))
 
 
-def collectable_job(job, window_days=2):
+def collectable_job(job, window_days=None, window_since=None):
+    raw_date = getattr(job, "_raw_date_posted", "")
+    if job.date_posted != getattr(job, "_normalized_date_posted", job.date_posted):
+        raw_date = job.date_posted
+    else:
+        raw_date = raw_date or job.date_posted
+    accepted_date = is_within_scrape_window(raw_date, days=window_days, since=window_since)
     if job.role_category == "Video Editor":
-        start, end = scrape_date_window(days=7)
-        date = normalize_date(job.date_posted)
-        return (job.platform in VIDEO_SOURCES and bool(date)
-                and start.date().isoformat() <= date < end.date().isoformat()
+        return (job.platform in VIDEO_SOURCES and accepted_date
                 and not video_fit(job.title, job.description)
                 and is_work_authorized_location(job.location, job.title, job.platform, job.description))
-    start, end = scrape_date_window(days=window_days)
-    date = normalize_date(job.date_posted)
-    accepted_date = (is_today_or_yesterday(job.date_posted) if window_days == 2 else
-                     bool(date) and start.date().isoformat() <= date < end.date().isoformat())
     return (accepted_date
             and is_relevant_opportunity(job.title, job.description, allow_va_training=True))

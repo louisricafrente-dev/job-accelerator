@@ -28,16 +28,18 @@ def job(days=0, platform="OnlineJobs.ph", category="Video Editor", title="CapCut
 
 class TestVideoRules(unittest.TestCase):
     def test_exact_seven_dates_and_four_sources_only(self):
+        self.assertTrue(collectable_job(job(0)))
+        self.assertFalse(collectable_job(job(1)))
         for days in range(7):
-            self.assertTrue(collectable_job(job(days)), days)
+            self.assertTrue(collectable_job(job(days), window_days=7), days)
         for days in (-1, 7, 30):
-            self.assertFalse(collectable_job(job(days)), days)
-        self.assertFalse(collectable_job(job(platform="Upwork")))
-        self.assertFalse(collectable_job(job(category="Web/Software Dev")))
+            self.assertFalse(collectable_job(job(days), window_days=7), days)
+        self.assertFalse(collectable_job(job(platform="Upwork"), window_days=7))
+        self.assertFalse(collectable_job(job(category="Web/Software Dev"), window_days=7))
         self.assertFalse(collectable_job(job(4, category="Web/Software Dev", title="Software Developer")))
         for date in ("", "recently", "garbage"):
             candidate = job(); candidate.date_posted = date
-            self.assertFalse(collectable_job(candidate))
+            self.assertFalse(collectable_job(candidate, window_days=7))
 
     def test_basic_matches_optional_tools_and_advanced_required_duties(self):
         self.assertEqual(video_fit("Gaming Video Editor", DESCRIPTION), "")
@@ -58,15 +60,17 @@ class TestVideoRules(unittest.TestCase):
     def test_factory_does_not_mutate_standard_sources(self):
         boards = video_connectors()
         self.assertEqual({b.source.platform for b in boards}, {"OnlineJobs.ph", "Freelancer", "Indeed", "JobStreet"})
-        self.assertTrue(all(b.source.window_days == 7 for b in boards))
-        self.assertEqual(OnlineJobsConnector().window_days, 2)
+        self.assertTrue(all(b.source.window_days == 1 for b in boards))
+        self.assertEqual(OnlineJobsConnector().window_days, 1)
         self.assertFalse(OnlineJobsConnector().video_editor_mode)
+        boards[0].window_since = (datetime.now(MANILA) - timedelta(days=3)).timestamp()
+        self.assertEqual(boards[0].window_days, 4)
 
     def test_dates_and_categories_both_sync_paths_preserve_history(self):
         class Board(BaseConnector):
             platform = "Video test"
             def fetch(self, **kwargs):
-                return [job(6), job(7), job(-1), job(4, category="Web/Software Dev", title="Software Developer")]
+                return [job(0), job(6), job(7), job(-1), job(4, category="Web/Software Dev", title="Software Developer")]
         for budget in (None, 5):
             with tempfile.TemporaryDirectory() as directory:
                 db = os.path.join(directory, "jobs.db"); init_db(db)
@@ -122,6 +126,7 @@ class TestVideoSources(unittest.TestCase):
 
     def test_olj_full_details_and_continuation_are_separate_from_legacy(self):
         source = OnlineJobsConnector(); board = VideoEditorConnector(source)
+        board.window_days = 7
         day = (datetime.now(MANILA).date() - timedelta(days=6)).isoformat()
         search = f'<div class="jobpost-cat-box"><h4>Video Editor</h4><p class="fs-13" data-temp="{day}"></p><a href="/jobseekers/job/123">Job</a><div class="desc">CapCut</div></div><a href="/jobseekers/jobsearch/1">Next</a>'
         detail = f'<p id="job-description">{DESCRIPTION}</p>'
@@ -144,32 +149,55 @@ class TestVideoSources(unittest.TestCase):
         self.assertEqual(board.next_feed_state['query_index'], 1)
 
     def test_request_bounds_freelancer_and_jobstreet(self):
-        source = FreelancerConnector(); VideoEditorConnector(source)
+        source = FreelancerConnector(); board = VideoEditorConnector(source)
         response = io.BytesIO(json.dumps({'result': {'projects': [], 'total_count': 0}}).encode())
         with patch.object(source, 'open_url', return_value=response) as fetch:
             source.fetch('CapCut')
         params = parse_qs(urlsplit(fetch.call_args.args[0].full_url).query)
         self.assertEqual(params['full_description'], ['true'])
-        start, end = scrape_date_window(days=7)
+        start, end = scrape_date_window(days=1)
         self.assertEqual(int(params['from_time'][0]), int(start.timestamp()))
         self.assertEqual(int(params['to_time'][0]), int(end.timestamp())-1)
+        source.window_days = 7
+        response_7 = io.BytesIO(json.dumps({'result': {'projects': [], 'total_count': 0}}).encode())
+        with patch.object(source, 'open_url', return_value=response_7) as fetch:
+            source.fetch('CapCut')
+        self.assertEqual(source.last_error, '')
+        params = parse_qs(urlsplit(fetch.call_args.args[0].full_url).query)
+        start_7, end_7 = scrape_date_window(days=7)
+        self.assertEqual(int(params['from_time'][0]), int(start_7.timestamp()))
+        self.assertEqual(int(params['to_time'][0]), int(end_7.timestamp())-1)
         source = JobStreetCatalogConnector(); board = VideoEditorConnector(source)
         with patch.object(source, 'get_url', return_value=MagicMock(status_code=200, text='{"data":[],"totalCount":0}')) as fetch:
             board.fetch()
         params = parse_qs(urlsplit(fetch.call_args.args[0]).query)
-        self.assertEqual(params['daterange'], ['7'])
+        self.assertEqual(params['daterange'], ['1'])
         self.assertEqual(params['keywords'], ['CapCut'])
+        board.window_days = 7
+        with patch.object(source, 'get_url', return_value=MagicMock(status_code=200, text='{"data":[],"totalCount":0}')) as fetch:
+            board.fetch()
+        params = parse_qs(urlsplit(fetch.call_args.args[0]).query)
+        self.assertEqual(params['daterange'], ['7'])
 
-    def test_indeed_uses_seven_day_request_and_full_description(self):
+    def test_indeed_uses_dynamic_request_and_full_description(self):
         import pandas as pd
         from types import SimpleNamespace
         from src.connectors.jobspy_adapter import JobSpyAdapter
         source = JobSpyAdapter("Indeed", "indeed", 1); board = VideoEditorConnector(source)
-        candidate = job(6, platform='Indeed')
-        scrape = MagicMock(return_value=pd.DataFrame([dict(title=candidate.title, company='Example', location='Philippines',
-                    job_url=candidate.job_url, date_posted=candidate.date_posted, description=DESCRIPTION)]))
+        today_job = job(0, platform='Indeed')
+        scrape = MagicMock(return_value=pd.DataFrame([dict(title=today_job.title, company='Example', location='Philippines',
+                    job_url=today_job.job_url, date_posted=today_job.date_posted, description=DESCRIPTION)]))
         with patch.dict('sys.modules', {'jobspy': SimpleNamespace(scrape_jobs=scrape)}):
             rows = board.fetch()
         self.assertEqual(len(rows), 1)
-        self.assertGreaterEqual(scrape.call_args.kwargs['hours_old'], 144)
-        self.assertLessEqual(scrape.call_args.kwargs['hours_old'], 168)
+        self.assertGreaterEqual(scrape.call_args.kwargs['hours_old'], 1)
+        self.assertLessEqual(scrape.call_args.kwargs['hours_old'], 24)
+        board.window_days = 7
+        candidate = job(6, platform='Indeed')
+        scrape_7 = MagicMock(return_value=pd.DataFrame([dict(title=candidate.title, company='Example', location='Philippines',
+                    job_url=candidate.job_url, date_posted=candidate.date_posted, description=DESCRIPTION)]))
+        with patch.dict('sys.modules', {'jobspy': SimpleNamespace(scrape_jobs=scrape_7)}):
+            rows_7 = board.fetch()
+        self.assertEqual(len(rows_7), 1)
+        self.assertGreaterEqual(scrape_7.call_args.kwargs['hours_old'], 144)
+        self.assertLessEqual(scrape_7.call_args.kwargs['hours_old'], 168)

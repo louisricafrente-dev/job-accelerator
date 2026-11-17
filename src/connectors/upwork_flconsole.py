@@ -42,7 +42,7 @@ def fetch_jobs(connector, limit=30):
             title, description = item.get("title", ""), item.get("description", "")
             if not uid.isdigit() or not title or not is_relevant_opportunity(title, description):
                 continue
-            if not is_today_or_yesterday(item.get("publish_at", "")):
+            if not (connector.accepts_date(item.get("publish_at", "")) if hasattr(connector, "accepts_date") else is_today_or_yesterday(item.get("publish_at", ""))):
                 continue
             if item.get("job_type") == "hourly":
                 low, high = item.get("hourly_rate_from"), item.get("hourly_rate_to")
