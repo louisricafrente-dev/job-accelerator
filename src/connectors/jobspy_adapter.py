@@ -1,6 +1,7 @@
 import time
 import json
 import logging
+import random
 from typing import List
 from src.connectors.base import BaseConnector, logger
 from src.models import Job
@@ -28,6 +29,7 @@ class JobSpyAdapter(BaseConnector):
         self.checkpointed_feed = self.is_feed
         self.checkpointed_query = not self.is_feed
         self.query_group_size = 5 if site_name in ("linkedin", "indeed") else 1
+        self.max_queries = 34 if site_name in ("linkedin", "glassdoor") else None
         self.last_error = ""
 
     def _fetch_ziprecruiter_ldjson(self) -> List[Job]:
@@ -101,8 +103,8 @@ class JobSpyAdapter(BaseConnector):
                 for scraper_logger in scraper_loggers:
                     scraper_logger.addHandler(errors_log)
                 real_jobspy = bool(getattr(jobspy, "__file__", None))
-                if real_jobspy and self.site_name == "linkedin" and not proxy:
-                    time.sleep(2.0)
+                if real_jobspy and self.site_name in ("linkedin", "glassdoor") and not proxy:
+                    time.sleep(random.uniform(2.5, 4.0))
                 try:
                     frame = scrape_jobs(
                         site_name=[self.site_name],
@@ -141,6 +143,15 @@ class JobSpyAdapter(BaseConnector):
                         return fallback_jobs
                 except Exception as zr_exc:
                     self.last_error = str(zr_exc) or self.last_error
+            if df.empty and self.site_name == "zip_recruiter" and self.last_error and self.db_path:
+                from src.proxy_manager import request_routes
+                if request_routes(self.db_path, platform=self.platform) == [None] and any(
+                    m in self.last_error.lower() for m in ("403", "forbidden", "cloudflare")
+                ):
+                    self.last_error = ""
+                    self.finish_page(state, [], [], False)
+                    self.coverage_warning = "Coverage limited: ZipRecruiter blocks direct non-US connections (HTTP 403); configure a US proxy to enable"
+                    return []
             import pandas as pd
             rows = df.to_dict("records")
             for _, row in df.iterrows():

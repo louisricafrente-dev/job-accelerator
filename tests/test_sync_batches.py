@@ -386,3 +386,62 @@ class TestSyncBatches(unittest.TestCase):
         self.assertEqual(self.board.calls, ["a"])
         run_batch(aggregator, ["a"], budget_seconds=10, cycle_id="run-2")
         self.assertEqual(self.board.calls, ["a", "a"])
+
+    def test_local_executor_takeover_clears_cloud_inherited_block(self):
+        from src import execution_inbox as inbox
+        from src.sync_batches import run_batch
+
+        cmd1 = inbox.enqueue(self.db, ["a"])
+        cloud = inbox.claim(self.db, "cloud", "github", now=cmd1["local_deadline"] + 1)
+        cloud_agg = Aggregator(self.db, [self.board])
+        cloud_agg.execution_guard = {**cloud, "key": inbox.KEY}
+        self.board.error = "HTTP 429"
+        first = run_batch(cloud_agg, ["a"], workers=1, cycle_id="cloud-1")
+        self.assertGreater(first["progress"]["boards"][self.board.platform]["blocked_until"], self.clock.time())
+
+        cmd2 = inbox.enqueue(self.db, ["a"], restart=True)
+        local1 = inbox.claim(self.db, "local", "pc")
+        local_agg1 = Aggregator(self.db, [self.board])
+        local_agg1.execution_guard = {**local1, "key": inbox.KEY}
+        self.board.error = ""
+        second = run_batch(local_agg1, ["a"], workers=1, cycle_id="local-1", restart=True)
+        self.assertEqual(self.board.calls, ["a", "a"])
+        self.assertEqual(second["progress"]["boards"][self.board.platform]["blocked_until"], 0)
+        self.assertFalse(second["progress"]["unfinished"])
+
+        # Same-executor restart preserves local-incurred blocks.
+        self.clock.value += 6 * 3600 + 1
+        cmd3 = inbox.enqueue(self.db, ["a"], restart=True)
+        local2 = inbox.claim(self.db, "local", "pc")
+        local_agg2 = Aggregator(self.db, [self.board])
+        local_agg2.execution_guard = {**local2, "key": inbox.KEY}
+        self.board.error = "HTTP 403"
+        third = run_batch(local_agg2, ["a"], workers=1, cycle_id="local-2", restart=True)
+        local_block = third["progress"]["boards"][self.board.platform]["blocked_until"]
+        self.assertGreater(local_block, self.clock.time())
+
+        cmd4 = inbox.enqueue(self.db, ["a"], restart=True)
+        local3 = inbox.claim(self.db, "local", "pc")
+        local_agg3 = Aggregator(self.db, [self.board])
+        local_agg3.execution_guard = {**local3, "key": inbox.KEY}
+        self.board.error = ""
+        calls_before = list(self.board.calls)
+        fourth = run_batch(local_agg3, ["a"], workers=1, cycle_id="local-3", restart=True)
+        self.assertEqual(self.board.calls, calls_before)
+        self.assertEqual(fourth["progress"]["boards"][self.board.platform]["blocked_until"], local_block)
+
+    def test_max_queries_bounds_connector_searches_and_progress(self):
+        from src.sync_batches import run_batch
+
+        queries = [f"role-{i}" for i in range(40)]
+        self.board.max_queries = 34
+        result = run_batch(Aggregator(self.db, [self.board]), queries, budget_seconds=200, workers=1)
+        self.assertEqual(self.board.calls, queries[:34])
+        self.assertEqual(result["progress"]["completed_searches"], 34)
+        self.assertEqual(result["progress"]["total_searches"], 34)
+        self.assertFalse(result["progress"]["has_more"])
+        self.assertFalse(result["progress"]["unfinished"])
+        self.assertEqual(result["telemetry"][self.board.platform]["status"], "active")
+        follow_up = run_batch(Aggregator(self.db, [self.board]), queries, budget_seconds=10, workers=1)
+        self.assertEqual(self.board.calls, queries[:34])
+        self.assertEqual(follow_up["telemetry"][self.board.platform]["status"], "complete")

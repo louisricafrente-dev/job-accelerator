@@ -731,6 +731,14 @@ class FlexJobsConnector(BaseConnector):
             self.last_error = str(e) or type(e).__name__
             logger.warning(f"[{self.platform}] fetch notice: {e}")
 
+        if self.last_error and self.db_path and not custom_feed:
+            from src.proxy_manager import request_routes
+            if request_routes(self.db_path, platform=self.platform) == [None] and any(
+                m in self.last_error.lower() for m in ("403", "forbidden", "cloudflare")
+            ):
+                self.coverage_warning = "Coverage limited: FlexJobs blocks direct unauthenticated connections (HTTP 403); configure FLEXJOBS_FEED_URL or a proxy"
+                self.last_error = ""
+
         FlexJobsConnector._cached_jobs = jobs
         FlexJobsConnector._last_fetch = now if not self.last_error else 0
         return jobs

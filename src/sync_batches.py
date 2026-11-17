@@ -57,6 +57,16 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         saved_status = json.loads(get_user_setting(aggregator.db_path, "sync_status", "{}") or "{}")
         aggregator.last_sync_time = saved_status.get("last_successful_fetch", 0)
         now_ts = time.time()
+        current_executor = guard.get("executor") if isinstance(guard, dict) else None
+        previous_executor = checkpoint.get("last_executor")
+        executor_switched_to_local = (current_executor == "local" and previous_executor != "local")
+
+        def board_total(connector):
+            if getattr(connector, "is_feed", False):
+                return 1
+            limit = getattr(connector, "max_queries", None)
+            return min(len(queries), int(limit)) if isinstance(limit, int) and limit > 0 else len(queries)
+
         new_cycle = restart or (cycle_id is not None and checkpoint.get("cycle_id") != cycle_id)
         refresh_completed = cycle_id is None or checkpoint.get("cycle_id") != cycle_id
         cycle_expired = refresh_completed and checkpoint.get("cycle_started_at", 0) > 0 and checkpoint.get("cycle_started_at", 0) < now_ts - REFRESH_SECONDS
@@ -72,30 +82,50 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             }
             for connector in aggregator.connectors:
                 old = previous.get(connector.platform, {})
-                reuse_feed = not restart and getattr(connector, "is_feed", False) and old.get("next_at", 0) > time.time() and not old.get("last_error")
+                total = board_total(connector)
+                board_queries = queries[:total]
+                board_query_set = set(board_queries)
+                old_blocked_error = any(
+                    code in old.get("last_error", "").lower()
+                    for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden", "cloudflare challenge", "requires verification")
+                )
+                clear_cloud_block = executor_switched_to_local and (
+                    old.get("blocked_until", 0) > 0
+                    or old.get("access_failures", 0) > 0
+                    or old.get("rate_limit_failures", 0) > 0
+                    or old_blocked_error
+                )
+                reuse_feed = (
+                    not restart
+                    and not clear_cloud_block
+                    and getattr(connector, "is_feed", False)
+                    and old.get("next_at", 0) > time.time()
+                    and not old.get("last_error")
+                )
                 completed_queries = {
                     query: fetched_at for query, fetched_at in old.get("completed_queries", {}).items()
-                    if query in query_set and fetched_at > time.time() - REFRESH_SECONDS
+                    if query in board_query_set and fetched_at > time.time() - REFRESH_SECONDS
                 } if (not restart and not getattr(connector, "is_feed", False)) else {}
-                query_states = {} if restart else {q: s for q, s in old.get("query_states", {}).items() if q in query_set}
+                query_states = {} if restart else {q: s for q, s in old.get("query_states", {}).items() if q in board_query_set}
                 reuse_queries = bool(completed_queries or query_states)
-                pending_queries = [index for index, query in enumerate(queries) if query not in completed_queries]
+                pending_queries = [index for index, query in enumerate(board_queries) if query not in completed_queries]
+                blocked_until = 0 if clear_cloud_block else old.get("blocked_until", 0)
                 checkpoint["boards"][connector.platform] = {
                     "feed_state": {} if restart else old.get("feed_state", {}),
                     "query_states": query_states,
                     "coverage_warning": old.get("coverage_warning", "") if reuse_feed or completed_queries else "",
-                    "individual_queries": [] if restart else [q for q in old.get("individual_queries", []) if q in query_set],
+                    "individual_queries": [] if restart else [q for q in old.get("individual_queries", []) if q in board_query_set],
                     "completed_queries": completed_queries,
-                    "cursor": old.get("cursor", 0) if reuse_feed else len(queries) if reuse_queries else 0,
+                    "cursor": old.get("cursor", 0) if reuse_feed else len(board_queries) if reuse_queries else 0,
                     "retry": old.get("retry", []) if reuse_feed else pending_queries if reuse_queries else [],
                     "next_at": old.get("next_at", 0) if reuse_feed else max(
-                        old.get("blocked_until", 0),
+                        blocked_until,
                         min(completed_queries.values()) + REFRESH_SECONDS if completed_queries and not pending_queries else 0,
                     ),
-                    "blocked_until": old.get("blocked_until", 0),
-                    "access_failures": old.get("access_failures", 0),
-                    "rate_limit_failures": old.get("rate_limit_failures", 0),
-                    "last_error": old.get("last_error", ""),
+                    "blocked_until": blocked_until,
+                    "access_failures": 0 if clear_cloud_block else old.get("access_failures", 0),
+                    "rate_limit_failures": 0 if clear_cloud_block else old.get("rate_limit_failures", 0),
+                    "last_error": "" if clear_cloud_block else old.get("last_error", ""),
                     "revision": old.get("revision", 1),
                 }
         else:
@@ -105,6 +135,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             elif "cycle_started_at" not in checkpoint:
                 checkpoint["cycle_started_at"] = now_ts
         window_since_ts = checkpoint.get("window_since_ts")
+        if current_executor:
+            checkpoint["last_executor"] = current_executor
         if cycle_id is not None:
             checkpoint["cycle_id"] = cycle_id
         valid_platforms = {c.platform for c in aggregator.connectors}
@@ -113,17 +145,17 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         now = time.time()
 
         def is_complete(connector, state):
-            total = 1 if getattr(connector, "is_feed", False) else len(queries)
-            return state["cursor"] >= total and not state["retry"]
+            total = board_total(connector)
+            return state["cursor"] >= total and not [i for i in state["retry"] if i < total]
 
         def next_index(connector, state, started):
-            total = 1 if getattr(connector, "is_feed", False) else len(queries)
+            total = board_total(connector)
             cursor = state["cursor"]
+            retries = [i for i in state["retry"] if i < total and (connector.platform, i) not in started]
             if getattr(connector, "checkpointed_query", False) is not True:
-                index = cursor if cursor < total else next(iter(state["retry"]), None)
+                index = cursor if cursor < total else next(iter(retries), None)
                 return None if (connector.platform, index) in started else index
 
-            retries = [i for i in state["retry"] if (connector.platform, i) not in started]
             pages = state.get("query_states", {})
             unpaged = next((i for i in retries if queries[i] not in pages), cursor)
             if unpaged < min(total, CORE_QUERY_COUNT):
@@ -153,6 +185,16 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 state.pop("yield_counts", None)
                 state.pop("continue_page", None)
             blocked_error = any(code in state.get("last_error", "").lower() for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden", "cloudflare challenge", "requires verification"))
+            if executor_switched_to_local and (
+                state.get("blocked_until", 0) > 0
+                or state.get("access_failures", 0) > 0
+                or state.get("rate_limit_failures", 0) > 0
+                or blocked_error
+            ):
+                state.update(blocked_until=0, access_failures=0, rate_limit_failures=0, last_error="", deferred=False)
+                if not is_complete(connector, state):
+                    state["next_at"] = 0
+                blocked_error = False
             if resume and not blocked_error:
                 state.update(deferred=False, blocked_until=0, next_at=0)
             elif state.get("blocked_until", 0) > now and state.get("last_error"):
@@ -166,7 +208,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             if getattr(connector, "checkpointed_query", False) is True:
                 # Older checkpoints kept the active paginated keyword at the cursor.
                 cursor = state["cursor"]
-                if cursor < len(queries) and queries[cursor] in state.get("query_states", {}):
+                if cursor < board_total(connector) and queries[cursor] in state.get("query_states", {}):
                     state["retry"].append(cursor)
                     state["cursor"] += 1
         result = {"status": "ok", "added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}, "is_syncing": True}
@@ -180,8 +222,11 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
 
         def progress():
             query_boards = [c for c in aggregator.connectors if not getattr(c, "is_feed", False)]
-            completed = sum(max(0, boards[c.platform]["cursor"] - len(boards[c.platform]["retry"])) for c in query_boards)
-            total = len(queries) * len(query_boards)
+            completed = sum(
+                min(board_total(c), max(0, boards[c.platform]["cursor"] - len([i for i in boards[c.platform]["retry"] if i < board_total(c)])))
+                for c in query_boards
+            )
+            total = sum(board_total(c) for c in query_boards)
             unfinished = [c for c in aggregator.connectors if not is_complete(c, boards[c.platform])]
             remaining = [boards[c.platform] for c in unfinished if not boards[c.platform].get("deferred")]
             deferred = [{"platform": c.platform, "error": boards[c.platform].get("last_error", ""),
@@ -271,7 +316,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         position = (start + offset) % len(connectors)
                         connector = connectors[position]
                         state = boards[connector.platform]
-                        total = 1 if getattr(connector, "is_feed", False) else len(queries)
+                        total = board_total(connector)
                         if connector.platform in active or state.get("deferred") or state.get("next_at", 0) > now:
                             continue
                         index = next_index(connector, state, started)
@@ -287,7 +332,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         elif index == state["cursor"]:
                             candidates = list(range(index, min(total, index + group_size)))
                         else:
-                            candidates = state["retry"][:group_size]
+                            candidates = [i for i in state["retry"] if i < total][:group_size]
                         indices = [i for i in candidates if (connector.platform, i) not in started]
                         if len(indices) > 1 and any(queries[i] in state.get("individual_queries", []) for i in indices):
                             indices = indices[:1]
