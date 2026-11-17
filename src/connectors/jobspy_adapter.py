@@ -76,6 +76,71 @@ class JobSpyAdapter(BaseConnector):
                         ))
         return jobs
 
+    def _fetch_linkedin_guest_fallback(self, query: str, location: str, offset: int, wanted: int, state: dict):
+        from bs4 import BeautifulSoup
+        from urllib.parse import urlencode
+        time.sleep(random.uniform(3.0, 5.0))
+        url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" + urlencode({
+            "keywords": query,
+            "location": location,
+            "distance": 50,
+            "f_TPR": f"r{int(self.request_hours()) * 3600}",
+            "start": offset,
+        })
+        resp = self.get_url(url, impersonate="chrome120", timeout=15)
+        if resp.status_code != 200:
+            raise RuntimeError(f"LinkedIn response status code {resp.status_code}")
+        soup = BeautifulSoup(resp.text, "html.parser")
+        cards = soup.find_all(class_="base-search-card")
+        raw_urls = []
+        raw_dates = []
+        jobs: List[Job] = []
+        for card in cards:
+            urn = str(card.get("data-entity-urn") or "").strip()
+            job_id = urn.split(":")[-1].strip() if ":" in urn else ""
+            link_el = card.find("a", class_="base-card__full-link", href=True) or card.find("a", href=True)
+            job_url = f"https://www.linkedin.com/jobs/view/{job_id}" if job_id else (str(link_el["href"]).split("?")[0].strip() if link_el else "")
+            title_el = card.find("h3", class_="base-search-card__title")
+            title = title_el.get_text(strip=True) if title_el else ""
+            if not title or not job_url:
+                continue
+            comp_el = card.find("h4", class_="base-search-card__subtitle")
+            company = (comp_el.get_text(strip=True) if comp_el else "") or "Direct Employer"
+            loc_el = card.find("span", class_="job-search-card__location")
+            loc = (loc_el.get_text(strip=True) if loc_el else "") or location
+            time_el = card.find("time")
+            date_str = ((time_el.get("datetime") or time_el.get_text(strip=True) or "").strip() if time_el else "")
+            raw_urls.append(job_url)
+            raw_dates.append(date_str)
+            if not is_work_authorized_location(loc, title, self.platform, ""):
+                continue
+            if not self.accepts_opportunity(title, "", allow_va_training=True, location=loc, platform=self.platform):
+                continue
+            if not self.accepts_date(date_str):
+                continue
+            jobs.append(Job(
+                title=title,
+                company=company,
+                location=loc,
+                platform=self.platform,
+                tier=self.tier,
+                job_url=job_url,
+                salary="",
+                role_category=self.job_role(title),
+                experience_level=classify_experience_level(title, ""),
+                date_posted=date_str,
+                description="",
+            ))
+        self.last_raw_count = len(raw_urls)
+        self.last_search_complete = len(raw_urls) < wanted
+        more = len(raw_urls) >= wanted
+        if offset + len(raw_urls) >= 1000:
+            more = False
+            self.coverage_warning = "Coverage limited: search reached the 1000-result paging boundary"
+        self.finish_page(state, raw_urls, raw_dates, more)
+        state["offset"] = offset + wanted if more else 0
+        return jobs, True
+
     def fetch(self, query: str = "software engineer", location: str = "Philippines", *, group_size=1) -> List[Job]:
         self.last_error = ""
         self.last_search_complete = False
@@ -133,6 +198,14 @@ class JobSpyAdapter(BaseConnector):
             if errors:
                 from src.proxy_manager import redact_proxy_error
                 self.last_error = redact_proxy_error(errors, self.db_path)
+            if df.empty and self.site_name == "linkedin" and self.last_error and getattr(jobspy, "__file__", None):
+                try:
+                    fallback_jobs, ok = self._fetch_linkedin_guest_fallback(query, search_loc, offset, wanted, state)
+                    if ok:
+                        self.last_error = ""
+                        return fallback_jobs
+                except Exception as li_exc:
+                    self.last_error = str(li_exc) or self.last_error
             if df.empty and self.site_name == "zip_recruiter" and getattr(jobspy, "__file__", None):
                 try:
                     fallback_jobs = self._fetch_ziprecruiter_ldjson()
