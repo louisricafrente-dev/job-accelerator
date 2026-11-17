@@ -30,9 +30,21 @@ class JobSpyAdapter(BaseConnector):
         self.checkpointed_feed = self.is_feed
         self.checkpointed_query = not self.is_feed
         self.query_group_size = 5 if site_name in ("linkedin", "indeed") else 1
-        self.max_queries = 34 if site_name in ("linkedin", "glassdoor") else None
+        self.max_queries = None
+        self.tail_group_size = 5 if site_name in ("linkedin", "glassdoor") else 1
+        self.query_delay_seconds = (9.0, 13.0) if site_name == "linkedin" else ((5.0, 8.0) if site_name == "glassdoor" else None)
         self._linkedin_prefer_cffi = False
         self.last_error = ""
+
+    def fetch_tail_group(self, queries: List[str]) -> List[Job]:
+        """Fetch a single newest page for a tail boolean OR query batch."""
+        expression = " OR ".join(f"({query})" for query in queries)
+        self.query_state = {}
+        jobs = self.fetch(query=expression, group_size=1)
+        self.has_more = False
+        self.last_group_incomplete = False
+        self.last_fetch_mode = f"tail OR group ({len(queries)})"
+        return jobs
 
     def _fetch_ziprecruiter_ldjson(self) -> List[Job]:
         from bs4 import BeautifulSoup
@@ -83,7 +95,7 @@ class JobSpyAdapter(BaseConnector):
         from urllib.parse import urlencode
         from src.models import normalize_date
         self.last_route = "DIRECT"
-        time.sleep(random.uniform(3.0, 5.0))
+        time.sleep(random.uniform(1.5, 2.5))
         url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" + urlencode({
             "keywords": query,
             "location": location,
@@ -186,7 +198,7 @@ class JobSpyAdapter(BaseConnector):
                     scraper_logger.addHandler(errors_log)
                 real_jobspy = bool(getattr(jobspy, "__file__", None))
                 if real_jobspy and self.site_name in ("linkedin", "glassdoor") and not proxy:
-                    time.sleep(random.uniform(2.5, 4.0))
+                    time.sleep(random.uniform(1.5, 2.5))
                 elif real_jobspy and self.site_name == "indeed" and not proxy:
                     time.sleep(random.uniform(0.8, 1.5))
                 try:

@@ -2,6 +2,8 @@
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import hashlib
 import json
+import random
+import re
 import time
 import uuid
 
@@ -253,7 +255,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             deferred = [{"platform": c.platform, "error": boards[c.platform].get("last_error", ""),
                          "retry_at": boards[c.platform].get("blocked_until", 0)} for c in unfinished if boards[c.platform].get("deferred")]
             return {"next_run_at": min((state.get("next_at", 0) for state in remaining), default=0), "keywords": len(queries), "completed_searches": completed, "total_searches": total,
-                    "can_continue": any(state.get("next_at", 0) <= time.time() + QUERY_DELAY_SECONDS + 0.1 for state in remaining),
+                    "can_continue": any(state.get("next_at", 0) <= time.time() + max(QUERY_DELAY_SECONDS + 0.1, 30) for state in remaining),
                     "has_more": bool(remaining), "unfinished": bool(unfinished), "deferred_boards": deferred,
                     "coverage_issues": [{"platform": c.platform, "reason": boards[c.platform]["coverage_warning"]}
                                         for c in aggregator.connectors if boards[c.platform].get("coverage_warning")],
@@ -305,8 +307,12 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         connector.feed_state = dict(boards[connector.platform].get("feed_state", {}))
                     jobs = connector.fetch()
                 elif len(indices) > 1:
-                    method = connector.fetch_group_step if getattr(connector, "supports_group_steps", False) is True else connector.fetch_group
-                    jobs = method([queries[index] for index in indices])
+                    raw_tail = getattr(connector, "tail_group_size", 1)
+                    if isinstance(raw_tail, int) and raw_tail > 1 and min(indices) >= CORE_QUERY_COUNT and hasattr(connector, "fetch_tail_group"):
+                        jobs = connector.fetch_tail_group([queries[index] for index in indices])
+                    else:
+                        method = connector.fetch_group_step if getattr(connector, "supports_group_steps", False) is True else connector.fetch_group
+                        jobs = method([queries[index] for index in indices])
                 else:
                     if getattr(connector, "checkpointed_query", False) is True:
                         connector.query_state = dict(boards[connector.platform].get("query_states", {}).get(queries[indices[0]], {}))
@@ -343,17 +349,50 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         index = next_index(connector, state, started)
                         if index is None:
                             continue
-                        group_size = 1 if getattr(connector, "is_feed", False) else connector.query_group_size
-                        if getattr(connector, "checkpointed_query", False) is True:
-                            group_size = 1
-                        if queries[index] in state.get("individual_queries", []) and not getattr(connector, "is_feed", False):
-                            group_size = 1
-                        if group_size == 1:
-                            candidates = [index]
-                        elif index == state["cursor"]:
-                            candidates = list(range(index, min(total, index + group_size)))
+                        raw_tail = getattr(connector, "tail_group_size", 1)
+                        tail_group = raw_tail if isinstance(raw_tail, int) and not isinstance(raw_tail, bool) else 1
+                        is_tail_group = (
+                            not getattr(connector, "is_feed", False)
+                            and tail_group > 1
+                            and index >= CORE_QUERY_COUNT
+                            and queries[index] not in state.get("query_states", {})
+                        )
+                        if is_tail_group:
+                            pool = (
+                                list(range(index, min(total, index + tail_group)))
+                                if index == state["cursor"]
+                                else [r for r in state["retry"] if CORE_QUERY_COUNT <= r < total and queries[r] not in state.get("query_states", {})]
+                            )
+                            candidates = []
+                            for idx in pool:
+                                if len(candidates) >= tail_group:
+                                    break
+                                q = queries[idx]
+                                safe_q = bool(re.fullmatch(r"[\w .+#/-]+", q)) and not re.search(r"\b(?:AND|OR|NOT)\b", q)
+                                if not safe_q:
+                                    if not candidates:
+                                        candidates = [idx]
+                                    break
+                                expr = " OR ".join(f"({queries[c]})" for c in candidates + [idx])
+                                if len(expr) > 240:
+                                    if not candidates:
+                                        candidates = [idx]
+                                    break
+                                candidates.append(idx)
+                            if not candidates:
+                                candidates = [index]
                         else:
-                            candidates = [i for i in state["retry"] if i < total][:group_size]
+                            group_size = 1 if getattr(connector, "is_feed", False) else connector.query_group_size
+                            if getattr(connector, "checkpointed_query", False) is True:
+                                group_size = 1
+                            if queries[index] in state.get("individual_queries", []) and not getattr(connector, "is_feed", False):
+                                group_size = 1
+                            if group_size == 1:
+                                candidates = [index]
+                            elif index == state["cursor"]:
+                                candidates = list(range(index, min(total, index + group_size)))
+                            else:
+                                candidates = [i for i in state["retry"] if i < total][:group_size]
                         indices = [i for i in candidates if (connector.platform, i) not in started]
                         if len(indices) > 1 and any(queries[i] in state.get("individual_queries", []) for i in indices):
                             indices = indices[:1]
@@ -437,7 +476,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                     paged = (getattr(connector, "checkpointed_feed", False) is True or
                              getattr(connector, "checkpointed_query", False) is True)
                     more_pages = not error and paged and connector.has_more
-                    query_paged = getattr(connector, "checkpointed_query", False) is True
+                    query_paged = getattr(connector, "checkpointed_query", False) is True and len(indices) == 1
                     if not more_pages or query_paged:
                         for index in indices:
                             if index == state["cursor"]:
@@ -502,7 +541,14 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                                 started.discard((connector.platform, index))
                             elif index in state["retry"] and not more_pages:
                                 state["retry"].remove(index)
-                        state["next_at"] = time.time() + (REFRESH_SECONDS if is_complete(connector, state) else QUERY_DELAY_SECONDS)
+                        board_delay = getattr(connector, "query_delay_seconds", None)
+                        if isinstance(board_delay, (tuple, list)) and len(board_delay) == 2:
+                            step_delay = random.uniform(float(board_delay[0]), float(board_delay[1]))
+                        elif isinstance(board_delay, (int, float)) and board_delay > 0:
+                            step_delay = float(board_delay)
+                        else:
+                            step_delay = QUERY_DELAY_SECONDS
+                        state["next_at"] = time.time() + (REFRESH_SECONDS if is_complete(connector, state) else step_delay)
                     coverage_warning = state.get("coverage_warning", "")
                     telemetry[connector.platform] = {"status": "error" if error else "active", "count": len(jobs), "tier": connector.tier, "error": error,
                                                      "coverage_warning": coverage_warning,

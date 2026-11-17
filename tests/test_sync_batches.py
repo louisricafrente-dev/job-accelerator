@@ -470,3 +470,50 @@ class TestSyncBatches(unittest.TestCase):
         self.assertTrue(result["progress"]["has_more"])
         checkpoint = json.loads(get_user_setting(self.db, PROGRESS_KEY))
         self.assertEqual(get_user_setting(self.db, "last_completed_scrape_at"), str(checkpoint["cycle_started_at"]))
+
+    def test_tail_group_runs_core_individually_and_groups_tail_with_board_pacing(self):
+        from src.sync_batches import CORE_QUERY_COUNT, run_batch
+
+        class TailGroupBoard(BaseConnector):
+            platform = "Tail group board"
+            tier = 1
+            checkpointed_query = True
+            tail_group_size = 5
+            query_delay_seconds = (10.0, 10.0)
+
+            def __init__(self, clock):
+                self.clock = clock
+                self.single_calls = []
+                self.tail_groups = []
+
+            def fetch(self, query="", location=""):
+                self.single_calls.append(query)
+                self.clock.value += 1
+                self.finish_page(self.page_state(query), [f"s-{query}"], ["today"], False)
+                return []
+
+            def fetch_tail_group(self, queries):
+                self.tail_groups.append(list(queries))
+                self.clock.value += 1
+                self.has_more = False
+                self.last_group_incomplete = False
+                self.last_fetch_mode = f"tail OR group ({len(queries)})"
+                return []
+
+        board = TailGroupBoard(self.clock)
+        queries = [f"role-{i}" for i in range(CORE_QUERY_COUNT + 6)]
+        first = run_batch(Aggregator(self.db, [board]), queries, budget_seconds=2, workers=1, cycle_id="tg")
+        self.assertEqual(board.single_calls, ["role-0"])
+        self.assertEqual(board.tail_groups, [])
+        self.assertTrue(first["progress"]["can_continue"])
+        self.assertGreaterEqual(first["progress"]["boards"][board.platform]["next_at"] - self.clock.time(), 9.9)
+
+        for _ in range(CORE_QUERY_COUNT + 3):
+            self.clock.value += 11
+            result = run_batch(Aggregator(self.db, [board]), queries, budget_seconds=2, workers=1, cycle_id="tg")
+            if not result["progress"]["has_more"]:
+                break
+        self.assertEqual(board.single_calls, queries[:CORE_QUERY_COUNT] + [queries[-1]])
+        self.assertEqual(board.tail_groups, [queries[CORE_QUERY_COUNT:CORE_QUERY_COUNT + 5]])
+        self.assertFalse(result["progress"]["has_more"])
+        self.assertFalse(result["progress"]["unfinished"])
