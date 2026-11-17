@@ -434,7 +434,7 @@ class UpworkConnector(BaseConnector):
     tier = 2
     is_feed = True
     revision = 3
-    coverage_limit = "Coverage limited: once-daily Upwork/flconsole can return only the last 30 minutes (up to 50 jobs), not two-day backfill"
+    coverage_limit = "Coverage limited: once-daily Upwork/flconsole can return only the last 30 minutes (up to 50 jobs), not full dynamic-window backfill"
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""

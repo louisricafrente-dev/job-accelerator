@@ -211,6 +211,27 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 if cursor < board_total(connector) and queries[cursor] in state.get("query_states", {}):
                     state["retry"].append(cursor)
                     state["cursor"] += 1
+            if connector.platform == "LinkedIn" and state.get("query_states") and aggregator.db_path:
+                from src.proxy_manager import request_routes
+                max_off = getattr(connector, "MAX_DIRECT_LINKEDIN_OFFSET", 30)
+                if request_routes(aggregator.db_path, platform=connector.platform) == [None]:
+                    for q, qs in list(state["query_states"].items()):
+                        if qs.get("offset", 0) >= max_off:
+                            state["query_states"].pop(q, None)
+                            state.setdefault("completed_queries", {})[q] = now
+                            if q in queries:
+                                idx = queries.index(q)
+                                if idx in state["retry"]:
+                                    state["retry"].remove(idx)
+            if connector.platform == "Bossjob" and state.get("query_states"):
+                for q, qs in list(state["query_states"].items()):
+                    if qs.get("page", 1) > 10 and qs.get("last_date", "") and qs.get("last_date", "") < qs.get("window_start", "9999"):
+                        state["query_states"].pop(q, None)
+                        state.setdefault("completed_queries", {})[q] = now
+                        if q in queries:
+                            idx = queries.index(q)
+                            if idx in state["retry"]:
+                                state["retry"].remove(idx)
         result = {"status": "ok", "added": 0, "skipped": 0, "total_fetched": 0, "platforms": {}, "is_syncing": True}
         telemetry = {connector.platform: {
             "status": ("deferred" if boards[connector.platform].get("deferred") else "complete" if is_complete(connector, boards[connector.platform])
@@ -510,8 +531,13 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
         aggregator.last_sync_result = result
         aggregator.platform_telemetry = telemetry
         persist()
-        if (not ingestion_failed and not result["progress"]["has_more"]
-                and any(not boards[c.platform].get("last_error") and is_complete(c, boards[c.platform]) for c in connectors)):
+        first_pass_complete = all(
+            boards[c.platform]["cursor"] >= board_total(c)
+            for c in connectors if not boards[c.platform].get("deferred")
+        )
+        if (not ingestion_failed
+                and (not result["progress"]["has_more"] or first_pass_complete)
+                and any(not boards[c.platform].get("last_error") and boards[c.platform]["cursor"] >= board_total(c) for c in connectors)):
             set_user_setting(aggregator.db_path, "last_completed_scrape_at", str(checkpoint.get("cycle_started_at") or time.time()))
         return result
     finally:

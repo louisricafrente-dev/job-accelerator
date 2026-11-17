@@ -20,6 +20,7 @@ class JobSpyAdapter(BaseConnector):
     revision = 6
     supports_group_steps = True
     checkpointed_query = True
+    MAX_DIRECT_LINKEDIN_OFFSET = 30
 
     def __init__(self, platform_name: str, site_name: str, tier: int):
         self.platform = platform_name
@@ -30,6 +31,7 @@ class JobSpyAdapter(BaseConnector):
         self.checkpointed_query = not self.is_feed
         self.query_group_size = 5 if site_name in ("linkedin", "indeed") else 1
         self.max_queries = 34 if site_name in ("linkedin", "glassdoor") else None
+        self._linkedin_prefer_cffi = False
         self.last_error = ""
 
     def _fetch_ziprecruiter_ldjson(self) -> List[Job]:
@@ -79,6 +81,8 @@ class JobSpyAdapter(BaseConnector):
     def _fetch_linkedin_guest_fallback(self, query: str, location: str, offset: int, wanted: int, state: dict):
         from bs4 import BeautifulSoup
         from urllib.parse import urlencode
+        from src.models import normalize_date
+        self.last_route = "DIRECT"
         time.sleep(random.uniform(3.0, 5.0))
         url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" + urlencode({
             "keywords": query,
@@ -131,14 +135,20 @@ class JobSpyAdapter(BaseConnector):
                 date_posted=date_str,
                 description="",
             ))
+        norm_dates = [normalize_date(d) for d in raw_dates]
+        all_old = bool(raw_dates) and all(d and d < state["window_start"] for d in norm_dates)
+        empty_streak = (state.get("empty_streak", 0) + 1) if not jobs else 0
         self.last_raw_count = len(raw_urls)
         self.last_search_complete = len(raw_urls) < wanted
         more = len(raw_urls) >= wanted
+        if self.db_path and (offset + len(raw_urls) >= self.MAX_DIRECT_LINKEDIN_OFFSET or empty_streak >= 2 or all_old):
+            more = False
         if offset + len(raw_urls) >= 1000:
             more = False
             self.coverage_warning = "Coverage limited: search reached the 1000-result paging boundary"
         self.finish_page(state, raw_urls, raw_dates, more)
-        state["offset"] = offset + wanted if more else 0
+        state["offset"] = offset + wanted if self.has_more else 0
+        state["empty_streak"] = empty_streak if self.has_more else 0
         return jobs, True
 
     def fetch(self, query: str = "software engineer", location: str = "Philippines", *, group_size=1) -> List[Job]:
@@ -159,6 +169,13 @@ class JobSpyAdapter(BaseConnector):
             wanted = 10 if self.site_name == "linkedin" else 35
             if group_size > 1:
                 wanted = wanted + 1 if getattr(self, "bounded_group_probe", False) else wanted * group_size + 1
+            if self.site_name == "linkedin" and self._linkedin_prefer_cffi and self.db_path and getattr(jobspy, "__file__", None):
+                from src.proxy_manager import request_routes
+                if request_routes(self.db_path, platform=self.platform) == [None]:
+                    fallback_jobs, ok = self._fetch_linkedin_guest_fallback(query, search_loc, offset, wanted, state)
+                    if ok:
+                        self.last_error = ""
+                        return fallback_jobs
             def send(proxy):
                 errors_log = _JobSpyErrors()
                 legacy_name = {"linkedin": "LinkedIn", "indeed": "Indeed", "glassdoor": "Glassdoor",
@@ -170,17 +187,25 @@ class JobSpyAdapter(BaseConnector):
                 real_jobspy = bool(getattr(jobspy, "__file__", None))
                 if real_jobspy and self.site_name in ("linkedin", "glassdoor") and not proxy:
                     time.sleep(random.uniform(2.5, 4.0))
+                elif real_jobspy and self.site_name == "indeed" and not proxy:
+                    time.sleep(random.uniform(0.8, 1.5))
                 try:
-                    frame = scrape_jobs(
-                        site_name=[self.site_name],
-                        search_term=query,
-                        location=search_loc,
-                        results_wanted=wanted,
-                        offset=offset,
-                        country_indeed=country,
-                        hours_old=self.request_hours(),
-                        proxies=[proxy] if proxy else None
-                    )
+                    for attempt in range(2 if real_jobspy else 1):
+                        errors_log.messages.clear()
+                        frame = scrape_jobs(
+                            site_name=[self.site_name],
+                            search_term=query,
+                            location=search_loc,
+                            results_wanted=wanted,
+                            offset=offset,
+                            country_indeed=country,
+                            hours_old=self.request_hours(),
+                            proxies=[proxy] if proxy else None
+                        )
+                        if not (frame.empty and errors_log.messages and "eof occurred in violation of protocol" in "; ".join(errors_log.messages).lower()):
+                            break
+                        if attempt == 0:
+                            time.sleep(1.5)
                 finally:
                     for scraper_logger in scraper_loggers:
                         scraper_logger.removeHandler(errors_log)
@@ -202,6 +227,7 @@ class JobSpyAdapter(BaseConnector):
                 try:
                     fallback_jobs, ok = self._fetch_linkedin_guest_fallback(query, search_loc, offset, wanted, state)
                     if ok:
+                        self._linkedin_prefer_cffi = True
                         self.last_error = ""
                         return fallback_jobs
                 except Exception as li_exc:
@@ -264,13 +290,18 @@ class JobSpyAdapter(BaseConnector):
                     date_posted=date_str,
                     description=description
                 ))
+            empty_streak = (state.get("empty_streak", 0) + 1) if not jobs else 0
             more = not errors and len(df) >= wanted
+            if self.db_path and self.site_name == "linkedin" and getattr(self, "last_route", "DIRECT") == "DIRECT":
+                if offset + len(df) >= self.MAX_DIRECT_LINKEDIN_OFFSET or empty_streak >= 2:
+                    more = False
             if offset + len(df) >= 1000:
                 more = False
                 self.coverage_warning = "Coverage limited: search reached the 1000-result paging boundary"
             self.finish_page(state, [str(row.get("job_url") or "") for row in rows],
                              [row.get("date_posted") for row in rows], more)
-            state["offset"] = offset + wanted if more else 0
+            state["offset"] = offset + wanted if self.has_more else 0
+            state["empty_streak"] = empty_streak if self.has_more else 0
         except Exception as e:
             self.last_error = str(e)
             logger.error(f"[{self.platform}] fetch failed: {e}")

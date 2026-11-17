@@ -445,3 +445,28 @@ class TestSyncBatches(unittest.TestCase):
         follow_up = run_batch(Aggregator(self.db, [self.board]), queries, budget_seconds=10, workers=1)
         self.assertEqual(self.board.calls, queries[:34])
         self.assertEqual(follow_up["telemetry"][self.board.platform]["status"], "complete")
+
+    def test_first_pass_completion_saves_scrape_watermark_before_tail_pagination(self):
+        from src.sync_batches import run_batch
+
+        class PagedBoard(BaseConnector):
+            platform = "Paged watermark board"
+            tier = 1
+            checkpointed_query = True
+
+            def __init__(self, clock):
+                self.clock = clock
+
+            def fetch(self, query="", location=""):
+                state = self.page_state(query)
+                page = state.get("page", 0)
+                self.clock.value += 2
+                self.finish_page(state, [f"{query}-{page}"], ["today"], page == 0)
+                state["page"] = page + 1
+                return [Job("Junior Software Developer", f"Example {query}-{page}", "Remote", self.platform, 1,
+                            f"https://example.com/{query}/{page}", date_posted="today")]
+
+        result = run_batch(Aggregator(self.db, [PagedBoard(self.clock)]), ["a", "b"], budget_seconds=3, workers=1, cycle_id="early-wm")
+        self.assertTrue(result["progress"]["has_more"])
+        checkpoint = json.loads(get_user_setting(self.db, PROGRESS_KEY))
+        self.assertEqual(get_user_setting(self.db, "last_completed_scrape_at"), str(checkpoint["cycle_started_at"]))

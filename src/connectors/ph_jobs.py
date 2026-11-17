@@ -147,12 +147,20 @@ class BossjobConnector(BaseConnector):
                         experience_level=classify_experience_level(title),
                         date_posted=raw_pub or pub_date
                     ))
-                # Refreshed ranking mixes old and new publication dates.
+                # Refreshed ranking mixes old and new publication dates across the first 10 pages;
+                # stop at page >= 10 once consecutive pages are entirely older than window_start.
+                raw_dates = [item.get("published_at") for item in items]
+                norm_dates = [normalize_date(d) for d in raw_dates]
+                page_all_old = bool(items) and all(d and d < state["window_start"] for d in norm_dates)
+                old_streak = (state.get("old_streak", 0) + 1) if page_all_old else 0
+                if page >= 10 and page_all_old:
+                    old_streak = max(old_streak, 2)
                 total_pages = payload.get("total_pages")
-                more = isinstance(total_pages, int) and total_pages > page
+                more = isinstance(total_pages, int) and total_pages > page and not (page >= 10 and old_streak >= 2)
                 self.finish_page(state, [str(item.get("id") or item.get("job_url") or "") for item in items],
-                                 [item.get("published_at") for item in items], more)
-                state["page"] = page + 1
+                                 raw_dates, more)
+                state["page"] = page + 1 if self.has_more else 1
+                state["old_streak"] = old_streak if self.has_more else 0
                 if not isinstance(total_pages, int):
                     self.coverage_warning = "Coverage limited: Bossjob did not report its page count"
         except Exception as e:

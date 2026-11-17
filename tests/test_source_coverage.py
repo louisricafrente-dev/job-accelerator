@@ -298,6 +298,18 @@ class TestSourcePageBoundaries(unittest.TestCase):
             c.query_state = dict(c.next_query_state)
         self.assertTrue(c.has_more)
 
+    def test_bossjob_stops_after_two_consecutive_old_pages(self):
+        c = BossjobConnector()
+        for page in range(1, 11):
+            item = {"id": f"old-{page}", "job_title": "Software Developer", "published_at": "2020-01-01", "job_url": f"/job/old-{page}", "job_country": "Philippines"}
+            with patch.object(c, "open_url", return_value=response({"code": 0, "data": {"jobs": [item], "total_pages": 500}})):
+                jobs = c.fetch("developer")
+            self.assertEqual(jobs, [])
+            self.assertEqual(c.has_more, page < 10)
+            c.query_state = dict(c.next_query_state)
+        self.assertEqual(c.query_state["old_streak"], 0)
+        self.assertEqual(c.query_state["page"], 1)
+
     def test_jobspy_continues_when_first_raw_page_has_no_relevant_jobs(self):
         import pandas as pd
         from types import SimpleNamespace
