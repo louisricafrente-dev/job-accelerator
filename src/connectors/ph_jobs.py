@@ -326,6 +326,9 @@ class OnlineJobsConnector(BaseConnector):
         jobs = []
         state = self.page_state(query)
         offset = state.get("offset", 0)
+        if not offset:
+            state.pop("last_date", None)
+            state.pop("seen_pages", None)
         try:
             params = urllib.parse.urlencode({"jobkeyword": query.strip(), "fullTime": "on",
                                              "partTime": "on", "freelance": "on"})
@@ -347,6 +350,9 @@ class OnlineJobsConnector(BaseConnector):
                            for a in soup.select("a[href]"))
             self.finish_page(state, links, dates, has_next, ordered=True)
             state["offset"] = next_offset if self.has_more else 0
+            if not self.has_more:
+                state.pop("last_date", None)
+                state.pop("seen_pages", None)
             for card, link, raw_date in zip(cards, links, dates):
                 if not self.accepts_date(raw_date):
                     continue
