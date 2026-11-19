@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="shortcut icon" href="/static/favicon.ico">
   <meta name="theme-color" content="#080c14">
-  <link rel="stylesheet" href="/static/style.css?v=20261107-guest-demo-v1">
+  <link rel="stylesheet" href="/static/style.css?v=20261119-specific-role-remake">
   <link rel="stylesheet" href="/static/gmail-hub.css?v=20261104-tag-filter-v3">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -384,12 +384,21 @@
           </div>
         </div>
         <div class="filter-selects-grid">
-        <div class="filter-cell">
-          <label class="filter-title" for="role-specialty-select">Specific role</label>
-          <select id="role-specialty-select" class="filter-select" onchange="setRole(this.value)" aria-describedby="role-filter-help">
-            <option value="All">All roles in this category</option>
-          </select>
-          <span class="role-filter-help" id="role-filter-help">Optional. Narrow the category to a specific role.</span>
+        <div class="filter-cell specific-role-cell">
+          <div class="specific-role-top-row">
+            <div class="specific-role-header">
+              <label class="filter-title" for="role-specialty-select">Specific role</label>
+              <div class="specific-role-meta">
+                <span class="specific-role-scope-badge" id="specific-role-scope-badge">36 matrix roles</span>
+                <button type="button" class="specific-role-reset-btn" id="specific-role-reset-btn" onclick="resetSpecificRole()" hidden>Reset &times;</button>
+              </div>
+            </div>
+            <select id="role-specialty-select" class="filter-select" onchange="setRole(this.value)" aria-describedby="role-filter-help">
+              <option value="All">All roles in this category</option>
+            </select>
+          </div>
+          <div class="specialty-chips-rail" id="role-specialty-chips" role="group" aria-label="Quick-select specific roles"></div>
+          <span class="role-filter-help" id="role-filter-help">Pick a specific role chip below or use the dropdown to narrow by matrix keywords.</span>
         </div>
 
         <!-- Job Board / Platform Filter -->
@@ -1129,7 +1138,7 @@
   </div>
   <button type="button" id="back-to-top" class="back-to-top" onclick="scrollBackToTop()" aria-label="Back to top" title="Back to top" hidden>↑</button>
 
-  <script src="/static/app.js?v=20261108-board-totals"></script>
+  <script src="/static/app.js?v=20261119-specific-role-remake"></script>
   <script src="/static/gmail-hub.js?v=20261107-guest-demo-v1"></script>
 </body>
 </html>

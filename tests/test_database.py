@@ -373,6 +373,54 @@ class TestDatabase(unittest.TestCase):
         rows = get_jobs(self.db_path, role_category="Data & Analytics", limit=2, with_total=True)
         self.assertEqual(rows[0]["matching_total"], len(data))
 
+    def test_matrix_specific_role_filters(self):
+        jobs = [
+            Job(title="Junior Software Developer", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m1", role_category="Both"),
+            Job(title="Systems Developer", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m2", role_category="Both"),
+            Job(title="SQL Developer", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m3", role_category="Both"),
+            Job(title="WordPress Developer", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m4", role_category="Both"),
+            Job(title="Software QA Analyst", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m5", role_category="Both"),
+            Job(title="Manual QA Tester", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m6", role_category="Both"),
+            Job(title="Playwright QA Automation Engineer", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m7", role_category="Both"),
+            Job(title="Android QA Tester", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m8", role_category="Both"),
+            Job(title="Application Support Engineer", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m9", role_category="Both"),
+            Job(title="NOC Engineer", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m10", role_category="Both"),
+            Job(title="Database Administrator", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m11", role_category="Both"),
+            Job(title="Salesforce Administrator", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m12", role_category="Both"),
+            Job(title="SOC Analyst", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m13", role_category="Both"),
+            Job(title="DevSecOps Engineer", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m14", role_category="Both"),
+            Job(title="IAM Engineer", company="Co", location="Remote", platform="Indeed", tier=1, job_url="https://ex.com/m15", role_category="Both"),
+            Job(title="Virtual Assistant Trainee", company="Co", location="Remote", platform="OnlineJobs.ph", tier=1, job_url="https://ex.com/m16", role_category="Virtual Assistant"),
+            Job(title="CapCut Reels Editor", company="Co", location="Remote", platform="OnlineJobs.ph", tier=1, job_url="https://ex.com/m17", description="Short-form reels", role_category="Video Editor"),
+            Job(title="YouTube Vlog Editor", company="Co", location="Remote", platform="OnlineJobs.ph", tier=1, job_url="https://ex.com/m18", description="Long-form YouTube videos", role_category="Video Editor"),
+        ]
+        insert_jobs(self.db_path, jobs)
+
+        def titles_for(role):
+            return {j["title"] for j in get_jobs(self.db_path, role_category=role, include_va=True)}
+
+        self.assertEqual(titles_for("Software Engineer / Developer"), {"Junior Software Developer"})
+        self.assertEqual(titles_for("Application / Systems Dev"), {"Systems Developer"})
+        self.assertEqual(titles_for("API & Database Dev"), {"SQL Developer"})
+        self.assertEqual(titles_for("CMS / ERP / Low-Code Dev"), {"WordPress Developer"})
+        self.assertEqual(titles_for("QA Engineer / Tester"), {"Software QA Analyst", "Manual QA Tester", "Android QA Tester"})
+        self.assertEqual(titles_for("Manual QA"), {"Manual QA Tester"})
+        self.assertEqual(titles_for("QA Automation / SDET"), {"Playwright QA Automation Engineer"})
+        self.assertEqual(titles_for("Mobile & API QA"), {"Android QA Tester"})
+        self.assertEqual(titles_for("Application & Product Support"), {"Application Support Engineer"})
+        self.assertEqual(titles_for("Network & NOC"), {"NOC Engineer"})
+        self.assertEqual(titles_for("Systems & DB Admin"), {"Database Administrator"})
+        self.assertEqual(titles_for("CRM & Platform Admin"), {"Salesforce Administrator"})
+        self.assertEqual(titles_for("Cybersecurity / SOC Analyst"), {"SOC Analyst"})
+        self.assertEqual(titles_for("Security & DevSecOps Engineer"), {"DevSecOps Engineer"})
+        self.assertEqual(titles_for("IAM & IT Audit"), {"IAM Engineer"})
+        self.assertEqual(titles_for("General VA & Trainee"), {"Virtual Assistant Trainee"})
+        self.assertEqual(titles_for("Short-Form / CapCut Editor"), {"CapCut Reels Editor"})
+        self.assertEqual(titles_for("Long-Form / YouTube Editor"), {"YouTube Vlog Editor"})
+        self.assertEqual(titles_for("Cybersecurity"), {"SOC Analyst", "DevSecOps Engineer", "IAM Engineer"})
+        self.assertEqual(titles_for("IT / Cloud / Infrastructure"), {"Application Support Engineer", "NOC Engineer", "Database Administrator", "Salesforce Administrator"})
+        self.assertEqual(titles_for("Web/Software Dev"), {"Junior Software Developer", "Systems Developer", "SQL Developer", "WordPress Developer"})
+
     def test_archived_job_revived_on_newer_date_repost(self):
         # 1. Candidate archives an older posting
         job_old = Job(

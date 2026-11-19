@@ -17,22 +17,68 @@ let selectedLevels = new Set(['All']);
 let currentLevel = 'All';
 let currentRole = 'All';
 const ROLE_OPTIONS = {
-  'Web/Software Dev': [['Frontend', 'Frontend development'],
-    ['Backend', 'Backend development'], ['Full Stack', 'Full-stack development'], ['Mobile', 'Mobile development'],
-    ['AI Development', 'AI development']],
-  'QA / Testing': [],
-  'Video Editor': [],
-  'IT / Cloud / Infrastructure': [['IT Support', 'IT support & infrastructure'], ['DevOps / Cloud', 'DevOps & cloud']],
-  'Cybersecurity': [],
-  'Data/AI/ML': [['Data Analyst', 'Data analyst & business intelligence'], ['Data Science', 'Data science'],
-    ['Data Engineering', 'Data engineering'], ['AI / ML', 'Machine learning & research'],
-    ['Business / Systems Analyst', 'Business & systems analyst'], ['Analyst', 'Other analyst roles']],
-  'Virtual Assistant': [['Administrative Support', 'Administrative support'], ['Executive Assistance', 'Executive assistance'],
-    ['Customer Support', 'Customer support'], ['Technical Support', 'Technical support'], ['Data Entry', 'Data entry']],
+  'Web/Software Dev': [
+    ['Software Engineer / Developer', 'Software engineer & general developer', 'Software Eng / Dev'],
+    ['Application / Systems Dev', 'Application & systems developer', 'App & Systems Dev'],
+    ['Mobile', 'Mobile development (Android / Kotlin / iOS / CMP)', 'Mobile (Android / iOS)'],
+    ['Frontend', 'Frontend development (React / Next.js / Web)', 'Frontend & Web'],
+    ['Backend', 'Backend development (Node / PHP / Java / .NET)', 'Backend (Node / PHP / .NET)'],
+    ['Full Stack', 'Full-stack development (MERN / Web)', 'Full-Stack & MERN'],
+    ['AI Development', 'AI development (Agents / RAG / LLM / Automation)', 'AI / Agents / RAG'],
+    ['API & Database Dev', 'API, SQL, database & integration developer', 'API / SQL / Integration'],
+    ['CMS / ERP / Low-Code Dev', 'CMS, ERP & low-code (WordPress / Shopify / SAP / Salesforce)', 'CMS / ERP / Low-Code'],
+  ],
+  'QA / Testing': [
+    ['QA Engineer / Tester', 'QA engineer, software tester & test analyst', 'QA Engineer / Tester'],
+    ['Manual QA', 'Manual QA & functional testing', 'Manual QA'],
+    ['QA Automation / SDET', 'QA automation, SDET & Playwright / Cypress', 'QA Automation / SDET'],
+    ['Mobile & API QA', 'Mobile, Android, API & performance QA', 'Mobile & API QA'],
+  ],
+  'IT / Cloud / Infrastructure': [
+    ['IT Support', 'IT support & infrastructure (Helpdesk / Service Desk)', 'IT Support & Helpdesk'],
+    ['Application & Product Support', 'Application, software & product support engineer', 'App & Product Support'],
+    ['Network & NOC', 'Network engineer, NOC & network administrator', 'Network & NOC'],
+    ['Systems & DB Admin', 'Systems, server & database administrator (SysAdmin / DBA)', 'SysAdmin & DBA'],
+    ['DevOps / Cloud', 'DevOps & cloud (AWS / Azure / GCP / SRE / Release)', 'DevOps / Cloud / SRE'],
+    ['CRM & Platform Admin', 'CRM, Salesforce & ServiceNow administrator', 'CRM & Platform Admin'],
+  ],
+  'Cybersecurity': [
+    ['Cybersecurity / SOC Analyst', 'Cybersecurity, InfoSec & SOC analyst', 'SOC & Security Analyst'],
+    ['Security & DevSecOps Engineer', 'Security, AppSec & DevSecOps engineer', 'Security / DevSecOps'],
+    ['IAM & IT Audit', 'IAM engineer, GRC & IT auditor', 'IAM & IT Audit'],
+  ],
+  'Data/AI/ML': [
+    ['Data Analyst', 'Data analyst & business intelligence (BI / Power BI)', 'Data Analyst & BI'],
+    ['Data Engineering', 'Data engineering, ETL & analytics engineer', 'Data Engineer & ETL'],
+    ['Data Science', 'Data science & statistical modeling', 'Data Science'],
+    ['AI / ML', 'Machine learning & research (ML / MLOps / NLP)', 'Machine Learning / MLOps'],
+    ['Business / Systems Analyst', 'Business & systems analyst (Technical BA)', 'Business & Systems Analyst'],
+    ['Analyst', 'Other analyst roles (GIS / Operations / Reporting)', 'Other Analysts (GIS / Ops)'],
+  ],
+  'Virtual Assistant': [
+    ['General VA & Trainee', 'General VA & entry-level trainee (Cyberbacker / Athena)', 'General VA & Trainee'],
+    ['Administrative Support', 'Administrative support, email & calendar', 'Admin Support'],
+    ['Executive Assistance', 'Executive assistance & EA', 'Executive Assistant'],
+    ['Customer Support', 'Customer support & chat / email service', 'Customer Support'],
+    ['Technical Support', 'Technical support & tech documentation', 'Technical Support'],
+    ['Data Entry', 'Data entry, encoding & research', 'Data Entry'],
+  ],
+  'Video Editor': [
+    ['Short-Form / CapCut Editor', 'Short-form, CapCut, Reels & TikTok editor', 'Short-Form / CapCut'],
+    ['Long-Form / YouTube Editor', 'YouTube, vlog & long-form video editor', 'YouTube / Long-Form'],
+  ],
 };
 const ROLE_LABELS = {All: 'All jobs', 'Web/Software Dev': 'Software Development', 'Data/AI/ML': 'Data & Analytics',
   'QA / Testing': 'QA & Testing', 'IT / Cloud / Infrastructure': 'IT, Cloud & Infrastructure',
   'Cybersecurity': 'Cybersecurity', 'Virtual Assistant': 'VA & Admin', 'Video Editor': 'Video Editor'};
+const FEATURED_MATRIX_ROLES = [
+  'Software Engineer / Developer', 'Mobile', 'Frontend', 'Backend', 'Full Stack', 'AI Development',
+  'Application / Systems Dev', 'API & Database Dev', 'QA Engineer / Tester', 'Manual QA', 'QA Automation / SDET',
+  'IT Support', 'Application & Product Support', 'Network & NOC', 'DevOps / Cloud',
+  'Cybersecurity / SOC Analyst', 'Data Analyst', 'Data Engineering', 'Business / Systems Analyst',
+  'General VA & Trainee', 'Technical Support',
+];
+let showAllSpecialtyChips = false;
 
 function roleFamily(role) {
   if (role === 'Software Development') return 'Web/Software Dev';
@@ -43,29 +89,92 @@ function roleLabel(role) {
   return ROLE_LABELS[role] || Object.values(ROLE_OPTIONS).flat().find(([value]) => value === role)?.[1] || role;
 }
 
-function syncRoleControls() {
+function roleShortLabel(role) {
+  const entry = Object.values(ROLE_OPTIONS).flat().find(([value]) => value === role);
+  return ROLE_LABELS[role] || entry?.[2] || entry?.[1] || role;
+}
+
+function toggleAllSpecialtyChips() {
+  showAllSpecialtyChips = !showAllSpecialtyChips;
+  syncRoleControls();
+}
+
+function resetSpecificRole() {
   const activeRole = currentViewMode === 'va' ? 'Virtual Assistant' : currentRole;
   const family = roleFamily(activeRole);
+  setRole(family);
+}
+
+function syncRoleControls() {
+  const activeRole = currentViewMode === 'va' ? 'Virtual Assistant' : currentRole;
+  const normalizedRole = activeRole === 'Software Development' ? 'Web/Software Dev' : activeRole;
+  const family = roleFamily(normalizedRole);
   const help = document.getElementById('role-filter-help');
   if (help) help.textContent = family === 'Video Editor'
     ? 'Basic CapCut edits from OLJ, Freelancer, Indeed and JobStreet. Collected over the latest 7 days; review workload and samples.'
-    : 'Optional. Narrow the category to a specific role.';
+    : 'Pick a specific role chip below or use the dropdown to narrow by matrix keywords.';
   document.querySelectorAll('#role-group .filter-chip').forEach(chip => {
     const active = chip.dataset.val === family;
     chip.classList.toggle('active', active);
     chip.setAttribute('aria-pressed', String(active));
   });
   const select = document.getElementById('role-specialty-select');
-  if (!select) return;
   const families = family === 'All' ? Object.keys(ROLE_OPTIONS) : [family];
-  select.innerHTML = `<option value="${family}">All roles${family === 'All' ? '' : ' in ' + escapeHtml(roleLabel(family))}</option>` +
-    families.map(group => `<optgroup label="${escapeHtml(roleLabel(group))}">${ROLE_OPTIONS[group].map(([value, label]) =>
-      `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</optgroup>`).join('');
-  if (activeRole === 'Software Development') {
-    select.value = 'Web/Software Dev';
-    return;
+  if (select) {
+    select.innerHTML = `<option value="${escapeHtml(family)}">All roles${family === 'All' ? '' : ' in ' + escapeHtml(roleLabel(family))}</option>` +
+      families.map(group => `<optgroup label="${escapeHtml(roleLabel(group))}">${ROLE_OPTIONS[group].map(([value, label]) =>
+        `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</optgroup>`).join('');
+    select.value = normalizedRole;
+    select.classList?.toggle?.('is-filtered', normalizedRole !== family && normalizedRole !== 'All');
   }
-  select.value = activeRole;
+  const allEntries = Object.values(ROLE_OPTIONS).flat();
+  const isFamilyRoot = normalizedRole === family || normalizedRole === 'All';
+  const scopeBadge = document.getElementById('specific-role-scope-badge');
+  if (scopeBadge) {
+    if (!isFamilyRoot) {
+      scopeBadge.textContent = `Active: ${roleShortLabel(normalizedRole)}`;
+    } else if (family === 'All') {
+      scopeBadge.textContent = `${allEntries.length} matrix roles`;
+    } else {
+      scopeBadge.textContent = `${ROLE_OPTIONS[family].length} roles in ${roleLabel(family)}`;
+    }
+    scopeBadge.classList?.toggle?.('is-active', !isFamilyRoot);
+  }
+  const resetBtn = document.getElementById('specific-role-reset-btn');
+  if (resetBtn) {
+    resetBtn.hidden = isFamilyRoot;
+  }
+  const chipsContainer = document.getElementById('role-specialty-chips');
+  if (chipsContainer) {
+    let entries;
+    if (family === 'All') {
+      if (showAllSpecialtyChips) {
+        entries = allEntries;
+      } else {
+        const entryMap = new Map(allEntries.map(item => [item[0], item]));
+        entries = FEATURED_MATRIX_ROLES.map(key => entryMap.get(key)).filter(Boolean);
+        if (!isFamilyRoot && entryMap.has(normalizedRole) && !entries.some(([v]) => v === normalizedRole)) {
+          entries.unshift(entryMap.get(normalizedRole));
+        }
+      }
+    } else {
+      entries = ROLE_OPTIONS[family] || [];
+    }
+    const rootLabel = family === 'All' ? 'All roles' : `All in ${roleLabel(family)}`;
+    const chipsHtml = [
+      `<button type="button" class="filter-chip specialty-chip${isFamilyRoot ? ' active' : ''}" data-role-val="${escapeHtml(family)}" aria-pressed="${isFamilyRoot}" onclick="setRole('${escapeHtml(family)}')">${escapeHtml(rootLabel)}</button>`,
+      ...entries.map(([value, label, shortLabel]) => {
+        const active = normalizedRole === value;
+        return `<button type="button" class="filter-chip specialty-chip${active ? ' active' : ''}" data-role-val="${escapeHtml(value)}" aria-pressed="${active}" title="${escapeHtml(label)}" onclick="setRole('${escapeHtml(value)}')">${escapeHtml(shortLabel || label)}</button>`;
+      }),
+    ];
+    if (family === 'All' && allEntries.length > FEATURED_MATRIX_ROLES.length) {
+      chipsHtml.push(
+        `<button type="button" class="filter-chip specialty-chip specialty-chip-more" aria-expanded="${showAllSpecialtyChips}" onclick="toggleAllSpecialtyChips()">${showAllSpecialtyChips ? 'Show core matrix roles' : `+ More matrix roles (${allEntries.length})`}</button>`
+      );
+    }
+    chipsContainer.innerHTML = chipsHtml.join('');
+  }
 }
 let currentPlatform = 'All';
 let currentDateFilter = '7days';
