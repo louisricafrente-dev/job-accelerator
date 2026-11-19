@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <link rel="shortcut icon" href="/static/favicon.ico">
   <meta name="theme-color" content="#080c14">
-  <link rel="stylesheet" href="/static/style.css?v=20261119-specific-role-remake">
+  <link rel="stylesheet" href="/static/style.css?v=20261119-clean-dropdown-ux">
   <link rel="stylesheet" href="/static/gmail-hub.css?v=20261104-tag-filter-v3">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,7 +22,6 @@
     <div class="header-inner">
       <div class="brand-cluster">
         <div class="brand-badge" title="Job Application Accelerator — Multi-Platform Aggregator">
-          <span class="live-pulse"></span>
           <h1 class="brand-name">Job Accelerator</h1>
         </div>
       </div>
@@ -326,6 +325,13 @@
             <span class="switch-text">Exclude Senior</span>
           </label>
 
+          <button type="button" id="btn-toggle-filter-deck" class="toggle-pill-btn btn-toggle-filter-deck" onclick="toggleFilterDeckCollapse()" aria-expanded="true" aria-controls="filter-strip" title="Show or hide category and dropdown filters">
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+            </svg>
+            <span id="filter-deck-toggle-label">Hide Filters</span>
+          </button>
+
           <button type="button" id="btn-clear-all-filters" class="btn-clear-all-filters" onclick="resetAllFeedFilters()" title="Reset all search keywords, role categories, seniority, dates, and toggles back to default">
             <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10"/>
@@ -368,7 +374,7 @@
       </div>
 
       <!-- Segmented Category Filters -->
-      <div class="filter-strip">
+      <div class="filter-strip" id="filter-strip">
         <!-- Role Discipline -->
         <div class="filter-cell">
           <span class="filter-title" id="role-group-label">Job category</span>
@@ -384,21 +390,12 @@
           </div>
         </div>
         <div class="filter-selects-grid">
-        <div class="filter-cell specific-role-cell">
-          <div class="specific-role-top-row">
-            <div class="specific-role-header">
-              <label class="filter-title" for="role-specialty-select">Specific role</label>
-              <div class="specific-role-meta">
-                <span class="specific-role-scope-badge" id="specific-role-scope-badge">36 matrix roles</span>
-                <button type="button" class="specific-role-reset-btn" id="specific-role-reset-btn" onclick="resetSpecificRole()" hidden>Reset &times;</button>
-              </div>
-            </div>
-            <select id="role-specialty-select" class="filter-select" onchange="setRole(this.value)" aria-describedby="role-filter-help">
-              <option value="All">All roles in this category</option>
-            </select>
-          </div>
-          <div class="specialty-chips-rail" id="role-specialty-chips" role="group" aria-label="Quick-select specific roles"></div>
-          <span class="role-filter-help" id="role-filter-help">Pick a specific role chip below or use the dropdown to narrow by matrix keywords.</span>
+        <div class="filter-cell">
+          <label class="filter-title" for="role-specialty-select">Specific role</label>
+          <select id="role-specialty-select" class="filter-select" onchange="setRole(this.value)" aria-describedby="role-filter-help">
+            <option value="All">All roles in this category</option>
+          </select>
+          <span class="role-filter-help" id="role-filter-help">Optional. Narrow the category to a specific role.</span>
         </div>
 
         <!-- Job Board / Platform Filter -->
@@ -437,6 +434,20 @@
           </select>
         </div>
 
+        <!-- Quick Preset Filter -->
+        <div class="filter-cell">
+          <label class="filter-title" for="filter-preset-select">Quick preset</label>
+          <select id="filter-preset-select" class="filter-select" onchange="applyQuickFilterPreset(this.value)">
+            <option value="">Custom filter view</option>
+            <option value="junior_dev">Junior Software &amp; Mobile (7d)</option>
+            <option value="direct_client">Direct Clients · OnlineJobs.ph (7d)</option>
+            <option value="qa_testing">QA &amp; Testing Roles (15d)</option>
+            <option value="it_support">IT, Cloud &amp; Support (15d)</option>
+            <option value="ai_dev">AI, LLM &amp; Agent Dev (15d)</option>
+          </select>
+          <span class="role-filter-help">One-click filter combinations</span>
+        </div>
+
         <!-- Application Status Filter -->
         <div class="filter-cell" id="application-filter-row">
           <label class="filter-title" for="application-filter">Application</label>
@@ -456,17 +467,17 @@
           <label class="filter-title" for="tag-filter">Tag / Reason</label>
           <select id="tag-filter" class="filter-select" onchange="handleTagFilterChange(this)">
             <option value="all">All Tags &amp; Reasons</option>
-            <option value="CAPTCHA">🧩 CAPTCHA / Cloudflare</option>
-            <option value="LOGIN_OTP">📱 Login / OTP</option>
-            <option value="SCREENING">📝 Screening Question</option>
-            <option value="VIDEO_REQ">🎥 Video / Audio Req</option>
-            <option value="FILE_UPLOAD">📎 File Upload</option>
-            <option value="PAYWALL_BID">💳 Connects / Bid</option>
-            <option value="INELIGIBLE">🚫 Ineligible / Out of Scope</option>
-            <option value="ALREADY_APPLIED">✅ Already Applied</option>
-            <option value="REVIEW_REQUIRED">⚠️ Review Required</option>
-            <option value="EXPIRED_OR_REDIRECTED">🔗 Expired / Redirected</option>
-            <option value="untagged">⚪ No Tag</option>
+            <option value="CAPTCHA">CAPTCHA / Cloudflare</option>
+            <option value="LOGIN_OTP">Login / OTP</option>
+            <option value="SCREENING">Screening Question</option>
+            <option value="VIDEO_REQ">Video / Audio Req</option>
+            <option value="FILE_UPLOAD">File Upload</option>
+            <option value="PAYWALL_BID">Connects / Bid</option>
+            <option value="INELIGIBLE">Ineligible / Out of Scope</option>
+            <option value="ALREADY_APPLIED">Already Applied</option>
+            <option value="REVIEW_REQUIRED">Review Required</option>
+            <option value="EXPIRED_OR_REDIRECTED">Expired / Redirected</option>
+            <option value="untagged">No Tag</option>
           </select>
           <span class="role-filter-help" id="tag-filter-help">Filter jobs by needs_human reason tag</span>
         </div>
@@ -476,13 +487,13 @@
           <label class="filter-title" for="pipeline-stage-filter">Hiring Stage</label>
           <select id="pipeline-stage-filter" class="filter-select" onchange="handlePipelineStageFilterChange(this)">
             <option value="All">All Hiring Stages</option>
-            <option value="offer">🎉 Job Offer</option>
-            <option value="final_interview">🤝 Final Interview</option>
-            <option value="tech_exam">💻 Tech Assessment / Exam</option>
-            <option value="screening">🗣️ HR Screening / Interview</option>
-            <option value="applied">📝 Applied / In Review</option>
-            <option value="needs_human">⚠️ Action Required (Needs You)</option>
-            <option value="rejected">❌ Archived / Rejected</option>
+            <option value="offer">Job Offer</option>
+            <option value="final_interview">Final Interview</option>
+            <option value="tech_exam">Tech Assessment / Exam</option>
+            <option value="screening">HR Screening / Interview</option>
+            <option value="applied">Applied / In Review</option>
+            <option value="needs_human">Action Required (Needs You)</option>
+            <option value="rejected">Archived / Rejected</option>
           </select>
           <span class="role-filter-help">Filter applications by hiring process &amp; stage</span>
         </div>
@@ -525,15 +536,32 @@
       <div class="summary-left">
         <span id="search-count" class="summary-count">Loading opportunities...</span>
         <span class="summary-context" id="summary-context"></span>
+        <div id="summary-active-pills" class="summary-active-pills" aria-label="Active filters"></div>
         <button type="button" id="btn-summary-clear-filters" class="summary-clear-pill" onclick="resetAllFeedFilters()" style="display: none;" title="Reset all active filters">
           <span>Clear all filters &times;</span>
         </button>
       </div>
-      <div class="shortcuts-legend" title="Keyboard navigation enabled">
-        <span class="kbd-guide"><kbd>J</kbd>/<kbd>K</kbd> Navigate</span>
-        <span class="kbd-guide"><kbd>Enter</kbd> Open &amp; Apply</span>
-        <span class="kbd-guide"><kbd>S</kbd> Save</span>
-        <span class="kbd-guide"><kbd>X</kbd> Archive</span>
+      <div class="summary-right-tools">
+        <div class="summary-mode-buttons">
+          <button type="button" id="btn-toggle-bulk-mode" class="btn-summary-tool" onclick="toggleBulkSelectMode()" aria-pressed="false" title="Select multiple jobs to save or archive in bulk">Bulk Select</button>
+          <button type="button" id="btn-toggle-split-view" class="btn-summary-tool" onclick="toggleSplitViewMode()" aria-pressed="false" title="Preview the selected job description side-by-side">Split Preview</button>
+        </div>
+        <div class="shortcuts-legend" title="Keyboard navigation enabled">
+          <span class="kbd-guide"><kbd>J</kbd>/<kbd>K</kbd> Navigate</span>
+          <span class="kbd-guide"><kbd>Enter</kbd> Open &amp; Apply</span>
+          <span class="kbd-guide"><kbd>S</kbd> Save</span>
+          <span class="kbd-guide"><kbd>X</kbd> Archive</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="bulk-action-bar" class="bulk-action-bar" hidden>
+      <span id="bulk-selected-count" class="bulk-selected-count">0 selected</span>
+      <div class="bulk-action-buttons">
+        <button type="button" class="btn-subtle btn-bulk-action" onclick="selectAllVisibleJobs()">Select All Visible</button>
+        <button type="button" class="btn-subtle btn-bulk-action is-save" onclick="bulkUpdateSelectedStatus('saved')">Save Selected</button>
+        <button type="button" class="btn-subtle btn-bulk-action is-archive" onclick="bulkUpdateSelectedStatus('ignored')">Archive Selected</button>
+        <button type="button" class="btn-subtle btn-bulk-action" onclick="toggleBulkSelectMode(false)">Cancel</button>
       </div>
     </div>
 
@@ -684,11 +712,6 @@
       <!-- Live Terminal Console Stream -->
       <div class="telemetry-terminal-wrap">
         <div class="telemetry-terminal-bar">
-          <div class="terminal-dots">
-            <span class="dot dot-red"></span>
-            <span class="dot dot-yellow"></span>
-            <span class="dot dot-green"></span>
-          </div>
           <span class="terminal-title">Sync logs</span>
           <label class="terminal-autoscroll-label">
             <input type="checkbox" id="telemetry-autoscroll" checked>
@@ -707,12 +730,15 @@
   </section>
 
 
-    <!-- Opportunity Cards Stream -->
-    <div id="job-feed" class="job-stream" role="region" aria-label="Job opportunities feed">
-      <div class="state-loading">
-        <div class="loading-spinner"></div>
-        <p>Scanning job opportunities across platforms...</p>
+    <!-- Opportunity Cards Stream & Optional Split Inspector -->
+    <div id="feed-workspace" class="feed-workspace">
+      <div id="job-feed" class="job-stream" role="region" aria-label="Job opportunities feed">
+        <div class="state-loading">
+          <div class="loading-spinner"></div>
+          <p>Scanning job opportunities across platforms...</p>
+        </div>
       </div>
+      <aside id="job-inspector-pane" class="job-inspector-pane" hidden aria-label="Selected job details"></aside>
     </div>
   </main>
 
@@ -1138,7 +1164,7 @@
   </div>
   <button type="button" id="back-to-top" class="back-to-top" onclick="scrollBackToTop()" aria-label="Back to top" title="Back to top" hidden>↑</button>
 
-  <script src="/static/app.js?v=20261119-specific-role-remake"></script>
+  <script src="/static/app.js?v=20261119-clean-dropdown-ux"></script>
   <script src="/static/gmail-hub.js?v=20261107-guest-demo-v1"></script>
 </body>
 </html>

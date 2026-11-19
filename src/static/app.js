@@ -18,67 +18,59 @@ let currentLevel = 'All';
 let currentRole = 'All';
 const ROLE_OPTIONS = {
   'Web/Software Dev': [
-    ['Software Engineer / Developer', 'Software engineer & general developer', 'Software Eng / Dev'],
-    ['Application / Systems Dev', 'Application & systems developer', 'App & Systems Dev'],
-    ['Mobile', 'Mobile development (Android / Kotlin / iOS / CMP)', 'Mobile (Android / iOS)'],
-    ['Frontend', 'Frontend development (React / Next.js / Web)', 'Frontend & Web'],
-    ['Backend', 'Backend development (Node / PHP / Java / .NET)', 'Backend (Node / PHP / .NET)'],
-    ['Full Stack', 'Full-stack development (MERN / Web)', 'Full-Stack & MERN'],
-    ['AI Development', 'AI development (Agents / RAG / LLM / Automation)', 'AI / Agents / RAG'],
-    ['API & Database Dev', 'API, SQL, database & integration developer', 'API / SQL / Integration'],
-    ['CMS / ERP / Low-Code Dev', 'CMS, ERP & low-code (WordPress / Shopify / SAP / Salesforce)', 'CMS / ERP / Low-Code'],
+    ['Software Engineer / Developer', 'Software engineer & general developer'],
+    ['Application / Systems Dev', 'Application & systems developer'],
+    ['Mobile', 'Mobile development (Android / Kotlin / iOS / CMP)'],
+    ['Frontend', 'Frontend development (React / Next.js / Web)'],
+    ['Backend', 'Backend development (Node / PHP / Java / .NET)'],
+    ['Full Stack', 'Full-stack development (MERN / Web)'],
+    ['AI Development', 'AI development (Agents / RAG / LLM / Automation)'],
+    ['API & Database Dev', 'API, SQL, database & integration developer'],
+    ['CMS / ERP / Low-Code Dev', 'CMS, ERP & low-code (WordPress / Shopify / SAP / Salesforce)'],
   ],
   'QA / Testing': [
-    ['QA Engineer / Tester', 'QA engineer, software tester & test analyst', 'QA Engineer / Tester'],
-    ['Manual QA', 'Manual QA & functional testing', 'Manual QA'],
-    ['QA Automation / SDET', 'QA automation, SDET & Playwright / Cypress', 'QA Automation / SDET'],
-    ['Mobile & API QA', 'Mobile, Android, API & performance QA', 'Mobile & API QA'],
+    ['QA Engineer / Tester', 'QA engineer, software tester & test analyst'],
+    ['Manual QA', 'Manual QA & functional testing'],
+    ['QA Automation / SDET', 'QA automation, SDET & Playwright / Cypress'],
+    ['Mobile & API QA', 'Mobile, Android, API & performance QA'],
   ],
   'IT / Cloud / Infrastructure': [
-    ['IT Support', 'IT support & infrastructure (Helpdesk / Service Desk)', 'IT Support & Helpdesk'],
-    ['Application & Product Support', 'Application, software & product support engineer', 'App & Product Support'],
-    ['Network & NOC', 'Network engineer, NOC & network administrator', 'Network & NOC'],
-    ['Systems & DB Admin', 'Systems, server & database administrator (SysAdmin / DBA)', 'SysAdmin & DBA'],
-    ['DevOps / Cloud', 'DevOps & cloud (AWS / Azure / GCP / SRE / Release)', 'DevOps / Cloud / SRE'],
-    ['CRM & Platform Admin', 'CRM, Salesforce & ServiceNow administrator', 'CRM & Platform Admin'],
+    ['IT Support', 'IT support & infrastructure (Helpdesk / Service Desk)'],
+    ['Application & Product Support', 'Application, software & product support engineer'],
+    ['Network & NOC', 'Network engineer, NOC & network administrator'],
+    ['Systems & DB Admin', 'Systems, server & database administrator (SysAdmin / DBA)'],
+    ['DevOps / Cloud', 'DevOps & cloud (AWS / Azure / GCP / SRE / Release)'],
+    ['CRM & Platform Admin', 'CRM, Salesforce & ServiceNow administrator'],
   ],
   'Cybersecurity': [
-    ['Cybersecurity / SOC Analyst', 'Cybersecurity, InfoSec & SOC analyst', 'SOC & Security Analyst'],
-    ['Security & DevSecOps Engineer', 'Security, AppSec & DevSecOps engineer', 'Security / DevSecOps'],
-    ['IAM & IT Audit', 'IAM engineer, GRC & IT auditor', 'IAM & IT Audit'],
+    ['Cybersecurity / SOC Analyst', 'Cybersecurity, InfoSec & SOC analyst'],
+    ['Security & DevSecOps Engineer', 'Security, AppSec & DevSecOps engineer'],
+    ['IAM & IT Audit', 'IAM engineer, GRC & IT auditor'],
   ],
   'Data/AI/ML': [
-    ['Data Analyst', 'Data analyst & business intelligence (BI / Power BI)', 'Data Analyst & BI'],
-    ['Data Engineering', 'Data engineering, ETL & analytics engineer', 'Data Engineer & ETL'],
-    ['Data Science', 'Data science & statistical modeling', 'Data Science'],
-    ['AI / ML', 'Machine learning & research (ML / MLOps / NLP)', 'Machine Learning / MLOps'],
-    ['Business / Systems Analyst', 'Business & systems analyst (Technical BA)', 'Business & Systems Analyst'],
-    ['Analyst', 'Other analyst roles (GIS / Operations / Reporting)', 'Other Analysts (GIS / Ops)'],
+    ['Data Analyst', 'Data analyst & business intelligence (BI / Power BI)'],
+    ['Data Engineering', 'Data engineering, ETL & analytics engineer'],
+    ['Data Science', 'Data science & statistical modeling'],
+    ['AI / ML', 'Machine learning & research (ML / MLOps / NLP)'],
+    ['Business / Systems Analyst', 'Business & systems analyst (Technical BA)'],
+    ['Analyst', 'Other analyst roles (GIS / Operations / Reporting)'],
   ],
   'Virtual Assistant': [
-    ['General VA & Trainee', 'General VA & entry-level trainee (Cyberbacker / Athena)', 'General VA & Trainee'],
-    ['Administrative Support', 'Administrative support, email & calendar', 'Admin Support'],
-    ['Executive Assistance', 'Executive assistance & EA', 'Executive Assistant'],
-    ['Customer Support', 'Customer support & chat / email service', 'Customer Support'],
-    ['Technical Support', 'Technical support & tech documentation', 'Technical Support'],
-    ['Data Entry', 'Data entry, encoding & research', 'Data Entry'],
+    ['General VA & Trainee', 'General VA & entry-level trainee (Cyberbacker / Athena)'],
+    ['Administrative Support', 'Administrative support, email & calendar'],
+    ['Executive Assistance', 'Executive assistance & EA'],
+    ['Customer Support', 'Customer support & chat / email service'],
+    ['Technical Support', 'Technical support & tech documentation'],
+    ['Data Entry', 'Data entry, encoding & research'],
   ],
   'Video Editor': [
-    ['Short-Form / CapCut Editor', 'Short-form, CapCut, Reels & TikTok editor', 'Short-Form / CapCut'],
-    ['Long-Form / YouTube Editor', 'YouTube, vlog & long-form video editor', 'YouTube / Long-Form'],
+    ['Short-Form / CapCut Editor', 'Short-form, CapCut, Reels & TikTok editor'],
+    ['Long-Form / YouTube Editor', 'YouTube, vlog & long-form video editor'],
   ],
 };
 const ROLE_LABELS = {All: 'All jobs', 'Web/Software Dev': 'Software Development', 'Data/AI/ML': 'Data & Analytics',
   'QA / Testing': 'QA & Testing', 'IT / Cloud / Infrastructure': 'IT, Cloud & Infrastructure',
   'Cybersecurity': 'Cybersecurity', 'Virtual Assistant': 'VA & Admin', 'Video Editor': 'Video Editor'};
-const FEATURED_MATRIX_ROLES = [
-  'Software Engineer / Developer', 'Mobile', 'Frontend', 'Backend', 'Full Stack', 'AI Development',
-  'Application / Systems Dev', 'API & Database Dev', 'QA Engineer / Tester', 'Manual QA', 'QA Automation / SDET',
-  'IT Support', 'Application & Product Support', 'Network & NOC', 'DevOps / Cloud',
-  'Cybersecurity / SOC Analyst', 'Data Analyst', 'Data Engineering', 'Business / Systems Analyst',
-  'General VA & Trainee', 'Technical Support',
-];
-let showAllSpecialtyChips = false;
 
 function roleFamily(role) {
   if (role === 'Software Development') return 'Web/Software Dev';
@@ -89,22 +81,6 @@ function roleLabel(role) {
   return ROLE_LABELS[role] || Object.values(ROLE_OPTIONS).flat().find(([value]) => value === role)?.[1] || role;
 }
 
-function roleShortLabel(role) {
-  const entry = Object.values(ROLE_OPTIONS).flat().find(([value]) => value === role);
-  return ROLE_LABELS[role] || entry?.[2] || entry?.[1] || role;
-}
-
-function toggleAllSpecialtyChips() {
-  showAllSpecialtyChips = !showAllSpecialtyChips;
-  syncRoleControls();
-}
-
-function resetSpecificRole() {
-  const activeRole = currentViewMode === 'va' ? 'Virtual Assistant' : currentRole;
-  const family = roleFamily(activeRole);
-  setRole(family);
-}
-
 function syncRoleControls() {
   const activeRole = currentViewMode === 'va' ? 'Virtual Assistant' : currentRole;
   const normalizedRole = activeRole === 'Software Development' ? 'Web/Software Dev' : activeRole;
@@ -112,69 +88,20 @@ function syncRoleControls() {
   const help = document.getElementById('role-filter-help');
   if (help) help.textContent = family === 'Video Editor'
     ? 'Basic CapCut edits from OLJ, Freelancer, Indeed and JobStreet. Collected over the latest 7 days; review workload and samples.'
-    : 'Pick a specific role chip below or use the dropdown to narrow by matrix keywords.';
+    : 'Optional. Narrow the category to a specific role.';
   document.querySelectorAll('#role-group .filter-chip').forEach(chip => {
     const active = chip.dataset.val === family;
     chip.classList.toggle('active', active);
     chip.setAttribute('aria-pressed', String(active));
   });
   const select = document.getElementById('role-specialty-select');
+  if (!select) return;
   const families = family === 'All' ? Object.keys(ROLE_OPTIONS) : [family];
-  if (select) {
-    select.innerHTML = `<option value="${escapeHtml(family)}">All roles${family === 'All' ? '' : ' in ' + escapeHtml(roleLabel(family))}</option>` +
-      families.map(group => `<optgroup label="${escapeHtml(roleLabel(group))}">${ROLE_OPTIONS[group].map(([value, label]) =>
-        `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</optgroup>`).join('');
-    select.value = normalizedRole;
-    select.classList?.toggle?.('is-filtered', normalizedRole !== family && normalizedRole !== 'All');
-  }
-  const allEntries = Object.values(ROLE_OPTIONS).flat();
-  const isFamilyRoot = normalizedRole === family || normalizedRole === 'All';
-  const scopeBadge = document.getElementById('specific-role-scope-badge');
-  if (scopeBadge) {
-    if (!isFamilyRoot) {
-      scopeBadge.textContent = `Active: ${roleShortLabel(normalizedRole)}`;
-    } else if (family === 'All') {
-      scopeBadge.textContent = `${allEntries.length} matrix roles`;
-    } else {
-      scopeBadge.textContent = `${ROLE_OPTIONS[family].length} roles in ${roleLabel(family)}`;
-    }
-    scopeBadge.classList?.toggle?.('is-active', !isFamilyRoot);
-  }
-  const resetBtn = document.getElementById('specific-role-reset-btn');
-  if (resetBtn) {
-    resetBtn.hidden = isFamilyRoot;
-  }
-  const chipsContainer = document.getElementById('role-specialty-chips');
-  if (chipsContainer) {
-    let entries;
-    if (family === 'All') {
-      if (showAllSpecialtyChips) {
-        entries = allEntries;
-      } else {
-        const entryMap = new Map(allEntries.map(item => [item[0], item]));
-        entries = FEATURED_MATRIX_ROLES.map(key => entryMap.get(key)).filter(Boolean);
-        if (!isFamilyRoot && entryMap.has(normalizedRole) && !entries.some(([v]) => v === normalizedRole)) {
-          entries.unshift(entryMap.get(normalizedRole));
-        }
-      }
-    } else {
-      entries = ROLE_OPTIONS[family] || [];
-    }
-    const rootLabel = family === 'All' ? 'All roles' : `All in ${roleLabel(family)}`;
-    const chipsHtml = [
-      `<button type="button" class="filter-chip specialty-chip${isFamilyRoot ? ' active' : ''}" data-role-val="${escapeHtml(family)}" aria-pressed="${isFamilyRoot}" onclick="setRole('${escapeHtml(family)}')">${escapeHtml(rootLabel)}</button>`,
-      ...entries.map(([value, label, shortLabel]) => {
-        const active = normalizedRole === value;
-        return `<button type="button" class="filter-chip specialty-chip${active ? ' active' : ''}" data-role-val="${escapeHtml(value)}" aria-pressed="${active}" title="${escapeHtml(label)}" onclick="setRole('${escapeHtml(value)}')">${escapeHtml(shortLabel || label)}</button>`;
-      }),
-    ];
-    if (family === 'All' && allEntries.length > FEATURED_MATRIX_ROLES.length) {
-      chipsHtml.push(
-        `<button type="button" class="filter-chip specialty-chip specialty-chip-more" aria-expanded="${showAllSpecialtyChips}" onclick="toggleAllSpecialtyChips()">${showAllSpecialtyChips ? 'Show core matrix roles' : `+ More matrix roles (${allEntries.length})`}</button>`
-      );
-    }
-    chipsContainer.innerHTML = chipsHtml.join('');
-  }
+  select.innerHTML = `<option value="${escapeHtml(family)}">All roles${family === 'All' ? '' : ' in ' + escapeHtml(roleLabel(family))}</option>` +
+    families.map(group => `<optgroup label="${escapeHtml(roleLabel(group))}">${ROLE_OPTIONS[group].map(([value, label]) =>
+      `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}</optgroup>`).join('');
+  select.value = normalizedRole;
+  select.classList?.toggle?.('is-filtered', normalizedRole !== family && normalizedRole !== 'All');
 }
 let currentPlatform = 'All';
 let currentDateFilter = '7days';
@@ -189,6 +116,10 @@ let jobsList = [];
 let selectedIndex = 0;
 let searchDebounceTimer = null;
 let currentStats = {};
+let bulkSelectMode = false;
+let selectedJobIds = new Set();
+let splitViewMode = localStorage.getItem('job_accel_split_view') === '1';
+let isFilterDeckCollapsed = localStorage.getItem('job_accel_filter_deck_collapsed') === '1';
 const CANDIDATE_DEFAULT_STACK = 'Kotlin, Jetpack Compose, React, Next.js, TypeScript, Node.js, Express, MySQL, Tailwind CSS, Junior / Entry';
 let userStack = localStorage.getItem('job_accel_user_stack') || CANDIDATE_DEFAULT_STACK;
 
@@ -1254,6 +1185,9 @@ function syncFilterControlsUI() {
     const val = chip.getAttribute('data-val');
     chip.classList.toggle('active', selectedLevels.has(val));
   });
+  if (typeof syncFilterDeckCollapseUI === 'function') syncFilterDeckCollapseUI();
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
+  if (typeof syncWorkspaceModesUI === 'function') syncWorkspaceModesUI();
   if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
 }
 
@@ -1347,6 +1281,7 @@ function setPipelineStageFilter(stageKey) {
     select.value = currentPipelineStage;
   }
   renderPipelineSummary(latestByStage);
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
@@ -1546,7 +1481,12 @@ async function loadJobs() {
     if (isSavedView) jobs = filterByTag(jobs, document.getElementById('tag-filter')?.value || 'all');
     jobsList = jobs;
     selectedIndex = 0;
+    if (typeof selectedJobIds !== 'undefined') {
+      const visibleIds = new Set(jobs.map(j => j.id));
+      selectedJobIds = new Set([...selectedJobIds].filter(id => visibleIds.has(id)));
+    }
     renderJobs();
+    if (typeof updateCategoryChipCounts === 'function') updateCategoryChipCounts(jobs);
     updateSummaryText(jobs.length);
   } catch (err) {
     if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
@@ -1862,6 +1802,8 @@ function toggleFilterBySkills() {
   filterBySkillsOnly = !filterBySkillsOnly;
   persistSetting('filter_skills_only', filterBySkillsOnly ? '1' : '0');
   updateFilterButtonState();
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
@@ -1869,6 +1811,8 @@ function toggleSkillsOnly(checkbox) {
   filterBySkillsOnly = checkbox.checked;
   persistSetting('filter_skills_only', filterBySkillsOnly ? '1' : '0');
   updateFilterButtonState();
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
@@ -2039,11 +1983,15 @@ function renderJobs() {
 
   if (jobsList.length === 0) {
     feed.innerHTML = headerHtml + renderEmptyStateHtml();
+    if (typeof syncWorkspaceModesUI === 'function') syncWorkspaceModesUI();
+    if (typeof renderInspectorPane === 'function') renderInspectorPane();
     return;
   }
 
+  const isBulkOn = typeof bulkSelectMode !== 'undefined' && bulkSelectMode;
   feed.innerHTML = headerHtml + jobsList.map((job, idx) => {
     const isSelected = idx === selectedIndex ? 'selected' : '';
+    const isBulkChecked = isBulkOn && typeof selectedJobIds !== 'undefined' && selectedJobIds.has(job.id);
 
     // Level badge class
     let levelClass = 'badge-level-mid';
@@ -2072,7 +2020,12 @@ function renderJobs() {
     const isAppliedView = currentStatus === 'applied';
 
     return `
-      <div class="job-card ${isSelected}" id="job-card-${idx}" onclick="selectCard(${idx})">
+      <div class="job-card ${isSelected}${isBulkChecked ? ' is-bulk-selected' : ''}" id="job-card-${idx}" onclick="selectCard(${idx})">
+        ${isBulkOn ? `
+          <label class="bulk-check-wrap" onclick="event.stopPropagation()" title="Select ${escapeHtml(job.title)}">
+            <input type="checkbox" class="bulk-card-checkbox" ${isBulkChecked ? 'checked' : ''} onchange="toggleJobSelection(${job.id}, this.checked)" aria-label="Select ${escapeHtml(job.title)}">
+          </label>
+        ` : ''}
         <div class="job-main-block">
           <div class="job-headline">
             <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer"
@@ -2205,6 +2158,8 @@ function renderJobs() {
       </div>
     `;
   }).join('');
+  if (typeof syncWorkspaceModesUI === 'function') syncWorkspaceModesUI();
+  if (typeof renderInspectorPane === 'function') renderInspectorPane();
 }
 
 // Select card by index
@@ -2219,6 +2174,7 @@ function selectCard(idx) {
     newCard.classList.add('selected');
     newCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
+  if (typeof renderInspectorPane === 'function') renderInspectorPane();
 }
 
 async function archiveExpiredSavedJobs() {
@@ -2271,16 +2227,23 @@ function saveJobFollowUp(jobId, newDate) {
   }
 }
 
-// Interactive & Actionable Empty State
-function renderEmptyStateHtml() {
-  const isVa = currentViewMode === 'va';
+function getActiveFilterEntries() {
+  const defaultDate = (['saved', 'applied'].includes(currentStatus) ? 'all' : '15days');
   const activeFilters = [];
-
   const tagFilterVal = document.getElementById('tag-filter')?.value || 'all';
-    if (tagFilterVal !== 'all') {
-      activeFilters.push({ label: `Tag: ${tagFilterVal}`, action: 'resetTagFilter()' });
-    }
-    if (searchQuery && searchQuery.trim()) {
+  if (tagFilterVal !== 'all') {
+    activeFilters.push({ label: `Tag: ${tagFilterVal}`, action: 'resetTagFilter()' });
+  }
+  const appFilterVal = document.getElementById('application-filter')?.value || 'all';
+  if (appFilterVal !== 'all') {
+    const appLabels = { in_progress: 'In progress', needs_human: 'Needs human', applied_ai: 'Applied by AI', applied_human: 'Applied by human', unlabeled: 'Unlabeled' };
+    activeFilters.push({ label: `App: ${appLabels[appFilterVal] || appFilterVal}`, action: 'resetApplicationFilter()' });
+  }
+  const pipelineFilterVal = document.getElementById('pipeline-stage-filter')?.value || 'All';
+  if (currentStatus === 'applied' && pipelineFilterVal !== 'All') {
+    activeFilters.push({ label: `Stage: ${pipelineFilterVal}`, action: 'resetPipelineStageFilter()' });
+  }
+  if (searchQuery && searchQuery.trim()) {
     activeFilters.push({ label: `Search: "${searchQuery}"`, action: 'clearSearchInput()' });
   }
   if (currentRole && currentRole !== 'All') {
@@ -2290,9 +2253,10 @@ function renderEmptyStateHtml() {
     const levelsStr = Array.from(selectedLevels).join(', ');
     activeFilters.push({ label: `Seniority: ${levelsStr}`, action: `setLevel('All', document.querySelector('#level-group button[data-val="All"]'))` });
   }
-  if (currentDateFilter && currentDateFilter !== '15days' && currentDateFilter !== 'all') {
-    const dateLabels = { today: 'Today', '3days': 'Past 3 days', '7days': 'Past 7 days' };
-    activeFilters.push({ label: `Date: ${dateLabels[currentDateFilter] || currentDateFilter}`, action: `setDateFilter('15days', document.querySelector('#date-group button[data-val="15days"]'))` });
+  if (currentDateFilter && currentDateFilter !== defaultDate && currentDateFilter !== 'all') {
+    const dateLabels = { today: 'Today', '3days': 'Past 3 days', '7days': 'Past 7 days', '15days': 'Past 15 days' };
+    const fallbackDate = ['saved', 'applied'].includes(currentStatus) ? 'all' : '15days';
+    activeFilters.push({ label: `Date: ${dateLabels[currentDateFilter] || currentDateFilter}`, action: `setDateFilter('${fallbackDate}', document.querySelector('#date-group button[data-val="${fallbackDate}"]'))` });
   }
   if (currentPlatform && currentPlatform !== 'All') {
     activeFilters.push({ label: `Site: ${currentPlatform}`, action: `setPlatform('All', document.getElementById('platform-select'))` });
@@ -2300,6 +2264,22 @@ function renderEmptyStateHtml() {
   if (filterBySkillsOnly) {
     activeFilters.push({ label: 'Match Stack Only', action: 'toggleFilterBySkills()' });
   }
+  if (hasSalaryOnly) {
+    activeFilters.push({ label: 'Disclosed Salary', action: 'clearSalaryOnly()' });
+  }
+  if (remoteOnly) {
+    activeFilters.push({ label: 'Remote Only', action: 'clearRemoteOnly()' });
+  }
+  if (hideSenior) {
+    activeFilters.push({ label: 'Exclude Senior', action: 'clearHideSenior()' });
+  }
+  return activeFilters;
+}
+
+// Interactive & Actionable Empty State
+function renderEmptyStateHtml() {
+  const isVa = currentViewMode === 'va';
+  const activeFilters = getActiveFilterEntries();
 
   const chipsHtml = activeFilters.map(f => `
     <button type="button" class="empty-filter-pill" onclick="${f.action}" title="Click to remove this filter">
@@ -2394,6 +2374,7 @@ function updateActiveFilterIndicators() {
   if (summaryPill) {
     summaryPill.style.display = hasActive ? 'inline-flex' : 'none';
   }
+  if (typeof renderSummaryActivePills === 'function') renderSummaryActivePills();
 }
 
 function resetAllFeedFilters() {
@@ -2431,6 +2412,7 @@ function resetAllFeedFilters() {
 
   const pipelineFilter = document.getElementById('pipeline-stage-filter');
   if (pipelineFilter) pipelineFilter.value = 'All';
+  currentPipelineStage = 'All';
 
   if (filterBySkillsOnly) {
     filterBySkillsOnly = false;
@@ -2467,6 +2449,7 @@ function resetAllFeedFilters() {
   persistSetting('hide_senior', 'false');
   persistSetting('has_salary_only', 'false');
   persistSetting('filter_skills_only', 'false');
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
   updateActiveFilterIndicators();
   loadJobs();
   showToast('All filters cleared.', 'info');
@@ -2534,6 +2517,7 @@ function filterByTag(jobs, tagFilter) {
 
 function handleTagFilterChange(elem) {
   rememberViewFilters();
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
@@ -2543,6 +2527,49 @@ function resetTagFilter() {
     sel.value = 'all';
     handleTagFilterChange(sel);
   }
+}
+
+function resetApplicationFilter() {
+  const sel = document.getElementById('application-filter');
+  if (sel) {
+    sel.value = 'all';
+    handleApplicationFilterChange(sel);
+  }
+}
+
+function resetPipelineStageFilter() {
+  const sel = document.getElementById('pipeline-stage-filter');
+  if (sel) {
+    sel.value = 'All';
+    handlePipelineStageFilterChange(sel);
+  }
+}
+
+function clearSalaryOnly() {
+  hasSalaryOnly = false;
+  const chk = document.getElementById('salary-only-checkbox');
+  if (chk) chk.checked = false;
+  persistSetting('has_salary_only', '0');
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
+  loadJobs();
+}
+
+function clearRemoteOnly() {
+  remoteOnly = false;
+  const chk = document.getElementById('remote-only-checkbox');
+  if (chk) chk.checked = false;
+  persistSetting('remote_only', '0');
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
+  loadJobs();
+}
+
+function clearHideSenior() {
+  hideSenior = false;
+  const chk = document.getElementById('hide-senior-checkbox');
+  if (chk) chk.checked = false;
+  persistSetting('hide_senior', '0');
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
+  loadJobs();
 }
 
 function filterByApplicationHandling(jobs, filter) {
@@ -2560,47 +2587,47 @@ function needsHumanTagBadge(job) {
   const rawKey = match[1].trim().toUpperCase();
   const tagKey = rawKey.split(/[\s\-:]+/)[0];
   const tagMap = {
-    'CAPTCHA': { label: 'CAPTCHA', icon: '🧩', cls: 'badge-tag-captcha' },
-    'CLOUDFLARE': { label: 'Cloudflare / CAPTCHA', icon: '🛡️', cls: 'badge-tag-captcha' },
-    'CLOUDFLARE_CHALLENGE': { label: 'Cloudflare / CAPTCHA', icon: '🛡️', cls: 'badge-tag-captcha' },
-    'LOGIN_OTP': { label: 'Login / OTP', icon: '📱', cls: 'badge-tag-otp' },
-    'SCREENING': { label: 'Screening', icon: '📝', cls: 'badge-tag-screening' },
-    'SCREENING_QUESTION': { label: 'Screening', icon: '📝', cls: 'badge-tag-screening' },
-    'VIDEO_REQ': { label: 'Video Req', icon: '🎥', cls: 'badge-tag-video' },
-    'AUDIO_REQ': { label: 'Voice / Audio Req', icon: '🎙️', cls: 'badge-tag-video' },
-    'AUDIO_RECORDING_REQUIRED': { label: 'Voice / Audio Req', icon: '🎙️', cls: 'badge-tag-video' },
-    'FILE_UPLOAD': { label: 'File Upload', icon: '📎', cls: 'badge-tag-files' },
-    'PAYWALL_BID': { label: 'Connects / Bid', icon: '💳', cls: 'badge-tag-paywall' },
-    'PAYWALL_CREDITS': { label: 'Connects / Bid', icon: '💳', cls: 'badge-tag-paywall' },
-    'INELIGIBLE': { label: 'Ineligible', icon: '🚫', cls: 'badge-tag-ineligible' },
-    'OUT_OF_SCOPE': { label: 'Out of Scope', icon: '🚫', cls: 'badge-tag-ineligible' },
-    'OUT_OF_SCOPE_ROLE': { label: 'Out of Scope', icon: '🚫', cls: 'badge-tag-ineligible' },
-    'EXPIRED': { label: 'Expired / Link Broken', icon: '🔗', cls: 'badge-tag-ineligible' },
-    'EXPIRED_OR_REDIRECTED': { label: 'Expired / Link Broken', icon: '🔗', cls: 'badge-tag-ineligible' },
-    'ALREADY_APPLIED': { label: 'Already Applied', icon: '✅', cls: 'badge-tag-applied' },
-    'SUBMITTED_RECEIPT': { label: 'Already Applied', icon: '✅', cls: 'badge-tag-applied' },
-    'REVIEW_REQUIRED': { label: 'Review Required', icon: '⚠️', cls: 'badge-tag-review' }
+    'CAPTCHA': { label: 'CAPTCHA', cls: 'badge-tag-captcha' },
+    'CLOUDFLARE': { label: 'Cloudflare / CAPTCHA', cls: 'badge-tag-captcha' },
+    'CLOUDFLARE_CHALLENGE': { label: 'Cloudflare / CAPTCHA', cls: 'badge-tag-captcha' },
+    'LOGIN_OTP': { label: 'Login / OTP', cls: 'badge-tag-otp' },
+    'SCREENING': { label: 'Screening', cls: 'badge-tag-screening' },
+    'SCREENING_QUESTION': { label: 'Screening', cls: 'badge-tag-screening' },
+    'VIDEO_REQ': { label: 'Video Req', cls: 'badge-tag-video' },
+    'AUDIO_REQ': { label: 'Voice / Audio Req', cls: 'badge-tag-video' },
+    'AUDIO_RECORDING_REQUIRED': { label: 'Voice / Audio Req', cls: 'badge-tag-video' },
+    'FILE_UPLOAD': { label: 'File Upload', cls: 'badge-tag-files' },
+    'PAYWALL_BID': { label: 'Connects / Bid', cls: 'badge-tag-paywall' },
+    'PAYWALL_CREDITS': { label: 'Connects / Bid', cls: 'badge-tag-paywall' },
+    'INELIGIBLE': { label: 'Ineligible', cls: 'badge-tag-ineligible' },
+    'OUT_OF_SCOPE': { label: 'Out of Scope', cls: 'badge-tag-ineligible' },
+    'OUT_OF_SCOPE_ROLE': { label: 'Out of Scope', cls: 'badge-tag-ineligible' },
+    'EXPIRED': { label: 'Expired / Link Broken', cls: 'badge-tag-ineligible' },
+    'EXPIRED_OR_REDIRECTED': { label: 'Expired / Link Broken', cls: 'badge-tag-ineligible' },
+    'ALREADY_APPLIED': { label: 'Already Applied', cls: 'badge-tag-applied' },
+    'SUBMITTED_RECEIPT': { label: 'Already Applied', cls: 'badge-tag-applied' },
+    'REVIEW_REQUIRED': { label: 'Review Required', cls: 'badge-tag-review' }
   };
   let item = tagMap[rawKey] || tagMap[tagKey];
   if (!item) {
     if (rawKey.includes('CLOUDFLARE') || rawKey.includes('CAPTCHA')) {
-      item = { label: 'Cloudflare / CAPTCHA', icon: '🛡️', cls: 'badge-tag-captcha' };
+      item = { label: 'Cloudflare / CAPTCHA', cls: 'badge-tag-captcha' };
     } else if (rawKey.includes('AUDIO') || rawKey.includes('VOICE')) {
-      item = { label: 'Voice / Audio Req', icon: '🎙️', cls: 'badge-tag-video' };
+      item = { label: 'Voice / Audio Req', cls: 'badge-tag-video' };
     } else if (rawKey.includes('VIDEO')) {
-      item = { label: 'Video Req', icon: '🎥', cls: 'badge-tag-video' };
+      item = { label: 'Video Req', cls: 'badge-tag-video' };
     } else if (rawKey.includes('EXPIRED') || rawKey.includes('REDIRECT')) {
-      item = { label: 'Expired / Link Broken', icon: '🔗', cls: 'badge-tag-ineligible' };
+      item = { label: 'Expired / Link Broken', cls: 'badge-tag-ineligible' };
     } else if (rawKey.includes('OUT_OF_SCOPE')) {
-      item = { label: 'Out of Scope', icon: '🚫', cls: 'badge-tag-ineligible' };
+      item = { label: 'Out of Scope', cls: 'badge-tag-ineligible' };
     } else if (rawKey.includes('OTP') || rawKey.includes('LOGIN')) {
-      item = { label: 'Login / OTP', icon: '📱', cls: 'badge-tag-otp' };
+      item = { label: 'Login / OTP', cls: 'badge-tag-otp' };
     } else {
       const cleanLabel = rawKey.replace(/_/g, ' ');
-      item = { label: cleanLabel, icon: '🏷️', cls: 'badge-tag-default' };
+      item = { label: cleanLabel, cls: 'badge-tag-default' };
     }
   }
-  return `<span class="badge-needs-human-tag ${item.cls}" title="Needs Human: ${item.label}">${item.icon} ${item.label}</span>`;
+  return `<span class="badge-needs-human-tag ${item.cls}" title="Needs Human: ${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>`;
 }
 
 function applicationHandlingLabel(job) {
@@ -2610,6 +2637,7 @@ function applicationHandlingLabel(job) {
 
 function handleApplicationFilterChange(elem) {
   rememberViewFilters();
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
@@ -3128,9 +3156,12 @@ function setStatus(status, elem) {
   const gmailContainer = document.getElementById('gmail-hub-container');
   const controlDeck = document.querySelector('.control-deck');
   const jobFeed = document.getElementById('job-feed');
+  const feedWorkspace = document.getElementById('feed-workspace');
+  const bulkBar = document.getElementById('bulk-action-bar');
   const pipelineHeader = document.getElementById('pipeline-hub-header');
   const syncActivity = document.getElementById('sync-activity');
   const stageFilterRow = document.getElementById('pipeline-stage-filter-row');
+  if (typeof selectedJobIds !== 'undefined') selectedJobIds.clear();
 
   document.querySelectorAll('.status-nav .status-tab').forEach(t => t.classList.remove('active'));
   if (elem) elem.classList.add('active');
@@ -3139,6 +3170,8 @@ function setStatus(status, elem) {
     if (elem) elem.scrollIntoView({block: 'nearest', inline: 'nearest'});
     if (controlDeck) controlDeck.style.display = 'none';
     if (jobFeed) jobFeed.style.display = 'none';
+    if (feedWorkspace) feedWorkspace.style.display = 'none';
+    if (bulkBar) bulkBar.hidden = true;
     if (pipelineHeader) pipelineHeader.style.display = 'none';
     if (syncActivity) syncActivity.style.display = 'none';
     if (stageFilterRow) stageFilterRow.style.display = 'none';
@@ -3151,6 +3184,7 @@ function setStatus(status, elem) {
   // Restore main workspace when navigating away from Gmail
   if (gmailContainer) gmailContainer.style.display = 'none';
   if (controlDeck) controlDeck.style.display = '';
+  if (feedWorkspace) feedWorkspace.style.display = '';
   if (jobFeed) jobFeed.style.display = '';
 
   restoreViewFilters();
@@ -3201,6 +3235,8 @@ function setPlatform(platform, elem) {
   persistSetting('platform', platform);
   document.querySelectorAll('#platform-group .filter-chip').forEach(c => c.classList.remove('active'));
   if (elem) elem.classList.add('active');
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   showToast(`Filtered feed to ${platform === 'All' ? 'All connected job sites' : platform}.`);
   loadJobs();
 }
@@ -3218,7 +3254,9 @@ function setDateFilter(filter, elem) {
   currentDateFilter = filter;
   persistSetting('date_filter', filter);
   document.querySelectorAll('#date-group .filter-chip').forEach(c => c.classList.remove('active'));
-  elem.classList.add('active');
+  if (elem) elem.classList.add('active');
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
@@ -3253,18 +3291,24 @@ function formatPostingDate(dateStr) {
 function toggleHideSenior(checkbox) {
   hideSenior = checkbox.checked;
   persistSetting('hide_senior', hideSenior ? '1' : '0');
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
 function toggleSalaryOnly(checkbox) {
   hasSalaryOnly = checkbox.checked;
   persistSetting('has_salary_only', hasSalaryOnly ? '1' : '0');
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
 function toggleRemoteOnly(checkbox) {
   remoteOnly = checkbox.checked;
   persistSetting('remote_only', remoteOnly ? '1' : '0');
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
+  if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
 
@@ -3283,6 +3327,7 @@ function clearSearchInput() {
     searchQuery = '';
     rememberViewFilters();
     updateClearSearchBtn();
+    if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
     input.focus();
     loadJobs();
   }
@@ -3294,6 +3339,7 @@ function handleSearchInput() {
   searchDebounceTimer = setTimeout(() => {
     searchQuery = document.getElementById('search-input').value.trim();
     rememberViewFilters();
+    if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
     loadJobs();
   }, 220);
 }
@@ -3308,14 +3354,262 @@ function updateSummaryText(count) {
     if (currentViewMode === 'va') {
       ctxEl.textContent = 'Track: Remote Virtual Assistant';
     } else {
-      const filters = [];
-      if (currentRole !== 'All') filters.push(roleLabel(currentRole));
-      if (currentLevel !== 'All') filters.push(currentLevel);
-      if (currentDateFilter !== 'all') filters.push(`Date: ${currentDateFilter}`);
-      if (filterBySkillsOnly) filters.push('Matching Target Stack');
-      ctxEl.textContent = filters.length > 0 ? `Filtered by: ${filters.join(' • ')}` : '';
+      ctxEl.textContent = '';
     }
   }
+  if (typeof renderSummaryActivePills === 'function') renderSummaryActivePills();
+}
+
+function renderSummaryActivePills() {
+  const container = document.getElementById('summary-active-pills');
+  if (!container) return;
+  if (currentViewMode === 'va') {
+    container.innerHTML = '';
+    return;
+  }
+  const activeFilters = typeof getActiveFilterEntries === 'function' ? getActiveFilterEntries() : [];
+  container.innerHTML = activeFilters.map(f => `
+    <button type="button" class="summary-active-pill" onclick="${f.action}" title="Remove ${escapeHtml(f.label)}">
+      <span>${escapeHtml(f.label)}</span>
+      <span class="pill-remove" aria-hidden="true">&times;</span>
+    </button>
+  `).join('');
+}
+
+function toggleFilterDeckCollapse(forceState) {
+  isFilterDeckCollapsed = typeof forceState === 'boolean' ? forceState : !isFilterDeckCollapsed;
+  localStorage.setItem('job_accel_filter_deck_collapsed', isFilterDeckCollapsed ? '1' : '0');
+  syncFilterDeckCollapseUI();
+}
+
+function syncFilterDeckCollapseUI() {
+  const strip = document.getElementById('filter-strip');
+  const btn = document.getElementById('btn-toggle-filter-deck');
+  const label = document.getElementById('filter-deck-toggle-label');
+  if (strip) {
+    strip.classList.toggle('is-collapsed', isFilterDeckCollapsed);
+    strip.hidden = isFilterDeckCollapsed;
+  }
+  if (btn) {
+    btn.classList.toggle('active', isFilterDeckCollapsed);
+    btn.setAttribute('aria-expanded', String(!isFilterDeckCollapsed));
+  }
+  if (label) {
+    label.textContent = isFilterDeckCollapsed ? 'Show Filters' : 'Hide Filters';
+  }
+}
+
+const QUICK_FILTER_PRESETS = {
+  junior_dev: { role: 'Web/Software Dev', level: 'Junior / Entry', date: '7days', platform: 'All', hideSenior: true, remoteOnly: false, hasSalaryOnly: false },
+  direct_client: { role: 'All', level: 'All', date: '7days', platform: 'OnlineJobs.ph', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
+  qa_testing: { role: 'QA / Testing', level: 'All', date: '15days', platform: 'All', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
+  it_support: { role: 'IT / Cloud / Infrastructure', level: 'All', date: '15days', platform: 'All', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
+  ai_dev: { role: 'AI Development', level: 'All', date: '15days', platform: 'All', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
+};
+
+function applyQuickFilterPreset(key) {
+  if (!key || !QUICK_FILTER_PRESETS[key]) return;
+  const p = QUICK_FILTER_PRESETS[key];
+  currentViewMode = 'tech';
+  currentRole = p.role;
+  currentLevel = p.level;
+  selectedLevels = new Set([p.level]);
+  currentDateFilter = p.date;
+  currentPlatform = p.platform;
+  hideSenior = p.hideSenior;
+  remoteOnly = p.remoteOnly;
+  hasSalaryOnly = p.hasSalaryOnly;
+  rememberViewFilters();
+  persistSetting('role', currentRole);
+  persistSetting('experience_levels', currentLevel);
+  persistSetting('date_filter', currentDateFilter);
+  persistSetting('platform', currentPlatform);
+  persistSetting('hide_senior', hideSenior ? '1' : '0');
+  persistSetting('remote_only', remoteOnly ? '1' : '0');
+  persistSetting('has_salary_only', hasSalaryOnly ? '1' : '0');
+  syncFilterControlsUI();
+  loadJobs();
+}
+
+function syncPresetSelect() {
+  const sel = document.getElementById('filter-preset-select');
+  if (!sel) return;
+  const matched = Object.entries(QUICK_FILTER_PRESETS).find(([, p]) =>
+    currentRole === p.role &&
+    currentLevel === p.level &&
+    currentDateFilter === p.date &&
+    currentPlatform === p.platform &&
+    hideSenior === p.hideSenior &&
+    remoteOnly === p.remoteOnly &&
+    hasSalaryOnly === p.hasSalaryOnly
+  );
+  sel.value = matched ? matched[0] : '';
+}
+
+function inferJobCategoryForChip(job) {
+  const cat = String(job.role_category || '');
+  const title = ` ${String(job.title || '').toLowerCase().replace(/[-/.,]/g, ' ')} `;
+  if (cat === 'Video Editor') return 'Video Editor';
+  if (cat === 'Virtual Assistant' || /\b(virtual assistant|administrative assistant|executive assistant|remote assistant|customer support|customer service|chat support|email support|technical support|tech support|technical writer|data entry|data encoder|cyberbacker)\b/.test(title)) {
+    return 'Virtual Assistant';
+  }
+  if (/\b(qa|quality assurance|software test|tester|test automation|automation test|sdet|software development engineer in test|test analyst|test engineer|quality engineer)\b/.test(title)) {
+    return 'QA / Testing';
+  }
+  if (/\b(cybersecurity|cyber security|security engineer|security analyst|soc analyst|penetration test|information security|application security|product security|devsecops|iam engineer|it auditor)\b/.test(title)) {
+    return 'Cybersecurity';
+  }
+  if (/\b(it support|helpdesk|help desk|service desk|desktop support|systems administrator|system administrator|sysadmin|systems engineer|it engineer|network engineer|network administrator|noc engineer|database administrator|dba|it specialist|it operations|application support|software support|product support|implementation engineer|devops|cloud engineer|cloud architect|aws engineer|azure engineer|sre|site reliability|platform engineer|infrastructure engineer|build engineer|release engineer|salesforce administrator|servicenow administrator|crm administrator)\b/.test(title)) {
+    return 'IT / Cloud / Infrastructure';
+  }
+  if (cat === 'Data/AI/ML' || /\b(data analyst|data analytics|analytics analyst|reporting analyst|business intelligence|bi analyst|bi developer|power bi|tableau|data scientist|data science|data engineer|data engineering|analytics engineer|etl|data warehouse|machine learning|ml engineer|mlops|business analyst|systems analyst|system analyst|product analyst|operations analyst|gis analyst)\b/.test(title)) {
+    return 'Data/AI/ML';
+  }
+  return 'Web/Software Dev';
+}
+
+function updateCategoryChipCounts(jobs) {
+  const chips = document.querySelectorAll('#role-group .filter-chip');
+  if (!chips || !chips.length) return;
+  const counts = {};
+  if (currentRole === 'All' && currentViewMode !== 'va') {
+    counts['All'] = jobs.length;
+    for (const job of jobs) {
+      const cat = inferJobCategoryForChip(job);
+      counts[cat] = (counts[cat] || 0) + 1;
+    }
+  } else {
+    const activeFamily = roleFamily(currentViewMode === 'va' ? 'Virtual Assistant' : currentRole);
+    counts[activeFamily] = jobs.length;
+  }
+  chips.forEach(chip => {
+    const val = chip.dataset.val;
+    if (!chip.dataset.baseLabel) chip.dataset.baseLabel = chip.textContent.trim();
+    const baseLabel = chip.dataset.baseLabel;
+    const count = counts[val];
+    chip.innerHTML = typeof count === 'number'
+      ? `${escapeHtml(baseLabel)} <span class="chip-count">${count}</span>`
+      : escapeHtml(baseLabel);
+  });
+}
+
+function toggleBulkSelectMode(forceState) {
+  bulkSelectMode = typeof forceState === 'boolean' ? forceState : !bulkSelectMode;
+  if (!bulkSelectMode && typeof selectedJobIds !== 'undefined') {
+    selectedJobIds.clear();
+  }
+  renderJobs();
+}
+
+function toggleJobSelection(jobId, checked) {
+  if (checked) selectedJobIds.add(jobId);
+  else selectedJobIds.delete(jobId);
+  const idx = jobsList.findIndex(j => j.id === jobId);
+  const card = idx >= 0 ? document.getElementById(`job-card-${idx}`) : null;
+  if (card) card.classList.toggle('is-bulk-selected', checked);
+  syncBulkSelectionBar();
+}
+
+function selectAllVisibleJobs() {
+  if (!bulkSelectMode) bulkSelectMode = true;
+  const allSelected = jobsList.length > 0 && jobsList.every(j => selectedJobIds.has(j.id));
+  if (allSelected) {
+    selectedJobIds.clear();
+  } else {
+    jobsList.forEach(j => selectedJobIds.add(j.id));
+  }
+  renderJobs();
+}
+
+function syncBulkSelectionBar() {
+  const bar = document.getElementById('bulk-action-bar');
+  const countEl = document.getElementById('bulk-selected-count');
+  const btn = document.getElementById('btn-toggle-bulk-mode');
+  const show = bulkSelectMode && currentStatus !== 'gmail';
+  if (bar) bar.hidden = !show;
+  if (countEl) countEl.textContent = `${selectedJobIds.size} selected`;
+  if (btn) {
+    btn.classList.toggle('active', bulkSelectMode);
+    btn.setAttribute('aria-pressed', String(bulkSelectMode));
+  }
+}
+
+async function bulkUpdateSelectedStatus(newStatus) {
+  const ids = [...selectedJobIds];
+  if (!ids.length) {
+    showToast('Select at least one job first.');
+    return;
+  }
+  for (const id of ids) {
+    await updateJobStatus(id, newStatus);
+  }
+  selectedJobIds.clear();
+  bulkSelectMode = false;
+  syncBulkSelectionBar();
+  showToast(`${ids.length} job${ids.length === 1 ? '' : 's'} moved to ${newStatus === 'saved' ? 'Saved' : 'Archived'}.`);
+}
+
+function toggleSplitViewMode(forceState) {
+  splitViewMode = typeof forceState === 'boolean' ? forceState : !splitViewMode;
+  localStorage.setItem('job_accel_split_view', splitViewMode ? '1' : '0');
+  syncWorkspaceModesUI();
+  renderInspectorPane();
+}
+
+function syncWorkspaceModesUI() {
+  const workspace = document.getElementById('feed-workspace');
+  const pane = document.getElementById('job-inspector-pane');
+  const splitBtn = document.getElementById('btn-toggle-split-view');
+  const activeSplit = splitViewMode && currentStatus !== 'gmail' && jobsList.length > 0;
+  if (workspace) workspace.classList.toggle('is-split-view', activeSplit);
+  if (pane) pane.hidden = !activeSplit;
+  if (splitBtn) {
+    splitBtn.classList.toggle('active', splitViewMode);
+    splitBtn.setAttribute('aria-pressed', String(splitViewMode));
+  }
+  syncBulkSelectionBar();
+}
+
+function renderInspectorPane() {
+  const pane = document.getElementById('job-inspector-pane');
+  if (!pane) return;
+  if (!splitViewMode || currentStatus === 'gmail' || jobsList.length === 0) {
+    pane.hidden = true;
+    pane.innerHTML = '';
+    return;
+  }
+  const job = jobsList[selectedIndex] || jobsList[0];
+  if (!job) return;
+  pane.hidden = false;
+  const skillsMatch = getSkillsMatch(job);
+  const rawSources = Array.isArray(job.sources) && job.sources.length > 0
+    ? job.sources
+    : [{ platform: job.platform, url: job.job_url }];
+  const desc = job.description ? escapeHtml(job.description).replace(/\n/g, '<br>') : '<span class="inspector-no-desc">No description preview stored from this board. Use the link above to view the full job post.</span>';
+  pane.innerHTML = `
+    <div class="inspector-header">
+      <div class="inspector-title-group">
+        <span class="inspector-eyebrow">Selected job preview</span>
+        <h3 class="inspector-title">${escapeHtml(job.title)}</h3>
+        <div class="inspector-company">${escapeHtml(job.company)} &middot; ${escapeHtml(job.location || 'Remote / Philippines')}</div>
+      </div>
+      <button type="button" class="btn-close-modal" onclick="toggleSplitViewMode(false)" aria-label="Close preview pane" title="Close split preview">&times;</button>
+    </div>
+    <div class="inspector-badges">
+      <span class="badge-level">${escapeHtml(job.experience_level || 'Unspecified')}</span>
+      ${(job.salary && job.salary.toLowerCase() !== 'nan' && job.salary !== 'None') ? `<span class="job-salary-tag">${escapeHtml(job.salary)}</span>` : ''}
+      ${skillsMatch.count > 0 ? `<span class="job-skills-matched">Match: ${escapeHtml(skillsMatch.matched.join(', '))}</span>` : ''}
+    </div>
+    <div class="inspector-sources">
+      ${rawSources.map(s => `<a href="${escapeHtml(safeJobUrl(s.url || job.job_url))}" target="_blank" rel="noopener noreferrer" class="badge-platform badge-source-link">${escapeHtml(s.platform || job.platform)} ↗</a>`).join('')}
+    </div>
+    <div class="inspector-actions">
+      <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer" class="btn-card-apply" onclick="handleApplyClick(event, ${job.id})">Open &amp; Apply ↗</a>
+      <button type="button" class="btn-subtle" onclick="updateJobStatus(${job.id}, 'saved')">Save</button>
+      <button type="button" class="btn-subtle" onclick="updateJobStatus(${job.id}, 'ignored')">Archive</button>
+    </div>
+    <div class="inspector-body">${desc}</div>
+  `;
 }
 
 function escapeHtml(str) {
