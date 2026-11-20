@@ -5405,6 +5405,119 @@ a {
   font-weight: 600;
 }
 
+/* Custom Filter Preset Template Controls */
+.preset-cell-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.preset-cell-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-preset-inline {
+  padding: 2px 8px;
+  min-height: 22px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-default);
+  background: var(--bg-canvas);
+  color: var(--accent-cyan);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.btn-preset-inline:hover {
+  border-color: var(--accent-cyan);
+  background: var(--accent-cyan-bg);
+}
+
+.btn-preset-inline.is-delete {
+  color: var(--accent-rose);
+  border-color: var(--accent-rose-border);
+}
+
+.btn-preset-inline.is-delete:hover {
+  background: var(--accent-rose-bg);
+  border-color: var(--accent-rose);
+  color: var(--text-primary);
+}
+
+.btn-preset-inline[hidden],
+.custom-preset-form[hidden] {
+  display: none !important;
+}
+
+.custom-preset-form {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.custom-preset-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+
+.custom-preset-input:focus-visible,
+.btn-preset-inline:focus-visible,
+.btn-preset-save:focus-visible,
+.btn-preset-cancel:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.btn-preset-save,
+.btn-preset-cancel {
+  min-height: 32px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.btn-preset-save {
+  border: 1px solid var(--accent-emerald-border);
+  background: var(--accent-emerald-bg);
+  color: var(--accent-emerald-bright);
+}
+
+.btn-preset-save:hover {
+  border-color: var(--accent-emerald);
+  background: var(--accent-emerald);
+  color: var(--text-inverse);
+}
+
+.btn-preset-cancel {
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-preset-cancel:hover {
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
 .filter-strip[hidden],
 .filter-strip.is-collapsed {
   display: none !important;
@@ -5690,7 +5803,11 @@ a {
 @media (max-width: 600px) {
   .summary-active-pill,
   .btn-summary-tool,
-  .btn-bulk-action {
+  .btn-bulk-action,
+  .btn-preset-inline,
+  .btn-preset-save,
+  .btn-preset-cancel,
+  .custom-preset-input {
     min-height: 44px;
   }
 }

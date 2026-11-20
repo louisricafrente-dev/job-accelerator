@@ -31,7 +31,7 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = True)
     # Pre-initialize master admin TOTP secret so it exists in database
     get_or_create_admin_totp_secret(db_path)
 
-    public_settings = {"view_filters", "target_stack", "filter_skills_only", "has_salary_only", "remote_only", "hide_senior", "date_filter", "role", "experience_levels", "status", "platform", "va_training_enabled", "auto_sync_enabled", "proxy_list", "proxy_mode"}
+    public_settings = {"view_filters", "target_stack", "filter_skills_only", "has_salary_only", "remote_only", "hide_senior", "date_filter", "role", "experience_levels", "status", "platform", "va_training_enabled", "auto_sync_enabled", "proxy_list", "proxy_mode", "custom_presets"}
     guest_settings = public_settings - {"auto_sync_enabled", "proxy_list", "proxy_mode"}
 
     @app.error(400)

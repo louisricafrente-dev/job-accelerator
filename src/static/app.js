@@ -1026,7 +1026,8 @@ async function loadAllUserSettings() {
       view_filters: localStorage.getItem('job_accel_view_filters'),
       status: localStorage.getItem('job_accel_status'),
       auto_sync_enabled: localStorage.getItem('job_accel_auto_sync_enabled'),
-      proxy_mode: localStorage.getItem('job_accel_proxy_mode')
+      proxy_mode: localStorage.getItem('job_accel_proxy_mode'),
+      custom_presets: localStorage.getItem('job_accel_custom_presets')
     };
   } catch (e) {}
 
@@ -1112,6 +1113,7 @@ async function loadAllUserSettings() {
   try { viewFilters = JSON.parse(settings.view_filters || '{}'); } catch (_) { viewFilters = {}; }
   if (!viewFilters || typeof viewFilters !== 'object' || Array.isArray(viewFilters)) viewFilters = {};
   restoreViewFilters();
+  if (typeof hydrateCustomPresets === 'function') hydrateCustomPresets(settings.custom_presets);
   // 4. Update UI elements to reflect restored toggles & selections
   syncFilterControlsUI();
 }
@@ -1281,6 +1283,7 @@ function setPipelineStageFilter(stageKey) {
     select.value = currentPipelineStage;
   }
   renderPipelineSummary(latestByStage);
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
   if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
@@ -2517,6 +2520,7 @@ function filterByTag(jobs, tagFilter) {
 
 function handleTagFilterChange(elem) {
   rememberViewFilters();
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
   if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
@@ -2637,6 +2641,7 @@ function applicationHandlingLabel(job) {
 
 function handleApplicationFilterChange(elem) {
   rememberViewFilters();
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
   if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
@@ -3216,6 +3221,7 @@ function setLevel(level, elem) {
   });
 
   persistSetting('experience_levels', currentLevel);
+  if (typeof syncPresetSelect === 'function') syncPresetSelect();
   if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
   loadJobs();
 }
@@ -3327,6 +3333,7 @@ function clearSearchInput() {
     searchQuery = '';
     rememberViewFilters();
     updateClearSearchBtn();
+    if (typeof syncPresetSelect === 'function') syncPresetSelect();
     if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
     input.focus();
     loadJobs();
@@ -3339,6 +3346,7 @@ function handleSearchInput() {
   searchDebounceTimer = setTimeout(() => {
     searchQuery = document.getElementById('search-input').value.trim();
     rememberViewFilters();
+    if (typeof syncPresetSelect === 'function') syncPresetSelect();
     if (typeof updateActiveFilterIndicators === 'function') updateActiveFilterIndicators();
     loadJobs();
   }, 220);
@@ -3400,50 +3408,304 @@ function syncFilterDeckCollapseUI() {
 }
 
 const QUICK_FILTER_PRESETS = {
-  junior_dev: { role: 'Web/Software Dev', level: 'Junior / Entry', date: '7days', platform: 'All', hideSenior: true, remoteOnly: false, hasSalaryOnly: false },
-  direct_client: { role: 'All', level: 'All', date: '7days', platform: 'OnlineJobs.ph', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
-  qa_testing: { role: 'QA / Testing', level: 'All', date: '15days', platform: 'All', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
-  it_support: { role: 'IT / Cloud / Infrastructure', level: 'All', date: '15days', platform: 'All', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
-  ai_dev: { role: 'AI Development', level: 'All', date: '15days', platform: 'All', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
+  junior_dev: { label: 'Junior Software & Mobile (7d)', role: 'Web/Software Dev', level: 'Junior / Entry', date: '7days', platform: 'All', hideSenior: true, remoteOnly: false, hasSalaryOnly: false },
+  direct_client: { label: 'Direct Clients · OnlineJobs.ph (7d)', role: 'All', level: 'All', date: '7days', platform: 'OnlineJobs.ph', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
+  qa_testing: { label: 'QA & Testing Roles (15d)', role: 'QA / Testing', level: 'All', date: '15days', platform: 'All', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
+  it_support: { label: 'IT, Cloud & Support (15d)', role: 'IT / Cloud / Infrastructure', level: 'All', date: '15days', platform: 'All', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
+  ai_dev: { label: 'AI, LLM & Agent Dev (15d)', role: 'AI Development', level: 'All', date: '15days', platform: 'All', hideSenior: false, remoteOnly: false, hasSalaryOnly: false },
 };
+let customFilterPresets = {};
 
-function applyQuickFilterPreset(key) {
-  if (!key || !QUICK_FILTER_PRESETS[key]) return;
-  const p = QUICK_FILTER_PRESETS[key];
-  currentViewMode = 'tech';
-  currentRole = p.role;
-  currentLevel = p.level;
-  selectedLevels = new Set([p.level]);
-  currentDateFilter = p.date;
-  currentPlatform = p.platform;
-  hideSenior = p.hideSenior;
-  remoteOnly = p.remoteOnly;
-  hasSalaryOnly = p.hasSalaryOnly;
-  rememberViewFilters();
-  persistSetting('role', currentRole);
-  persistSetting('experience_levels', currentLevel);
-  persistSetting('date_filter', currentDateFilter);
-  persistSetting('platform', currentPlatform);
-  persistSetting('hide_senior', hideSenior ? '1' : '0');
-  persistSetting('remote_only', remoteOnly ? '1' : '0');
-  persistSetting('has_salary_only', hasSalaryOnly ? '1' : '0');
-  syncFilterControlsUI();
-  loadJobs();
+function presetEsc(str) {
+  return typeof escapeHtml === 'function' ? escapeHtml(str) : String(str ?? '');
 }
 
-function syncPresetSelect() {
+function normalizeCustomPresetEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) return null;
+  const label = String(rawEntry.label || '').trim().slice(0, 48);
+  if (!label) return null;
+  const entry = {
+    label,
+    role: String(rawEntry.role || 'All'),
+    level: String(rawEntry.level || 'All'),
+    date: String(rawEntry.date || 'all'),
+    platform: String(rawEntry.platform || 'All'),
+    hideSenior: Boolean(rawEntry.hideSenior),
+    remoteOnly: Boolean(rawEntry.remoteOnly),
+    hasSalaryOnly: Boolean(rawEntry.hasSalaryOnly),
+  };
+  if (rawEntry.filterBySkillsOnly !== undefined) entry.filterBySkillsOnly = Boolean(rawEntry.filterBySkillsOnly);
+  if (rawEntry.search !== undefined) entry.search = String(rawEntry.search || '').trim();
+  if (rawEntry.application !== undefined) entry.application = String(rawEntry.application || 'all');
+  if (rawEntry.tag !== undefined) entry.tag = String(rawEntry.tag || 'all');
+  if (rawEntry.stage !== undefined) entry.stage = String(rawEntry.stage || 'All');
+  return entry;
+}
+
+function hydrateCustomPresets(raw) {
+  let parsed = {};
+  if (typeof raw === 'string' && raw.trim()) {
+    try { parsed = JSON.parse(raw); } catch (_) { parsed = {}; }
+  } else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    parsed = raw;
+  }
+  const next = {};
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    for (const [k, v] of Object.entries(parsed)) {
+      const normalized = normalizeCustomPresetEntry(v);
+      if (normalized) next[String(k)] = normalized;
+    }
+  }
+  customFilterPresets = next;
+  if (typeof currentUserRole !== 'undefined' && currentUserRole !== 'guest' && typeof localStorage !== 'undefined') {
+    try { localStorage.setItem('job_accel_custom_presets', JSON.stringify(customFilterPresets)); } catch (_) {}
+  }
+  renderPresetSelectOptions();
+}
+
+function renderPresetSelectOptions() {
   const sel = document.getElementById('filter-preset-select');
   if (!sel) return;
-  const matched = Object.entries(QUICK_FILTER_PRESETS).find(([, p]) =>
-    currentRole === p.role &&
-    currentLevel === p.level &&
-    currentDateFilter === p.date &&
-    currentPlatform === p.platform &&
-    hideSenior === p.hideSenior &&
-    remoteOnly === p.remoteOnly &&
-    hasSalaryOnly === p.hasSalaryOnly
+  const customEntries = Object.entries(customFilterPresets);
+  const builtInHtml = Object.entries(QUICK_FILTER_PRESETS)
+    .map(([k, p]) => `<option value="${presetEsc(k)}">${presetEsc(p.label)}</option>`)
+    .join('');
+  let optionsHtml = '<option value="">Custom filter view</option>';
+  if (customEntries.length > 0) {
+    const customHtml = customEntries
+      .map(([k, p]) => `<option value="${presetEsc(k)}">${presetEsc(p.label)}</option>`)
+      .join('');
+    optionsHtml += `<optgroup label="My Saved Templates">${customHtml}</optgroup><optgroup label="Built-in Presets">${builtInHtml}</optgroup>`;
+  } else {
+    optionsHtml += builtInHtml;
+  }
+  optionsHtml += '<option value="__save_new__">+ Save current filters as template...</option>';
+  const prevVal = sel.value;
+  sel.innerHTML = optionsHtml;
+  if (prevVal && (customFilterPresets[prevVal] || QUICK_FILTER_PRESETS[prevVal])) {
+    sel.value = prevVal;
+  } else {
+    sel.value = '';
+  }
+}
+
+function presetMatchesCurrentState(p) {
+  if (!p || typeof p !== 'object') return false;
+  const curRole = currentRole || 'All';
+  const curLevel = currentLevel || 'All';
+  const curDate = currentDateFilter || 'all';
+  const curPlatform = currentPlatform || 'All';
+  if (
+    curRole !== (p.role || 'All') ||
+    curLevel !== (p.level || 'All') ||
+    curDate !== (p.date || 'all') ||
+    curPlatform !== (p.platform || 'All') ||
+    Boolean(hideSenior) !== Boolean(p.hideSenior) ||
+    Boolean(remoteOnly) !== Boolean(p.remoteOnly) ||
+    Boolean(hasSalaryOnly) !== Boolean(p.hasSalaryOnly)
+  ) {
+    return false;
+  }
+  if (p.filterBySkillsOnly !== undefined && Boolean(filterBySkillsOnly) !== Boolean(p.filterBySkillsOnly)) {
+    return false;
+  }
+  const curSearch = typeof searchQuery !== 'undefined' ? String(searchQuery || '').trim() : '';
+  if (p.search !== undefined && curSearch !== String(p.search || '').trim()) {
+    return false;
+  }
+  const curApp = document.getElementById('application-filter')?.value || 'all';
+  if (p.application !== undefined && curApp !== String(p.application || 'all')) {
+    return false;
+  }
+  const curTag = (typeof currentStatus !== 'undefined' && currentStatus === 'saved')
+    ? (document.getElementById('tag-filter')?.value || 'all')
+    : 'all';
+  if (p.tag !== undefined && curTag !== String(p.tag || 'all')) {
+    return false;
+  }
+  const curStage = (typeof currentStatus !== 'undefined' && currentStatus === 'applied')
+    ? (document.getElementById('pipeline-stage-filter')?.value || (typeof currentPipelineStage !== 'undefined' ? currentPipelineStage : 'All') || 'All')
+    : 'All';
+  if (p.stage !== undefined && curStage !== String(p.stage || 'All')) {
+    return false;
+  }
+  return true;
+}
+
+function applyQuickFilterPreset(key) {
+  if (key === '__save_new__') {
+    syncPresetSelect();
+    toggleCustomPresetForm(true);
+    return;
+  }
+  const p = (key && (customFilterPresets[key] || QUICK_FILTER_PRESETS[key])) || null;
+  if (!p) {
+    syncPresetSelect();
+    return;
+  }
+  currentViewMode = 'tech';
+  currentRole = p.role || 'All';
+  currentLevel = p.level || 'All';
+  if (typeof selectedLevels !== 'undefined' && selectedLevels instanceof Set) {
+    selectedLevels.clear();
+    String(currentLevel).split(',').map(s => s.trim()).filter(Boolean).forEach(lvl => selectedLevels.add(lvl));
+    if (selectedLevels.size === 0) selectedLevels.add('All');
+  }
+  currentDateFilter = p.date || '15days';
+  currentPlatform = p.platform || 'All';
+  hideSenior = Boolean(p.hideSenior);
+  remoteOnly = Boolean(p.remoteOnly);
+  hasSalaryOnly = Boolean(p.hasSalaryOnly);
+  if (p.filterBySkillsOnly !== undefined) {
+    filterBySkillsOnly = Boolean(p.filterBySkillsOnly);
+    if (typeof persistSetting === 'function') persistSetting('filter_skills_only', filterBySkillsOnly ? '1' : '0');
+  }
+  if (p.search !== undefined && typeof searchQuery !== 'undefined') {
+    searchQuery = String(p.search || '');
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) searchInput.value = searchQuery;
+    if (typeof updateClearSearchBtn === 'function') updateClearSearchBtn();
+  }
+  if (p.application !== undefined) {
+    const appSelect = document.getElementById('application-filter');
+    if (appSelect) appSelect.value = p.application || 'all';
+  }
+  if (p.tag !== undefined) {
+    const tagSelect = document.getElementById('tag-filter');
+    if (tagSelect) tagSelect.value = p.tag || 'all';
+  }
+  if (p.stage !== undefined) {
+    if (typeof currentPipelineStage !== 'undefined') currentPipelineStage = p.stage || 'All';
+    const stageSelect = document.getElementById('pipeline-stage-filter');
+    if (stageSelect) stageSelect.value = p.stage || 'All';
+  }
+  if (typeof rememberViewFilters === 'function') rememberViewFilters();
+  if (typeof persistSetting === 'function') {
+    persistSetting('role', currentRole);
+    persistSetting('experience_levels', currentLevel);
+    persistSetting('date_filter', currentDateFilter);
+    persistSetting('platform', currentPlatform);
+    persistSetting('hide_senior', hideSenior ? '1' : '0');
+    persistSetting('remote_only', remoteOnly ? '1' : '0');
+    persistSetting('has_salary_only', hasSalaryOnly ? '1' : '0');
+  }
+  if (typeof syncFilterControlsUI === 'function') syncFilterControlsUI();
+  syncPresetSelect(key);
+  if (typeof loadJobs === 'function') loadJobs();
+}
+
+function toggleCustomPresetForm(forceOpen) {
+  const form = document.getElementById('custom-preset-form');
+  const input = document.getElementById('custom-preset-name');
+  const sel = document.getElementById('filter-preset-select');
+  if (!form) return;
+  const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : Boolean(form.hidden);
+  form.hidden = !shouldOpen;
+  if (shouldOpen && input) {
+    const activeKey = sel?.value || '';
+    input.value = activeKey && customFilterPresets[activeKey] ? customFilterPresets[activeKey].label : '';
+    input.focus?.();
+    input.select?.();
+  }
+}
+
+function handleCustomPresetKeyDown(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    saveCurrentAsCustomPreset();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    toggleCustomPresetForm(false);
+  }
+}
+
+function saveCurrentAsCustomPreset(explicitName) {
+  const input = document.getElementById('custom-preset-name');
+  const cleanName = String(explicitName !== undefined ? explicitName : (input?.value || '')).trim().slice(0, 48);
+  if (!cleanName) {
+    if (typeof showToast === 'function') showToast('Enter a template name first.');
+    input?.focus?.();
+    return;
+  }
+  const existingKey = Object.keys(customFilterPresets).find(
+    k => String(customFilterPresets[k]?.label || '').toLowerCase() === cleanName.toLowerCase()
   );
-  sel.value = matched ? matched[0] : '';
+  const baseSlug = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'template';
+  let key = existingKey || `custom_${baseSlug}`;
+  if (!existingKey && customFilterPresets[key]) {
+    let suffix = 2;
+    while (customFilterPresets[`custom_${baseSlug}_${suffix}`]) suffix++;
+    key = `custom_${baseSlug}_${suffix}`;
+  }
+  const curApp = document.getElementById('application-filter')?.value || 'all';
+  const curTag = (typeof currentStatus !== 'undefined' && currentStatus === 'saved')
+    ? (document.getElementById('tag-filter')?.value || 'all')
+    : 'all';
+  const curStage = (typeof currentStatus !== 'undefined' && currentStatus === 'applied')
+    ? (document.getElementById('pipeline-stage-filter')?.value || (typeof currentPipelineStage !== 'undefined' ? currentPipelineStage : 'All') || 'All')
+    : 'All';
+  const candidateEntry = {
+    label: cleanName,
+    role: currentRole || 'All',
+    level: currentLevel || 'All',
+    date: currentDateFilter || 'all',
+    platform: currentPlatform || 'All',
+    hideSenior: Boolean(hideSenior),
+    remoteOnly: Boolean(remoteOnly),
+    hasSalaryOnly: Boolean(hasSalaryOnly),
+    filterBySkillsOnly: Boolean(filterBySkillsOnly),
+    search: typeof searchQuery !== 'undefined' ? String(searchQuery || '').trim() : '',
+    application: curApp,
+    tag: curTag,
+    stage: curStage,
+  };
+  const nextPresets = { ...customFilterPresets, [key]: candidateEntry };
+  const serialized = JSON.stringify(nextPresets);
+  if (serialized.length > 9500) {
+    if (typeof showToast === 'function') showToast('Template storage limit reached. Delete an unused template first.');
+    return;
+  }
+  customFilterPresets = nextPresets;
+  if (typeof persistSetting === 'function') persistSetting('custom_presets', serialized);
+  toggleCustomPresetForm(false);
+  syncPresetSelect(key);
+  if (typeof showToast === 'function') showToast(`Saved preset template "${cleanName}".`);
+}
+
+function deleteActiveCustomPreset() {
+  const sel = document.getElementById('filter-preset-select');
+  const key = sel?.value || '';
+  if (!key || !customFilterPresets[key]) return;
+  const removedLabel = customFilterPresets[key].label;
+  const nextPresets = { ...customFilterPresets };
+  delete nextPresets[key];
+  customFilterPresets = nextPresets;
+  if (typeof persistSetting === 'function') persistSetting('custom_presets', JSON.stringify(customFilterPresets));
+  toggleCustomPresetForm(false);
+  syncPresetSelect();
+  if (typeof showToast === 'function') showToast(`Deleted template "${removedLabel}".`);
+}
+
+function syncPresetSelect(preferredKey = '') {
+  renderPresetSelectOptions();
+  const sel = document.getElementById('filter-preset-select');
+  const delBtn = document.getElementById('btn-delete-preset');
+  if (!sel) return;
+  let matchedKey = '';
+  if (preferredKey && customFilterPresets[preferredKey] && presetMatchesCurrentState(customFilterPresets[preferredKey])) {
+    matchedKey = preferredKey;
+  } else {
+    const customMatch = Object.entries(customFilterPresets).find(([, p]) => presetMatchesCurrentState(p));
+    if (customMatch) {
+      matchedKey = customMatch[0];
+    } else {
+      const builtInMatch = Object.entries(QUICK_FILTER_PRESETS).find(([, p]) => presetMatchesCurrentState(p));
+      if (builtInMatch) matchedKey = builtInMatch[0];
+    }
+  }
+  sel.value = matchedKey;
+  sel.classList?.toggle?.('is-filtered', Boolean(matchedKey));
+  if (delBtn) delBtn.hidden = !(matchedKey && Boolean(customFilterPresets[matchedKey]));
 }
 
 function inferJobCategoryForChip(job) {

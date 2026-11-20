@@ -194,6 +194,54 @@ class TestUIEndpoints(unittest.TestCase):
         data = json.loads(body_api)
         self.assertEqual(data.get("error"), "Admin access required")
 
+    def test_custom_presets_setting_persistence(self):
+        import json, io
+        from src.auth import create_session_token
+        token = create_session_token("admin", "admin", expiry_hours=24)
+        payload = json.dumps({
+            "custom_kotlin_remote": {
+                "label": "Kotlin Remote",
+                "role": "Mobile",
+                "level": "Junior / Entry",
+                "date": "7days",
+                "platform": "OnlineJobs.ph",
+                "hideSenior": True,
+                "remoteOnly": True,
+                "hasSalaryOnly": False,
+            }
+        })
+        body_bytes = json.dumps({"custom_presets": payload}).encode("utf-8")
+        post_env = {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": "/api/settings",
+            "QUERY_STRING": "",
+            "wsgi.input": io.BytesIO(body_bytes),
+            "CONTENT_LENGTH": str(len(body_bytes)),
+            "CONTENT_TYPE": "application/json",
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+        }
+        res_post = self.app._handle(post_env)
+        body_post = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res_post)
+        if hasattr(res_post, "close"):
+            res_post.close()
+        data_post = json.loads(body_post)
+        self.assertTrue(data_post["success"])
+        self.assertEqual(data_post["settings"]["custom_presets"], payload)
+
+        get_env = {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/api/settings",
+            "QUERY_STRING": "",
+            "wsgi.input": None,
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+        }
+        res_get = self.app._handle(get_env)
+        body_get = "".join(item if isinstance(item, str) else item.decode("utf-8") for item in res_get)
+        if hasattr(res_get, "close"):
+            res_get.close()
+        data_get = json.loads(body_get)
+        self.assertEqual(data_get["custom_presets"], payload)
+
 if __name__ == "__main__":
     unittest.main()
 
