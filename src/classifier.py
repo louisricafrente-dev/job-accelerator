@@ -51,7 +51,7 @@ FOREIGN_LOCATION_PATTERNS = [
 PH_LOCATION_PATTERNS = [
     r"\bphilippines\b", r"\bph\b", r"\bpilipinas\b",
     # Metro Manila & NCR
-    r"\bmetro manila\b", r"(?<!delhi[\s\/\-])\bncr\b", r"\bnational capital region\b",
+    r"\bmetro manila\b", r"(?<!delhi[\s\/\-])(?<!delhi\s/\s)(?<!delhi\s-\s)\bncr\b", r"\bnational capital region\b",
     r"\bmanila\b", r"\bquezon\b", r"\btaguig\b", r"\bmakati\b", r"\bpasig\b",
     r"\bmandaluyong\b", r"\bpasay\b", r"\bparanaque\b", r"\bparañaque\b",
     r"\blas pinas\b", r"\blas piñas\b", r"\bmuntinlupa\b", r"\bmarikina\b",
@@ -120,6 +120,26 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
         r"(?:\s*[/()-]?\s*(?:contract|freelance|location unverified)\s*\)?)*", loc)
     if loc and not (ph_location or worldwide or remote_label):
         return False
+    if not ph_location:
+        title_allows_ph = bool(re.search(
+            r"\b(?:philippines|manila|cebu|davao|worldwide|global|anywhere|apac|asia|southeast asia)\b", t
+        ))
+        foreign_scoped = rf"{foreign_name}(?!\s+(?:client|clients|shift|hours|timezone|time\s*zone|account|accounts|market|entity)\b)"
+        if not title_allows_ph and any(
+            re.search(pat, t) for pat in (
+                rf"\([^)]*{foreign_scoped}[^)]*\)",
+                rf"(?:[-–—|/]|,\s*)\s*{foreign_scoped}",
+                rf"\b{foreign_scoped}[- ]based\b",
+            )
+        ):
+            return False
+        for m in re.finditer(r"\blocation\s*:\s*([^\n.;]{1,80})", desc):
+            loc_line = m.group(1)
+            if re.search(foreign_name, loc_line) and not re.search(
+                r"\b(?:philippines|manila|cebu|davao|worldwide|global|anywhere|apac|asia|southeast asia)\b",
+                loc_line,
+            ):
+                return False
 
     # Unrestricted remote feeds can be considered only after geographic exclusions.
     if plat in DEDICATED_REMOTE_PLATFORMS:
@@ -136,6 +156,10 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
     # Since step 2 passed without being remote, any listing from these boards is foreign onsite!
     if plat in FOREIGN_BOARDS:
         return False
+
+    # 3b. Explicit Philippine location (including regional multi-country listings like "Singapore; Philippines")
+    if ph_location:
+        return True
 
     # 4. Foreign location check
     if any(re.search(pat, loc) for pat in FOREIGN_LOCATION_PATTERNS):

@@ -330,8 +330,17 @@ class TestSourcePageBoundaries(unittest.TestCase):
         with patch.object(c, "open_url", return_value=response({"result": {"projects": [], "total_count": 50}})):
             jobs = c.fetch("react")
         self.assertEqual(jobs, [])
-        self.assertIn("empty continuation page", c.last_error)
+        self.assertEqual(c.last_error, "")
+        self.assertIn("provider end", c.coverage_warning)
         self.assertFalse(c.has_more)
+
+        c0 = FreelancerConnector()
+        c0.query_state = {"window_start": start.date().isoformat(), "query": "react", "offset": 0}
+        with patch.object(c0, "open_url", return_value=response({"result": {"projects": [], "total_count": 50}})):
+            jobs0 = c0.fetch("react")
+        self.assertEqual(jobs0, [])
+        self.assertIn("empty continuation page", c0.last_error)
+        self.assertFalse(c0.has_more)
 
     def test_freelancer_fetches_past_previous_offset_cap(self):
         c = FreelancerConnector()

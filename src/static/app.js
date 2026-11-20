@@ -3900,6 +3900,7 @@ const MONITORED_BOARDS = [
   { key: 'SmartRecruiters', label: 'SmartRecruiters', domain: 'api.smartrecruiters.com', type: 'Employer API' },
   { key: 'Greenhouse', label: 'Greenhouse Direct', domain: 'boards-api.greenhouse.io', type: 'Employer API (PH/Remote)' },
   { key: 'Ashby', label: 'Ashby Direct', domain: 'api.ashbyhq.com', type: 'Global Remote ATS' },
+  { key: 'Workable', label: 'Workable PH Direct', domain: 'apply.workable.com', type: 'PH Employer ATS' },
   { key: 'Talent.com PH', label: 'Talent.com PH', domain: 'ph.talent.com', type: 'PH Job Aggregator' },
   ...['OnlineJobs.ph', 'Freelancer', 'Indeed', 'JobStreet'].map(source => ({key: `${source} (Video Editor)`, label: `${source} - Video Editor`, domain: source, type: 'Basic CapCut / 7 days'})),
   { key: 'JobStreet', label: 'JobStreet PH', domain: 'jobstreet.com.ph', type: 'HTML/Live' },
@@ -3925,7 +3926,8 @@ const MONITORED_BOARDS = [
   { key: 'Working Nomads', label: 'Working Nomads', domain: 'workingnomads.com', type: 'Global Remote API' },
   { key: 'DailyRemote', label: 'DailyRemote', domain: 'dailyremote.com', type: 'Worldwide Remote' },
   { key: 'Real Work From Anywhere', label: 'Real Work From Anywhere', domain: 'realworkfromanywhere.com', type: '100% Worldwide' },
-  { key: 'Y Combinator', label: 'Y Combinator', domain: 'workatastartup.com', type: 'YC Startup Remote' }
+  { key: 'Y Combinator', label: 'Y Combinator', domain: 'workatastartup.com', type: 'YC Startup Remote' },
+  { key: 'Web3.career', label: 'Web3.career', domain: 'web3.career', type: 'Global Remote Tech' }
 ];
 
 let telemetryTimer = null;

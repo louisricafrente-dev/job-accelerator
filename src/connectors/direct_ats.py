@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import html
+import time
 from urllib.parse import urlsplit
 
 from curl_cffi import requests
@@ -46,12 +47,7 @@ class _DirectATSConnector(BaseConnector):
         job.experience_level = classify_experience_level(job.title, job.description)
         return job
 
-    def fetch(self, query="", location=""):
-        self.last_error = ""
-        self.coverage_warning = ""
-        self.last_route = "DIRECT"
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            results = list(pool.map(self._company_jobs, self.COMPANIES))
+    def _finalize_results(self, results):
         self.last_raw_count = sum(raw_count or 0 for _, raw_count, _ in results)
         warnings = [warning for _, _, warning in results if warning]
         if results and all(raw_count is None for _, raw_count, _ in results):
@@ -59,6 +55,14 @@ class _DirectATSConnector(BaseConnector):
         elif warnings:
             self.coverage_warning = "Coverage limited: " + "; ".join(warnings)
         return [job for jobs, _, _ in results for job in jobs]
+
+    def fetch(self, query="", location=""):
+        self.last_error = ""
+        self.coverage_warning = ""
+        self.last_route = "DIRECT"
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(self._company_jobs, self.COMPANIES))
+        return self._finalize_results(results)
 
 
 class GreenhouseConnector(_DirectATSConnector):
@@ -128,7 +132,6 @@ class GreenhouseConnector(_DirectATSConnector):
         warning = f"{company}: " + ", ".join(warnings) if warnings else ""
         return jobs, raw_count, warning
 
-
 class AshbyConnector(_DirectATSConnector):
     """Official Ashby public Job Board API for worldwide/APAC remote tech companies."""
 
@@ -187,6 +190,71 @@ class AshbyConnector(_DirectATSConnector):
                         loc = "Remote"
                     desc = str(row.get("descriptionPlain") or row.get("descriptionHtml") or "").strip()
                     job = self._build_job(title, comp, loc, url, published, desc)
+                    if job:
+                        jobs.append(job)
+        except (RequestException, ValueError, KeyError, TypeError, AttributeError) as error:
+            warnings.append(f"listing fetch failed ({error})")
+        warning = f"{company}: " + ", ".join(warnings) if warnings else ""
+        return jobs, raw_count, warning
+
+class WorkableConnector(_DirectATSConnector):
+    """Official Workable public widget API for verified Philippine employers."""
+
+    platform = "Workable"
+    COMPANIES = ("isupport-worldwide", "angkas")
+    DISPLAY_NAMES = {
+        "isupport-worldwide": "iSupport Worldwide",
+        "angkas": "Angkas",
+    }
+    WIDGET_URL = "https://apply.workable.com/api/v1/widget/accounts/{company}"
+
+    def fetch(self, query="", location=""):
+        self.last_error = ""
+        self.coverage_warning = ""
+        self.last_route = "DIRECT"
+        results = []
+        for idx, company in enumerate(self.COMPANIES):
+            if idx and self.db_path:
+                time.sleep(0.5)
+            results.append(self._company_jobs(company))
+        return self._finalize_results(results)
+
+    def _company_jobs(self, company):
+        widget_url = self.WIDGET_URL.format(company=company)
+        jobs = []
+        raw_count = None
+        warnings = []
+        try:
+            with requests.Session(trust_env=False) as session:
+                page = self._read_json(session, widget_url)
+                rows = page.get("jobs")
+                if not isinstance(rows, list):
+                    raise ValueError("invalid jobs list")
+                raw_count = len(rows)
+                comp = self.DISPLAY_NAMES.get(company, company.title())
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    title = str(row.get("title") or "").strip()
+                    published = str(row.get("published_on") or "").strip()
+                    url = str(row.get("url") or row.get("shortlink") or "").strip()
+                    host = urlsplit(url)
+                    if not title or not self.accepts_date(published) or host.scheme != "https" or not host.netloc:
+                        continue
+                    loc_parts = [
+                        str(part).strip()
+                        for part in (row.get("city"), row.get("state"), row.get("country"))
+                        if str(part or "").strip()
+                    ]
+                    loc = ", ".join(loc_parts) or "Philippines"
+                    if row.get("telecommuting") and "remote" not in loc.lower():
+                        loc = f"{loc} (Remote)"
+                    desc = " | ".join(
+                        str(part).strip()
+                        for part in (row.get("department"), row.get("employment_type"), row.get("description"))
+                        if str(part or "").strip()
+                    )
+                    job = self._build_job(title, comp, loc, url, published, desc, allow_va_training=False)
                     if job:
                         jobs.append(job)
         except (RequestException, ValueError, KeyError, TypeError, AttributeError) as error:

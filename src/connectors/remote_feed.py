@@ -241,6 +241,7 @@ class HimalayasConnector(BaseConnector):
     is_feed = True
     revision = 3
     checkpointed_feed = True
+    query_delay_seconds = (2.0, 3.5)
 
     def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
         self.last_error = ""
@@ -420,7 +421,11 @@ class FreelancerConnector(BaseConnector):
                 total = payload.get("total_count")
                 more = offset + len(items) < total if isinstance(total, int) else len(items) == 25
                 if more and not items:
-                    raise RuntimeError("Source returned an empty continuation page; progress retained")
+                    if offset > 0:
+                        more = False
+                        self.coverage_warning = "Coverage limited: Freelancer reported more projects than returned; stopped at provider end"
+                    else:
+                        raise RuntimeError("Source returned an empty continuation page; progress retained")
                 self.finish_page(state, [str(item.get("id") or item.get("seo_url") or "") for item in items],
                                  [item.get("submitdate") for item in items], more)
                 state["offset"] = offset + len(items) if self.has_more else 0
@@ -434,7 +439,7 @@ class UpworkConnector(BaseConnector):
     tier = 2
     is_feed = True
     revision = 3
-    coverage_limit = "Coverage limited: once-daily Upwork/flconsole can return only the last 30 minutes (up to 50 jobs), not full dynamic-window backfill"
+    coverage_limit = "Coverage limited: once-daily Upwork/flconsole can return only the last 30 minutes (up to 30 jobs), not full dynamic-window backfill"
 
     def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
         self.last_error = ""
@@ -449,7 +454,7 @@ class UpworkConnector(BaseConnector):
             if self.db_path:
                 self.last_route = "FLCONSOLE"
             from src.connectors.upwork_flconsole import fetch_jobs
-            return fetch_jobs(self, limit=50) if self.db_path else fetch_jobs(self)
+            return fetch_jobs(self, limit=30)
         if not feed_url:
             self.last_error = "Configuration required: Upwork retired public RSS; configure UPWORK_FEED_URL with an authorized feed"
             return []

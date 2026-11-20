@@ -7,7 +7,7 @@ from src.classifier import classify_experience_level, classify_role, is_relevant
 from src.models import Job, is_today_or_yesterday
 
 ENDPOINT = "https://mcp.lite.flconsole.com/mcp"
-QUERY = "(react OR kotlin OR php) AND (developer OR development)"
+QUERY = "(react OR kotlin OR php OR android OR nextjs OR javascript OR fullstack OR mobile) AND (developer OR engineer OR development)"
 
 
 def rpc(name, arguments):
@@ -31,6 +31,7 @@ def rpc(name, arguments):
 
 def fetch_jobs(connector, limit=30):
     connector.last_route = "FLCONSOLE"
+    limit = min(30, max(1, int(limit)))
     try:
         data = rpc("find_jobs", {"filters": {"schema_version": 1, "base": {"q": QUERY}},
                                  "lookback_minutes": 30, "limit": limit})

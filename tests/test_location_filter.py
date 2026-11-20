@@ -82,15 +82,35 @@ class TestLocationFilter(unittest.TestCase):
             ("Santa Rosa, CA", "Ashby", ""),
             ("Remote, AMER", "Ashby", ""),
             ("Ukraine Anywhere", "Greenhouse", ""),
+            ("Mumbai, Delhi / NCR, India", "LinkedIn", ""),
+            ("Singapore", "Greenhouse", ""),
+            ("Remote (Worldwide)", "Web3.career", "Location: London/Hybrid."),
+            ("Remote (Worldwide)", "Web3.career", "Location: New York, NY (Hybrid)."),
         ]:
             with self.subTest(location=location, description=description):
                 self.assertFalse(is_work_authorized_location(location, "Developer", platform, description))
+        for location, title, platform, description in [
+            ("Remote (Worldwide)", "Software Engineer - RUST (London based)", "Web3.career", "Location: London/Hybrid."),
+            ("Remote (Worldwide)", "Software Engineer (Golang) - London", "Web3.career", ""),
+            ("Remote (Worldwide)", "Incident Operations Commander - EMEA", "Web3.career", ""),
+        ]:
+            with self.subTest(title=title):
+                self.assertFalse(is_work_authorized_location(location, title, platform, description))
+        for location, title, platform in [
+            ("Remote (Worldwide)", "Web Developer (US Client)", "OnlineJobs.ph"),
+            ("Manila, Philippines", "Software Engineer - US Shift", "JobStreet"),
+        ]:
+            with self.subTest(allowed_title=title):
+                self.assertTrue(is_work_authorized_location(location, title, platform))
         for location, platform in [
             ("Philippines (Remote)", "LinkedIn"),
             ("Angeles, Pampanga", "JobStreet"),
             ("San Mateo, Rizal", "Indeed"),
             ("Santa Rosa, Laguna", "Indeed"),
             ("Manila, Philippines", "Greenhouse"),
+            ("Indonesia; Malaysia; Philippines; Singapore; Taiwan", "Greenhouse"),
+            ("Bangkok, Thailand; India; Jakarta, Indonesia; Kuala Lumpur, Malaysia; Manila, Philippines", "Greenhouse"),
+            ("Singapore; Philippines", "LinkedIn"),
             ("Remote, Global", "Ashby"),
             ("APAC - Remote", "Greenhouse"),
         ]:

@@ -1,14 +1,23 @@
 import ast
 from datetime import datetime, timedelta
+import json
 from pathlib import Path
+import tempfile
+import threading
+import time
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
 
 import src.aggregator as aggregator_mod
-from src.connectors.direct_ats import AshbyConnector, GreenhouseConnector
+from src import execution_inbox as inbox
+from src.connectors.direct_ats import AshbyConnector, GreenhouseConnector, WorkableConnector
+from src.connectors.remote_feed import HimalayasConnector
 from src.connectors.smartrecruiters import COMPANIES as SR_COMPANIES
 from src.connectors.talent_ph import TalentPHConnector
+from src.connectors.web3_career import Web3CareerConnector
+from src.database import init_db
+from src.inbox_worker import run_local
 from src.models import MANILA
 
 
@@ -300,7 +309,9 @@ class DirectATSAndTalentPHTests(TestCase):
         }
         self.assertIn("GreenhouseConnector", call_names)
         self.assertIn("AshbyConnector", call_names)
+        self.assertIn("WorkableConnector", call_names)
         self.assertIn("TalentPHConnector", call_names)
+        self.assertIn("Web3CareerConnector", call_names)
         self.assertIn("SmartRecruitersConnector", call_names)
         self.assertIn("WellfoundConnector", call_names)
         self.assertNotIn("ContraConnector", call_names)
@@ -309,5 +320,191 @@ class DirectATSAndTalentPHTests(TestCase):
 
         if not getattr(aggregator_mod.get_default_connectors, "_mock_name", None):
             platforms = {c.platform for c in aggregator_mod.get_default_connectors()}
-            self.assertTrue({"Greenhouse", "Ashby", "Talent.com PH", "SmartRecruiters", "Wellfound"}.issubset(platforms))
+            self.assertTrue({"Greenhouse", "Ashby", "Workable", "Talent.com PH", "Web3.career", "SmartRecruiters", "Wellfound"}.issubset(platforms))
             self.assertTrue({"ZipRecruiter", "Contra", "FlexJobs"}.isdisjoint(platforms))
+
+    def test_workable_parses_widget_and_handles_partial_failure(self):
+        today = datetime.now(MANILA).date()
+        today_iso = today.isoformat()
+        old_iso = (today - timedelta(days=10)).isoformat()
+
+        payload = {
+            "jobs": [
+                {
+                    "title": "Junior QA Automation Engineer",
+                    "published_on": today_iso,
+                    "url": "https://apply.workable.com/j/ABC123",
+                    "city": "Pasig",
+                    "state": "NCR",
+                    "country": "Philippines",
+                    "telecommuting": True,
+                    "department": "Engineering",
+                    "employment_type": "Full-time",
+                    "description": "Playwright testing in Manila.",
+                },
+                {
+                    "title": "Accounting Associate",
+                    "published_on": today_iso,
+                    "url": "https://apply.workable.com/j/ACC1",
+                    "city": "Pasig",
+                    "country": "Philippines",
+                    "telecommuting": False,
+                },
+                {
+                    "title": "Old Software Developer",
+                    "published_on": old_iso,
+                    "url": "https://apply.workable.com/j/OLD1",
+                    "city": "Makati",
+                    "country": "Philippines",
+                    "telecommuting": False,
+                },
+            ]
+        }
+
+        def read_json(_, url):
+            if "/unavailable" in url:
+                raise ValueError("HTTP 429")
+            return payload
+
+        board = WorkableConnector()
+        with patch.object(board, "COMPANIES", ("isupport-worldwide", "unavailable")), \
+                patch.object(board, "_read_json", side_effect=read_json):
+            jobs = board.fetch()
+
+        self.assertEqual([j.job_url for j in jobs], ["https://apply.workable.com/j/ABC123"])
+        self.assertEqual(jobs[0].company, "iSupport Worldwide")
+        self.assertEqual(jobs[0].platform, "Workable")
+        self.assertIn("Remote", jobs[0].location)
+        self.assertEqual(board.last_error, "")
+        self.assertIn("unavailable", board.coverage_warning)
+
+        err_board = WorkableConnector()
+        with patch.object(err_board, "COMPANIES", ("unavailable",)), \
+                patch.object(err_board, "_read_json", side_effect=ValueError("HTTP 429")):
+            self.assertEqual(err_board.fetch(), [])
+        self.assertIn("HTTP 429", err_board.last_error)
+
+    def test_web3_career_pairs_rows_and_jsonld_and_filters_regions(self):
+        today = datetime.now(MANILA).date()
+        today_dt = f"{today.isoformat()} 12:00:00 +0000"
+        old_dt = f"{(today - timedelta(days=10)).isoformat()} 12:00:00 +0000"
+
+        ld_anywhere = {
+            "@context": "https://schema.org",
+            "@type": "JobPosting",
+            "title": "Junior Full Stack Engineer",
+            "datePosted": today_dt,
+            "description": "Build TypeScript and React Web3 tools.",
+            "hiringOrganization": {"@type": "Organization", "name": "Protocol Labs"},
+            "jobLocationType": "TELECOMMUTE",
+            "applicantLocationRequirements": {"@type": "Country", "name": "Anywhere"},
+            "baseSalary": {"@type": "MonetaryAmount", "currency": "USD", "value": {"@type": "QuantitativeValue", "minValue": 60000, "maxValue": 90000, "unitText": "YEAR"}},
+        }
+        ld_us_only = {
+            "@context": "https://schema.org",
+            "@type": "JobPosting",
+            "title": "Backend Engineer",
+            "datePosted": today_dt,
+            "description": "US remote only.",
+            "hiringOrganization": {"@type": "Organization", "name": "US Startup"},
+            "jobLocationType": "TELECOMMUTE",
+            "applicantLocationRequirements": {"@type": "Country", "name": "United States"},
+        }
+        ld_old = {
+            "@context": "https://schema.org",
+            "@type": "JobPosting",
+            "title": "Software Developer",
+            "datePosted": old_dt,
+            "description": "Old listing.",
+            "hiringOrganization": {"@type": "Organization", "name": "Old Co"},
+            "jobLocationType": "TELECOMMUTE",
+            "applicantLocationRequirements": {"@type": "Country", "name": "Anywhere"},
+        }
+
+        html = f"""
+        <html><head>
+          <script type="application/ld+json">{json.dumps(ld_anywhere)}</script>
+          <script type="application/ld+json">{json.dumps(ld_us_only)}</script>
+          <script type="application/ld+json">{json.dumps(ld_old)}</script>
+        </head><body><table>
+          <tr data-jobid="1001"><td><a href="/junior-full-stack-engineer-protocol-labs/1001"><h2>Junior Full Stack Engineer</h2></a></td></tr>
+          <tr data-jobid="1002"><td><a href="/backend-engineer-us-startup/1002"><h2>Backend Engineer</h2></a></td></tr>
+          <tr data-jobid="1003"><td><a href="/software-developer-old-co/1003"><h2>Software Developer</h2></a></td></tr>
+        </table></body></html>
+        """
+
+        def fake_get(url, **kwargs):
+            if "page=2" in url:
+                raise RuntimeError("HTTP 503")
+            return MagicMock(status_code=200, text=html)
+
+        board = Web3CareerConnector()
+        with patch.object(board, "get_url", side_effect=fake_get):
+            jobs = board.fetch()
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].job_url, "https://web3.career/junior-full-stack-engineer-protocol-labs/1001")
+        self.assertEqual(jobs[0].company, "Protocol Labs")
+        self.assertEqual(jobs[0].salary, "USD 60,000 - 90,000/year")
+        self.assertEqual(jobs[0].platform, "Web3.career")
+        self.assertEqual(board.last_error, "")
+        self.assertIn("page 2", board.coverage_warning)
+
+    def test_himalayas_has_polite_query_delay_configured(self):
+        delay = HimalayasConnector.query_delay_seconds
+        self.assertIsInstance(delay, tuple)
+        self.assertEqual(len(delay), 2)
+        self.assertGreaterEqual(delay[0], 2.0)
+
+    def test_run_local_auto_recovers_recent_cloud_partial_with_deferred_boards_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db = str(Path(temp) / "recover.db")
+            init_db(db)
+            cmd = inbox.enqueue(db, ["developer"], automatic=True, now=time.time() - 100)
+            claimed_cloud = inbox.claim(db, "cloud", "github")
+            self.assertIsNotNone(claimed_cloud)
+            inbox.update_owned(
+                db,
+                claimed_cloud,
+                result={
+                    "status": "partial",
+                    "added": 1,
+                    "skipped": 0,
+                    "total_fetched": 1,
+                    "platforms": {"Indeed": 1},
+                    "progress": {
+                        "has_more": False,
+                        "unfinished": True,
+                        "deferred_boards": [{"platform": "Glassdoor", "error": "403", "retry_at": time.time() + 3600}],
+                    },
+                },
+            )
+
+            stop = threading.Event()
+            claimed_runs = []
+
+            def fake_run_claimed(db_arg, claimed_arg, agg_arg, key=inbox.KEY):
+                claimed_runs.append(claimed_arg)
+                inbox.update_owned(
+                    db_arg,
+                    claimed_arg,
+                    result={
+                        "status": "ok",
+                        "added": 2,
+                        "skipped": 0,
+                        "total_fetched": 2,
+                        "platforms": {"Glassdoor": 2},
+                        "progress": {"has_more": False, "unfinished": False, "deferred_boards": []},
+                    },
+                )
+                stop.set()
+
+            with patch("src.inbox_worker.run_claimed", side_effect=fake_run_claimed), \
+                    patch("src.inbox_worker.inbox.POLL_SECONDS", 0):
+                run_local(db, MagicMock(), stop=stop)
+
+            self.assertEqual(len(claimed_runs), 1)
+            self.assertTrue(claimed_runs[0]["resume"])
+            self.assertFalse(claimed_runs[0]["restart"])
+            self.assertEqual(claimed_runs[0]["executor"], "local")
+            self.assertEqual(inbox.read(db)["status"], "complete")

@@ -131,6 +131,7 @@ def run_local(db_path, aggregator, stop=None, key=inbox.KEY):
     worker_id = socket.gethostname() + "-" + uuid.uuid4().hex[:8]
     presence_key = key + ":local"
     presence_saved = False
+    recovered_cycles = set()
     try:
         while not stop.is_set():
             try:
@@ -142,6 +143,26 @@ def run_local(db_path, aggregator, stop=None, key=inbox.KEY):
                     claimed = inbox.claim(db_path, "local", worker_id, key=key)
                     if claimed:
                         run_claimed(db_path, claimed, aggregator, key)
+                elif (
+                    command.get("status") == "partial"
+                    and command.get("executor") == "cloud"
+                    and (command.get("updated_at") or 0) >= time.time() - 6 * 3600
+                    and bool(((command.get("result") or {}).get("progress") or {}).get("deferred_boards"))
+                ):
+                    cycle_key = command.get("cycle_id") or command.get("id")
+                    if cycle_key and cycle_key not in recovered_cycles:
+                        recovered_cycles.add(cycle_key)
+                        inbox.enqueue(
+                            db_path,
+                            queries=command.get("queries"),
+                            key=key,
+                            automatic=bool(command.get("automatic")),
+                            resume=True,
+                            restart=False,
+                        )
+                        claimed = inbox.claim(db_path, "local", worker_id, key=key)
+                        if claimed:
+                            run_claimed(db_path, claimed, aggregator, key)
             except Exception:
                 logging.warning("Local worker operation failed; retrying in 60 seconds")
             stop.wait(inbox.POLL_SECONDS)

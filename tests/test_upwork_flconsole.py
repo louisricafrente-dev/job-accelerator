@@ -36,3 +36,12 @@ class UpworkFlconsoleTests(unittest.TestCase):
             connector = UpworkConnector()
             self.assertEqual(connector.fetch(), [])
         self.assertTrue(connector.last_error)
+
+    def test_clamps_limit_to_schema_maximum_thirty(self):
+        from src.connectors.upwork_flconsole import fetch_jobs
+        with patch.dict(os.environ, {"FLCONSOLE_MCP_TOKEN": "test"}), patch(
+                "src.connectors.upwork_flconsole.rpc", return_value={"jobs": []}) as rpc:
+            connector = UpworkConnector()
+            connector.last_error = ""
+            fetch_jobs(connector, limit=50)
+        self.assertEqual(rpc.call_args.args[1]["limit"], 30)

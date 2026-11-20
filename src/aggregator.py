@@ -28,8 +28,9 @@ from src.connectors.ph_jobs import (
 )
 from src.connectors.jobspy_adapter import JobSpyAdapter
 from src.connectors.smartrecruiters import SmartRecruitersConnector
-from src.connectors.direct_ats import GreenhouseConnector, AshbyConnector
+from src.connectors.direct_ats import GreenhouseConnector, AshbyConnector, WorkableConnector
 from src.connectors.talent_ph import TalentPHConnector
+from src.connectors.web3_career import Web3CareerConnector
 from src.database import insert_jobs, get_user_setting, set_user_setting, acquire_sync_lease, release_sync_lease
 from src.classifier import is_relevant_opportunity
 import time
@@ -70,6 +71,7 @@ def get_default_connectors() -> List[BaseConnector]:
         SmartRecruitersConnector(),
         GreenhouseConnector(),
         AshbyConnector(),
+        WorkableConnector(),
         TalentPHConnector(),
         # Tier 1 — Core PH & High-Yield Direct Client Boards
         JobSpyAdapter("LinkedIn", "linkedin", tier=1),
@@ -90,6 +92,7 @@ def get_default_connectors() -> List[BaseConnector]:
         DailyRemoteConnector(),
         RealWorkFromAnywhereConnector(),
         YCombinatorConnector(),
+        Web3CareerConnector(),
         # Tier 3 — Global Remote & Direct APIs (High Reliability)
         RemotiveConnector(),
         HimalayasConnector(),
