@@ -11,13 +11,13 @@ REMOTE_KEYWORDS = REMOTE_PATTERNS
 
 DEDICATED_REMOTE_PLATFORMS = {
     "remote ok", "we work remotely", "remotive", "himalayas", "jobicy", "arc",
-    "contra", "flexjobs", "upwork", "freelancer",
+    "upwork", "freelancer",
     "working nomads", "dailyremote", "real work from anywhere", "y combinator"
 }
 
 DEDICATED_PH_PLATFORMS = {
     "jobstreet", "onlinejobs.ph", "bossjob", "kalibrr",
-    "foundit.ph", "virtualstaff.ph", "philjobnet", "jobgether"
+    "foundit.ph", "virtualstaff.ph", "philjobnet", "jobgether", "talent.com ph"
 }
 
 FOREIGN_BOARDS = {
@@ -62,14 +62,14 @@ PH_LOCATION_PATTERNS = [
     r"\bintramuros\b", r"\bermita\b", r"\bmalate\b", r"\bbinondo\b", r"\bsampaloc\b",
     # Provinces & Regions
     r"\bcebu\b", r"\bmandaue\b", r"\blapu-lapu\b", r"\bdavao\b", r"\bclark\b",
-    r"\bangeles\b", r"\bpampanga\b", r"\bsan fernando\b", r"\bcavite\b",
+    r"(?<!los\s)\bangeles\b", r"\bpampanga\b", r"\bsan fernando\b", r"\bcavite\b",
     r"\bbacoor\b", r"\bimus\b", r"\bdasmarinas\b", r"\bdasmariñas\b",
-    r"\bgeneral trias\b", r"\bsilang\b", r"\blaguna\b", r"\bsanta rosa\b",
+    r"\bgeneral trias\b", r"\bsilang\b", r"\blaguna\b", r"\bsanta rosa\b(?!\s*,?\s*(?:ca\b|california))",
     r"\bsta\. rosa\b", r"\bbinan\b", r"\bbiñan\b", r"\bcalamba\b",
     r"\blos banos\b", r"\blos baños\b", r"\bsan pedro\b", r"\bcabuyao\b",
     r"\bbatangas\b", r"\blipa\b", r"\btanauan\b", r"\bsto\. tomas\b",
     r"\bsanto tomas\b", r"\brizal\b", r"\bantipolo\b", r"\bcainta\b",
-    r"\btaytay\b", r"\bangono\b", r"\bsan mateo\b", r"\bbulacan\b",
+    r"\btaytay\b", r"\bangono\b", r"\bsan mateo\b(?=\s*,?\s*(?:rizal|philippines|ph)\b)", r"\bbulacan\b",
     r"\bmalolos\b", r"\bmeycauayan\b", r"\bmarilao\b", r"\bsan jose del monte\b",
     r"\bbaguio\b", r"\bbenguet\b", r"\bbataan\b", r"\bmariveles\b",
     r"\bbalanga\b", r"\biloilo\b", r"\bbacolod\b", r"\bnegros\b",
@@ -89,9 +89,11 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
     plat = (platform or "").strip().lower()
     desc = (description or "").lower()
     foreign = FOREIGN_LOCATION_PATTERNS + [
-        r"\bu\.?s\.?\b", r"\bpoland\b", r"\bpolish\b", r"\bvancouver\b", r"\bcincinnati\b",
-        r"\beurope\b", r"\beu\b", r"\beea\b", r"\bemea\b", r"\bamericas\b",
-        r"\blatin america\b", r"\blatam\b", r"\bnew zealand\b", r"\bireland\b",
+        r"\bu\.?s\.?\b", r"\bamer\b", r"\bnorth america\b", r"\bcalifornia\b", r"\bsan francisco\b",
+        r"\bsan mateo\b", r"\blos angeles\b", r"\bnew york\b", r"\bseattle\b", r"\baustin\b",
+        r"\bboston\b", r"\bchicago\b", r"\bukraine\b", r"\bsweden\b", r"\bpoland\b", r"\bpolish\b",
+        r"\bvancouver\b", r"\bcincinnati\b", r"\beurope\b", r"\beu\b", r"\beea\b", r"\bemea\b",
+        r"\bamericas\b", r"\blatin america\b", r"\blatam\b", r"\bnew zealand\b", r"\bireland\b",
         r"\bspain\b", r"\bitaly\b", r"\bportugal\b", r"\bbrazil\b", r"\bmexico\b",
     ]
     # Remote work can still require residence or work authorization abroad.
@@ -107,7 +109,10 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
     if any(re.search(pattern, f"{loc}\n{t}\n{desc}") for pattern in restrictions):
         return False
     ph_location = any(re.search(pat, loc) for pat in PH_LOCATION_PATTERNS)
-    worldwide = bool(re.search(r"\b(?:worldwide|anywhere|global|apac|asia|asia[- ]pacific|southeast asia)\b", loc))
+    foreign_anywhere = bool(re.search(rf"(?:{foreign_name}\s+anywhere\b|\banywhere\s+(?:in|within)\s+(?:the\s+)?{foreign_name})", loc))
+    worldwide = bool(re.search(r"\b(?:worldwide|global|apac|asia|asia[- ]pacific|southeast asia)\b", loc)) or (
+        bool(re.search(r"\banywhere\b", loc)) and not foreign_anywhere
+    )
     if any(re.search(pat, loc) for pat in foreign) and not (ph_location or worldwide):
         return False
     remote_label = re.fullmatch(

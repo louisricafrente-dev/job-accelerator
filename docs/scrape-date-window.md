@@ -15,7 +15,9 @@ Date-boundary stopping is used only on verified publication-ordered routes. Unkn
 | LinkedIn | JobSpy15 per keyword page with offset; hours since yesterday Manila midnight, rounded up | Provider/library search ceiling approximately1000. A reached ceiling is reported limited; blocks remain errors. Library pagination may internally replay earlier filtered pages. |
 | Indeed | JobSpy35 per keyword page with offset and the same hours filter | Same provider ceiling; Indeed's indexed-date filter can differ from employer publication date, so final publication-date guard remains. |
 | Glassdoor | JobSpy35 per keyword page with offset and provider day rounding | Same ceiling/blocks; provider dates are day-granularity estimates. |
-| ZipRecruiter | JobSpy35 per feed page with offset and hours/day filter | HTML fallback uses days-filtered search but has no verified continuation; flagged limited. |
+| Greenhouse | Official Job Board API per configured PH/worldwide-remote employer; pre-filters title/location/date before detail HTML fetch | Full job description re-checked for country restrictions before ingestion; limited to configured company boards. |
+| Ashby | Official public posting API per configured global/APAC remote employer | Limited to configured company boards; strict location and remote country-restriction filtering applied. |
+| Talent.com PH | `ph.talent.com` Philippines search across core developer queries with dynamic date param and up to 2 pages/query | Relies on HTML card `<time>` timestamps and bounded query list. |
 | JobStreet | Primary catalogue100/page, ListedDate and daterange2 on every request | Provider-relative2days can include older calendar-boundary rows; final Manila date guard remains. Legacy keyword helper is bounded and now reports truncation; production uses full paged catalogue. Timestamp conversion retains yesterday midnight when source is UTC. |
 | Kalibrr |50/page, verified activation_date descending, checkpoint until all-old page/provider end | Missing dates or broken order are partial/error, not successful boundary evidence. |
 | OnlineJobs.ph |30-row pages via actual `/jobseekers/jobsearch/<offset>` next links; per-keyword checkpoints | Verified date order required to stop at old page. Removed ineffective page= and arbitrary two-request stop. |
@@ -27,9 +29,7 @@ Date-boundary stopping is used only on verified publication-ordered routes. Unkn
 | Remote OK | Read the provider's recent API feed | No verified date-range/history pagination; explicit provider-feed-only coverage. |
 | We Work Remotely | All five configured category RSS feeds | Feed snapshots can include years-old rows and do not establish the entire jobsite window; explicit limited coverage. |
 | Arc | Public initial listing data | No verified date-ordered continuation from this integration; explicit limited coverage. |
-| Wellfound | Four public role landing pages | Ranking/pagination not verified; public access may be blocked; explicit limited coverage. |
-| Contra | Public anonymous page when usable | Anonymous probe exposed no opportunity feed; authenticated account/route needed; explicit limited coverage. |
-| FlexJobs | Existing authorized search/custom-feed path | Public probe403, no complete publication-date/pagination route verified. No undated full sitemap fallback. |
+| Wellfound | PH location/role pages and remote tech role landing pages via `curl_cffi` | Ranking/pagination not verified; cloud datacenter challenges surface as retryable errors instead of silent empty success; explicit limited coverage. |
 | Upwork | Existing once/day flconsole request, last30min, limit50 | Provider cannot backfill two days through this interface. One request per day unchanged;50 leaves headroom under100/hour provider quota, now explicitly limited. |
 
 The configured19 sources remain enabled. Completing configured source requests is not a claim that every jobsite's full inventory has been enumerated. Relative provider hours/days may overfetch around midnight; invalid/future/old rows remain excluded. A fresh-window source with thousands of real rows requires more small pages; no arbitrary total cap disguises that volume. Existing two-hour execution budget/checkpoints remain, so an unfinished real cycle can require resume.

@@ -11,8 +11,6 @@ from src.connectors.remote_feed import (
     FreelancerConnector,
     UpworkConnector,
     WellfoundConnector,
-    ContraConnector,
-    FlexJobsConnector,
     WorkingNomadsConnector,
     DailyRemoteConnector,
     RealWorkFromAnywhereConnector,
@@ -30,6 +28,8 @@ from src.connectors.ph_jobs import (
 )
 from src.connectors.jobspy_adapter import JobSpyAdapter
 from src.connectors.smartrecruiters import SmartRecruitersConnector
+from src.connectors.direct_ats import GreenhouseConnector, AshbyConnector
+from src.connectors.talent_ph import TalentPHConnector
 from src.database import insert_jobs, get_user_setting, set_user_setting, acquire_sync_lease, release_sync_lease
 from src.classifier import is_relevant_opportunity
 import time
@@ -68,11 +68,13 @@ DEFAULT_QUERIES = [
 def get_default_connectors() -> List[BaseConnector]:
     return [
         SmartRecruitersConnector(),
+        GreenhouseConnector(),
+        AshbyConnector(),
+        TalentPHConnector(),
         # Tier 1 — Core PH & High-Yield Direct Client Boards
         JobSpyAdapter("LinkedIn", "linkedin", tier=1),
         JobSpyAdapter("Indeed", "indeed", tier=1),
         JobSpyAdapter("Glassdoor", "glassdoor", tier=1),
-        JobSpyAdapter("ZipRecruiter", "zip_recruiter", tier=2),
         JobStreetCatalogConnector(),
         OnlineJobsConnector(),
         KalibrrConnector(),
@@ -84,8 +86,6 @@ def get_default_connectors() -> List[BaseConnector]:
         BossjobConnector(),
         PhilJobNetConnector(),
         WellfoundConnector(),
-        ContraConnector(),
-        FlexJobsConnector(),
         WorkingNomadsConnector(),
         DailyRemoteConnector(),
         RealWorkFromAnywhereConnector(),

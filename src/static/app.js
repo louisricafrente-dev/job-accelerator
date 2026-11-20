@@ -3898,6 +3898,9 @@ function safeJobUrl(value) {
 // --------------------------------------------------------------------------
 const MONITORED_BOARDS = [
   { key: 'SmartRecruiters', label: 'SmartRecruiters', domain: 'api.smartrecruiters.com', type: 'Employer API' },
+  { key: 'Greenhouse', label: 'Greenhouse Direct', domain: 'boards-api.greenhouse.io', type: 'Employer API (PH/Remote)' },
+  { key: 'Ashby', label: 'Ashby Direct', domain: 'api.ashbyhq.com', type: 'Global Remote ATS' },
+  { key: 'Talent.com PH', label: 'Talent.com PH', domain: 'ph.talent.com', type: 'PH Job Aggregator' },
   ...['OnlineJobs.ph', 'Freelancer', 'Indeed', 'JobStreet'].map(source => ({key: `${source} (Video Editor)`, label: `${source} - Video Editor`, domain: source, type: 'Basic CapCut / 7 days'})),
   { key: 'JobStreet', label: 'JobStreet PH', domain: 'jobstreet.com.ph', type: 'HTML/Live' },
   { key: 'OnlineJobs.ph', label: 'OnlineJobs.ph', domain: 'onlinejobs.ph', type: 'Direct Client PH' },
@@ -3912,12 +3915,9 @@ const MONITORED_BOARDS = [
   { key: 'We Work Remotely', label: 'We Work Remotely', domain: 'weworkremotely.com', type: 'RSS/Atom' },
   { key: 'Arc', label: 'Arc Dev', domain: 'arc.dev', type: 'Global Remote' },
   { key: 'Jobicy', label: 'Jobicy', domain: 'jobicy.com/api', type: 'Remote jobs API' },
-  { key: 'ZipRecruiter', label: 'ZipRecruiter', domain: 'ziprecruiter.com', type: 'JobSpy' },
   { key: 'Freelancer', label: 'Freelancer', domain: 'freelancer.com', type: 'Direct Contract' },
   { key: 'Upwork', label: 'Upwork', domain: 'upwork.com', type: 'Direct Contract' },
   { key: 'Wellfound', label: 'Wellfound', domain: 'wellfound.com', type: 'Tech Startups' },
-  { key: 'Contra', label: 'Contra', domain: 'contra.com', type: 'Direct Freelance' },
-  { key: 'FlexJobs', label: 'FlexJobs', domain: 'flexjobs.com', type: 'Screened Remote' },
   { key: 'Foundit.ph', label: 'Foundit PH', domain: 'foundit.com.ph', type: 'PH Job Portal' },
   { key: 'VirtualStaff.ph', label: 'VirtualStaff.ph', domain: 'virtualstaff.ph', type: 'Direct Client PH' },
   { key: 'Jobgether', label: 'Jobgether PH', domain: 'jobgether.com', type: 'PH Remote Feed' },

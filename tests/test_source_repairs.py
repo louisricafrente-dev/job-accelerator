@@ -80,29 +80,34 @@ class TestSourceRepairs(unittest.TestCase):
         self.assertEqual(fetch.call_count, 2)
 
     def test_fallbacks_do_not_invent_publication_dates(self):
-        from src.connectors.jobspy_adapter import JobSpyAdapter
-        from src.connectors.remote_feed import FlexJobsConnector, ContraConnector
-        from src.models import is_within_15_days
-        html = '<script type="application/ld+json">' + json.dumps({'itemListElement': [
-            {'name': 'Junior Web Developer', 'url': 'https://www.ziprecruiter.com/c/example/Job/dev'}]}) + '</script>'
-        with patch.object(JobSpyAdapter, 'get_url', return_value=MagicMock(status_code=200, text=html)):
-            jobs = JobSpyAdapter('ZipRecruiter', 'zip_recruiter', 2)._fetch_ziprecruiter_ldjson()
-        self.assertEqual(jobs, [], 'Undated search cards cannot establish the publication window')
-        FlexJobsConnector._cached_jobs = None
-        with patch.object(FlexJobsConnector, 'get_url', return_value=MagicMock(status_code=403)) as fetch:
-            connector = FlexJobsConnector()
+        from src.connectors.remote_feed import WellfoundConnector
+        WellfoundConnector._cached_jobs = None
+        WellfoundConnector._last_fetch = 0
+        apollo_state = {
+            'data': {
+                'JobListingSearchResult:1': {
+                    'id': '1',
+                    'title': 'Junior Web Developer',
+                    'slug': 'dev',
+                    'remote': True,
+                    'locationNames': ['Philippines'],
+                }
+            }
+        }
+        html = f'<script id="__NEXT_DATA__">{json.dumps({"props": {"pageProps": {"apolloState": apollo_state}}})}</script>'
+        connector = WellfoundConnector()
+        with patch.object(connector, 'ROLES', ['location/philippines']), \
+                patch.object(connector, 'get_url', return_value=MagicMock(status_code=200, text=html)):
+            jobs = connector.fetch()
+        self.assertEqual(jobs, [], 'Undated Wellfound cards cannot establish the publication window')
+        self.assertEqual(connector.last_error, '')
+
+        WellfoundConnector._cached_jobs = None
+        WellfoundConnector._last_fetch = 0
+        with patch.object(connector, 'ROLES', ['location/philippines']), \
+                patch.object(connector, 'get_url', return_value=MagicMock(status_code=200, text='<html>challenge</html>')):
             jobs = connector.fetch()
         self.assertEqual(jobs, [])
-        self.assertEqual(fetch.call_count, 1, 'Do not download an undated full sitemap after a block')
-        self.assertIn('403', connector.last_error)
-        FlexJobsConnector._cached_jobs = None
-        ContraConnector._cached_jobs = None
-        context = {'publicAppConfiguration': {'relayRecordMap': {'1': {
-            '__typename': 'Opportunity', 'title': 'Junior Web Developer', 'slug': 'dev', 'datePosted': '2020-01-01'}}}}
-        response = MagicMock()
-        response.__enter__.return_value.read.return_value = ('<script id="vike_pageContext">' + json.dumps(context) + '</script>').encode()
-        with patch.object(ContraConnector, 'open_url', return_value=response):
-            jobs = ContraConnector().fetch()
-        self.assertEqual(jobs[0].date_posted, '2020-01-01')
-        self.assertFalse(is_within_15_days(jobs[0].date_posted))
-        ContraConnector._cached_jobs = None
+        self.assertIn('__NEXT_DATA__', connector.last_error)
+        WellfoundConnector._cached_jobs = None
+        WellfoundConnector._last_fetch = 0

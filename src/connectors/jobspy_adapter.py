@@ -46,50 +46,6 @@ class JobSpyAdapter(BaseConnector):
         self.last_fetch_mode = f"tail OR group ({len(queries)})"
         return jobs
 
-    def _fetch_ziprecruiter_ldjson(self) -> List[Job]:
-        from bs4 import BeautifulSoup
-        jobs: List[Job] = []
-        seen = set()
-        for term in (
-            "Remote Software Developer",
-            "Remote Web Developer",
-        ):
-            from urllib.parse import urlencode
-            import math
-            url = "https://www.ziprecruiter.com/jobs-search?" + urlencode({
-                "search": term, "location": "Remote", "days": max(1, math.ceil(self.request_hours() / 24))})
-            resp = self.get_url(url, impersonate="safari17_0", timeout=12)
-            if resp.status_code == 200 and resp.text:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for sc in soup.find_all("script", {"type": "application/ld+json"}):
-                    if not sc.string or "itemListElement" not in sc.string:
-                        continue
-                    data = json.loads(sc.string)
-                    for item in data.get("itemListElement", []):
-                        title = str(item.get("name") or "").strip()
-                        job_url = str(item.get("url") or "").strip()
-                        if (not title or not job_url or job_url in seen
-                                or not self.accepts_date(item.get("datePosted", ""))
-                                or not is_relevant_opportunity(title, "")):
-                            continue
-                        seen.add(job_url)
-                        comp = "Direct Employer"
-                        if "/c/" in job_url and "/Job/" in job_url:
-                            comp = job_url.split("/c/", 1)[1].split("/Job/", 1)[0].replace("-", " ").strip() or comp
-                        jobs.append(Job(
-                            title=title,
-                            company=comp,
-                            location=(item.get("jobLocation") if isinstance(item.get("jobLocation"), str) else "Remote (location unverified)"),
-                            platform=self.platform,
-                            tier=self.tier,
-                            job_url=job_url,
-                            salary="",
-                            role_category=classify_role(title),
-                            experience_level=classify_experience_level(title),
-                            date_posted=item.get("datePosted", "")
-                        ))
-        return jobs
-
     def _fetch_linkedin_guest_fallback(self, query: str, location: str, offset: int, wanted: int, state: dict):
         from bs4 import BeautifulSoup
         from urllib.parse import urlencode
@@ -176,7 +132,7 @@ class JobSpyAdapter(BaseConnector):
             jobspy = importlib.import_module("jobspy")
             scrape_jobs = getattr(jobspy, "scrape_jobs")
             query = query.strip() or "software developer"
-            search_loc = "Remote" if self.site_name in ("glassdoor", "zip_recruiter") and location.lower() == "philippines" else location
+            search_loc = "Remote" if self.site_name == "glassdoor" and location.lower() == "philippines" else location
             country = "philippines" if self.site_name == "indeed" else ("usa" if self.site_name == "glassdoor" else None)
             wanted = 10 if self.site_name == "linkedin" else 35
             if group_size > 1:
@@ -190,8 +146,7 @@ class JobSpyAdapter(BaseConnector):
                         return fallback_jobs
             def send(proxy):
                 errors_log = _JobSpyErrors()
-                legacy_name = {"linkedin": "LinkedIn", "indeed": "Indeed", "glassdoor": "Glassdoor",
-                               "zip_recruiter": "ZipRecruiter"}[self.site_name]
+                legacy_name = {"linkedin": "LinkedIn", "indeed": "Indeed", "glassdoor": "Glassdoor"}[self.site_name]
                 scraper_loggers = [logging.getLogger("JobSpy:" + legacy_name),
                                    logging.getLogger("jobspy." + self.site_name.replace("_", ""))]
                 for scraper_logger in scraper_loggers:
@@ -244,25 +199,6 @@ class JobSpyAdapter(BaseConnector):
                         return fallback_jobs
                 except Exception as li_exc:
                     self.last_error = str(li_exc) or self.last_error
-            if df.empty and self.site_name == "zip_recruiter" and getattr(jobspy, "__file__", None):
-                try:
-                    fallback_jobs = self._fetch_ziprecruiter_ldjson()
-                    if fallback_jobs:
-                        self.last_error = ""
-                        self.finish_page(state, [j.job_url for j in fallback_jobs], [j.date_posted for j in fallback_jobs], False)
-                        self.coverage_warning = "Coverage limited: ZipRecruiter HTML fallback has no verified continuation"
-                        return fallback_jobs
-                except Exception as zr_exc:
-                    self.last_error = str(zr_exc) or self.last_error
-            if df.empty and self.site_name == "zip_recruiter" and self.last_error and self.db_path:
-                from src.proxy_manager import request_routes
-                if request_routes(self.db_path, platform=self.platform) == [None] and any(
-                    m in self.last_error.lower() for m in ("403", "forbidden", "cloudflare")
-                ):
-                    self.last_error = ""
-                    self.finish_page(state, [], [], False)
-                    self.coverage_warning = "Coverage limited: ZipRecruiter blocks direct non-US connections (HTTP 403); configure a US proxy to enable"
-                    return []
             import pandas as pd
             rows = df.to_dict("records")
             for _, row in df.iterrows():

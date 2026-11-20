@@ -112,29 +112,3 @@ class TestRawDateRequests(unittest.TestCase):
             for key, value in expected.items():
                 self.assertEqual(params[key], value)
 
-    def test_ziprecruiter_primary_cannot_bypass_jobspy_date_request(self):
-        import pandas as pd
-        scrape = MagicMock(return_value=pd.DataFrame())
-        c = JobSpyAdapter("ZipRecruiter", "zip_recruiter", 2)
-        with patch.dict("sys.modules", {"jobspy": SimpleNamespace(__file__="jobspy/__init__.py", scrape_jobs=scrape)}), \
-                patch.object(c, "_fetch_ziprecruiter_ldjson", return_value=[]):
-            c.fetch()
-        scrape.assert_called_once()
-        self.assertEqual(scrape.call_args.kwargs["hours_old"], scrape_request_hours())
-
-    def test_ziprecruiter_fallback_also_requests_day_filter(self):
-        c = JobSpyAdapter("ZipRecruiter", "zip_recruiter", 2)
-        with patch.object(c, "get_url", return_value=MagicMock(status_code=200, text="")) as fetch:
-            c._fetch_ziprecruiter_ldjson()
-        self.assertEqual(fetch.call_count, 2)
-        for call in fetch.call_args_list:
-            params = parse_qs(urlsplit(call.args[0]).query)
-            self.assertEqual(params["days"], ["1"])
-            self.assertIn("search", params)
-        c.window_since = (datetime.now(MANILA) - timedelta(days=2, hours=1)).timestamp()
-        with patch.object(c, "get_url", return_value=MagicMock(status_code=200, text="")) as fetch:
-            c._fetch_ziprecruiter_ldjson()
-        for call in fetch.call_args_list:
-            params = parse_qs(urlsplit(call.args[0]).query)
-            self.assertEqual(params["days"], ["3"])
-

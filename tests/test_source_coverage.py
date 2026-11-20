@@ -186,25 +186,6 @@ class TestSourcePageBoundaries(unittest.TestCase):
         self.assertFalse(c.has_more)
         self.assertIn("unverified", c.coverage_warning)
 
-    def test_ziprecruiter_feed_pages_use_feed_state_in_the_real_scheduler(self):
-        import pandas as pd
-        from types import SimpleNamespace
-        from src.connectors.jobspy_adapter import JobSpyAdapter
-        c = JobSpyAdapter("ZipRecruiter", "zip_recruiter", 2)
-        offsets = []
-        def scrape(**kwargs):
-            offsets.append(kwargs["offset"])
-            count = 35 if kwargs["offset"] == 0 else 1
-            return pd.DataFrame([{"job_url": f"https://example.com/{kwargs['offset']+i}", "title": "Software Developer",
-                                  "date_posted": "today", "location": "Philippines"} for i in range(count)])
-        with tempfile.TemporaryDirectory() as temp:
-            db = os.path.join(temp, "zip_test.db")
-            init_db(db)
-            with patch.dict("sys.modules", {"jobspy": SimpleNamespace(scrape_jobs=scrape)}), patch("src.sync_batches.QUERY_DELAY_SECONDS", 0):
-                result = Aggregator(db, [c]).run_sync(["developer"], budget_seconds=5)
-        self.assertEqual(offsets, [0, 35])
-        self.assertFalse(result["progress"]["has_more"])
-
     def test_jobicy_continues_beyond_fifty_and_stops_at_verified_old_page(self):
         c = JobicyConnector()
         start, _ = scrape_date_window()

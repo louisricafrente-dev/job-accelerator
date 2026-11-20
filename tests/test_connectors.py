@@ -105,8 +105,8 @@ class TestConnectors(unittest.TestCase):
         self.assertEqual(jobs[0].platform, "OnlineJobs.ph")
         self.assertEqual(jobs[0].job_url, "https://www.onlinejobs.ph/jobseekers/job/apex-123")
 
-    @patch("urllib.request.urlopen")
-    def test_wellfound_parsing_and_filtering(self, mock_urlopen):
+    @patch("curl_cffi.requests.Session.get")
+    def test_wellfound_parsing_and_filtering(self, mock_cffi_get):
         import json
         import time
         from src.connectors.remote_feed import WellfoundConnector
@@ -154,13 +154,14 @@ class TestConnectors(unittest.TestCase):
             </script>
         </html>
         """
-        mock_response = MagicMock()
-        mock_response.read.return_value = html.encode("utf-8")
-        mock_urlopen.return_value.__enter__.return_value = mock_response
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+        mock_cffi_get.return_value = mock_resp
 
         connector = WellfoundConnector()
         # Mock ROLES to single test role to keep test fast
-        with patch.object(connector, "ROLES", ["android-developer"]):
+        with patch.object(connector, "ROLES", ["location/philippines"]):
             jobs = connector.fetch()
 
         self.assertEqual(len(jobs), 1)
@@ -169,74 +170,27 @@ class TestConnectors(unittest.TestCase):
         self.assertEqual(jobs[0].platform, "Wellfound")
         self.assertEqual(jobs[0].location, "Remote Worldwide")
         self.assertEqual(jobs[0].job_url, "https://wellfound.com/jobs/201-junior-android-developer")
-
-    @patch("urllib.request.urlopen")
-    def test_contra_parsing(self, mock_urlopen):
-        import json
-        from src.connectors.remote_feed import ContraConnector
-
-        ContraConnector._cached_jobs = None
-        ContraConnector._last_fetch = 0
-
-        vike_context = {
-            "publicAppConfiguration": {
-                "relayRecordMap": {
-                    "Record:1": {
-                        "__typename": "Opportunity",
-                        "title": "Full Stack React Developer Project",
-                        "slug": "react-dev-project-123"
-                    }
-                }
-            }
-        }
-        html = f"""
-        <html>
-            <script id="vike_pageContext" type="application/json">
-            {json.dumps(vike_context)}
-            </script>
-        </html>
-        """
-        mock_response = MagicMock()
-        mock_response.read.return_value = html.encode("utf-8")
-        mock_urlopen.return_value.__enter__.return_value = mock_response
-
-        connector = ContraConnector()
-        jobs = connector.fetch()
-        self.assertEqual(len(jobs), 1)
-        self.assertEqual(jobs[0].title, "Full Stack React Developer Project")
-        self.assertEqual(jobs[0].company, "Direct Client (Contra)")
-        self.assertEqual(jobs[0].platform, "Contra")
-        self.assertEqual(jobs[0].job_url, "https://contra.com/opportunity/react-dev-project-123")
+        self.assertEqual(connector.last_error, "")
 
     @patch("curl_cffi.requests.Session.get")
-    def test_flexjobs_parsing(self, mock_cffi_get):
-        from src.connectors.remote_feed import FlexJobsConnector
+    def test_wellfound_challenge_without_next_data_sets_error(self, mock_cffi_get):
+        from src.connectors.remote_feed import WellfoundConnector
 
-        FlexJobsConnector._cached_jobs = None
-        FlexJobsConnector._last_fetch = 0
+        WellfoundConnector._cached_jobs = None
+        WellfoundConnector._last_fetch = 0
 
-        html = """
-        <html>
-            <ul class="job-list">
-                <li class="job">
-                    <a class="job-title" href="/jobs/telecommuting-software-dev-999">Remote Web Application Developer</a>
-                    <span class="job-company">HealthTech Innovations</span>
-                </li>
-            </ul>
-        </html>
-        """
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.text = html
+        mock_resp.text = "<html><head><title>Verification required</title></head></html>"
         mock_cffi_get.return_value = mock_resp
 
-        connector = FlexJobsConnector()
-        jobs = connector.fetch()
-        self.assertEqual(len(jobs), 1)
-        self.assertEqual(jobs[0].title, "Remote Web Application Developer")
-        self.assertEqual(jobs[0].company, "HealthTech Innovations")
-        self.assertEqual(jobs[0].platform, "FlexJobs")
-        self.assertEqual(jobs[0].job_url, "https://www.flexjobs.com/jobs/telecommuting-software-dev-999")
+        connector = WellfoundConnector()
+        with patch.object(connector, "ROLES", ["location/philippines"]):
+            jobs = connector.fetch()
+
+        self.assertEqual(jobs, [])
+        self.assertIn("__NEXT_DATA__", connector.last_error)
+        self.assertEqual(WellfoundConnector._last_fetch, 0)
 
     @patch("urllib.request.urlopen")
     def test_working_nomads_parsing_and_window(self, mock_urlopen):

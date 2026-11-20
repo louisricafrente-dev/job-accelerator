@@ -496,18 +496,36 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Wellfound"
     tier = 2
     is_feed = True
-    revision = 3
+    revision = 4
     coverage_limit = "Coverage limited: Wellfound role landing pages do not expose verified publication-date pagination; authenticated access may be required"
     _cached_jobs = None
     _last_fetch = 0
     _cached_window = None
 
-    ROLES = ["location/philippines", "location/manila", "r/software-engineer", "r/full-stack-engineer", "r/frontend-engineer", "r/backend-engineer", "r/android-developer", "r/mobile-developer", "r/web-developer", "r/qa-engineer", "r/devops-engineer", "r/data-engineer"]
+    ROLES = [
+        "location/philippines",
+        "location/manila",
+        "role/l/software-engineer/philippines",
+        "role/l/full-stack-engineer/philippines",
+        "role/l/frontend-engineer/philippines",
+        "role/l/backend-engineer/philippines",
+        "role/l/mobile-developer/philippines",
+        "role/l/data-engineer/philippines",
+        "r/software-engineer",
+        "r/full-stack-engineer",
+        "r/frontend-engineer",
+        "r/backend-engineer",
+        "r/android-developer",
+        "r/mobile-developer",
+        "r/web-developer",
+        "r/qa-engineer",
+        "r/devops-engineer",
+        "r/data-engineer",
+    ]
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
         self.last_error = ""
         import time
-        import datetime
         from bs4 import BeautifulSoup
 
         now = time.time()
@@ -519,90 +537,94 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
         ):
             all_jobs: List[Job] = []
             seen_ids = set()
+            parsed_pages = 0
+            last_role_error = ""
 
             for role in self.ROLES:
-                url = f"https://wellfound.com/{role}" if role.startswith("location/") else f"https://wellfound.com/role/{role}"
+                url = f"https://wellfound.com/{role}" if role.startswith(("location/", "role/")) else f"https://wellfound.com/role/{role}"
                 try:
-                    html_doc = ""
-                    try:
-                        req = urllib.request.Request(url, headers=HEADERS)
-                        with self.open_url(req, timeout=10) as resp:
-                            html_doc = resp.read().decode("utf-8")
-                    except Exception:
-                        c_resp = self.get_url(url, impersonate="chrome120", timeout=12)
-                        if c_resp.status_code == 200:
-                            html_doc = c_resp.text
-                        else:
-                            raise RuntimeError(f"Wellfound HTTP {c_resp.status_code}")
-                    if html_doc:
-                        soup = BeautifulSoup(html_doc, "html.parser")
-                        script = soup.find("script", {"id": "__NEXT_DATA__"})
-                        if not script or not script.string:
+                    c_resp = self.get_url(url, impersonate="chrome120", timeout=12)
+                    if c_resp.status_code != 200:
+                        raise RuntimeError(f"Wellfound HTTP {c_resp.status_code}")
+                    html_doc = c_resp.text
+                    if not html_doc:
+                        last_role_error = "Wellfound returned an empty page"
+                        continue
+                    soup = BeautifulSoup(html_doc, "html.parser")
+                    script = soup.find("script", {"id": "__NEXT_DATA__"})
+                    if not script or not script.string:
+                        last_role_error = "Wellfound challenge/missing __NEXT_DATA__ (retry from local worker)"
+                        continue
+                    data = json.loads(script.string)
+                    apollo_data = data.get("props", {}).get("pageProps", {}).get("apolloState", {}).get("data", {})
+                    parsed_pages += 1
+
+                    # Map startup names
+                    startup_map = {}
+                    for k, v in apollo_data.items():
+                        if k.startswith("StartupResult:"):
+                            name = v.get("name") or "Tech Startup"
+                            for job_ref in v.get("highlightedJobListings", []):
+                                ref_id = job_ref.get("__ref")
+                                if ref_id:
+                                    startup_map[ref_id] = name
+
+                    for k, v in apollo_data.items():
+                        if not k.startswith("JobListingSearchResult:"):
                             continue
-                        data = json.loads(script.string)
-                        apollo_data = data.get("props", {}).get("pageProps", {}).get("apolloState", {}).get("data", {})
+                        job_id = v.get("id")
+                        if not job_id or job_id in seen_ids:
+                            continue
+                        seen_ids.add(job_id)
 
-                        # Map startup names
-                        startup_map = {}
-                        for k, v in apollo_data.items():
-                            if k.startswith("StartupResult:"):
-                                name = v.get("name") or "Tech Startup"
-                                for job_ref in v.get("highlightedJobListings", []):
-                                    ref_id = job_ref.get("__ref")
-                                    if ref_id:
-                                        startup_map[ref_id] = name
+                        title = v.get("title", "")
+                        desc = v.get("description", "")
+                        if not title or not is_relevant_opportunity(title, desc):
+                            continue
 
-                        for k, v in apollo_data.items():
-                            if not k.startswith("JobListingSearchResult:"):
-                                continue
-                            job_id = v.get("id")
-                            if not job_id or job_id in seen_ids:
-                                continue
-                            seen_ids.add(job_id)
+                        ts = v.get("liveStartAt")
+                        raw_ts = int(ts) if ts else ""
+                        pub_date = normalize_date(raw_ts) if ts else ""
+                        if not self.accepts_date(raw_ts or pub_date):
+                            continue
 
-                            title = v.get("title", "")
-                            desc = v.get("description", "")
-                            if not title or not is_relevant_opportunity(title, desc):
-                                continue
+                        comp = startup_map.get(k, "Tech Startup")
+                        slug = v.get("slug", "")
+                        salary = v.get("compensation", "") or ""
+                        is_remote = v.get("remote", False)
+                        locs = v.get("locationNames", [])
+                        loc_str = (", ".join(locs) + (" (Remote)" if is_remote and not any("remote" in loc.lower() for loc in locs) else "")) if locs else ("Remote (location unverified)" if is_remote else "Unknown")
 
-                            ts = v.get("liveStartAt")
-                            raw_ts = int(ts) if ts else ""
-                            pub_date = normalize_date(raw_ts) if ts else ""
-                            if not self.accepts_date(raw_ts or pub_date):
-                                continue
+                        # Work authorization filter: only remote or Philippine locations allowed
+                        if not is_work_authorized_location(loc_str, title, self.platform, desc):
+                            continue
 
-                            comp = startup_map.get(k, "Tech Startup")
-                            slug = v.get("slug", "")
-                            salary = v.get("compensation", "") or ""
-                            is_remote = v.get("remote", False)
-                            locs = v.get("locationNames", [])
-                            loc_str = (", ".join(locs) + (" (Remote)" if is_remote and not any("remote" in loc.lower() for loc in locs) else "")) if locs else ("Remote (location unverified)" if is_remote else "Unknown")
+                        link = f"https://wellfound.com/jobs/{job_id}-{slug}" if slug else f"https://wellfound.com/jobs/{job_id}"
 
-                            # Work authorization filter: only remote or Philippine locations allowed
-                            if not is_work_authorized_location(loc_str, title, self.platform, desc):
-                                continue
-
-                            link = f"https://wellfound.com/jobs/{job_id}-{slug}" if slug else f"https://wellfound.com/jobs/{job_id}"
-
-                            all_jobs.append(Job(
-                                title=title,
-                                company=comp,
-                                location=loc_str,
-                                platform=self.platform,
-                                tier=self.tier,
-                                job_url=link,
-                                salary=salary,
-                                role_category=classify_role(title, desc),
-                                experience_level=classify_experience_level(title, desc),
-                                description=desc,
-                                date_posted=raw_ts or pub_date
-                            ))
+                        all_jobs.append(Job(
+                            title=title,
+                            company=comp,
+                            location=loc_str,
+                            platform=self.platform,
+                            tier=self.tier,
+                            job_url=link,
+                            salary=salary,
+                            role_category=classify_role(title, desc),
+                            experience_level=classify_experience_level(title, desc),
+                            description=desc,
+                            date_posted=raw_ts or pub_date
+                        ))
                 except Exception as e:
-                    self.last_error = str(e) or type(e).__name__
+                    last_role_error = str(e) or type(e).__name__
                     logger.warning(f"[{self.platform}] fetch notice for role '{role}': {e}")
 
+            if parsed_pages == 0:
+                self.last_error = last_role_error or "Wellfound returned no parseable pages"
+            else:
+                self.last_error = ""
+
             WellfoundConnector._cached_jobs = all_jobs
-            WellfoundConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
+            WellfoundConnector._last_fetch = now if (parsed_pages > 0 and not self.last_error) else 0
             WellfoundConnector._cached_window = window_key
 
         cached = WellfoundConnector._cached_jobs or []
@@ -614,134 +636,6 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
             j for j in cached
             if q_lower in j.title.lower() or q_lower in (j.description or "").lower() or q_lower in j.company.lower()
         ]
-
-
-class ContraConnector(BaseConnector):
-    platform = "Contra"
-    tier = 2
-    is_feed = True
-    revision = 2
-    coverage_limit = "Coverage limited: Contra anonymous page does not expose a verified opportunity feed; authenticated source required"
-    _cached_jobs = None
-    _last_fetch = 0
-
-    def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
-        self.last_error = ""
-        import time
-        from bs4 import BeautifulSoup
-
-        now = time.time()
-        if ContraConnector._cached_jobs is not None and (now - ContraConnector._last_fetch < 120):
-            return ContraConnector._cached_jobs
-
-        jobs: List[Job] = []
-        try:
-            req = urllib.request.Request("https://contra.com/opportunities", headers=HEADERS)
-            with self.open_url(req, timeout=10) as resp:
-                soup = BeautifulSoup(resp.read().decode("utf-8"), "html.parser")
-                script = soup.find("script", {"id": "vike_pageContext"})
-                if script and script.string:
-                    data = json.loads(script.string)
-                    records = data.get("publicAppConfiguration", {}).get("relayRecordMap", {})
-                    for k, v in records.items():
-                        typename = v.get("__typename", "")
-                        if typename in ["Opportunity", "Project", "Job"]:
-                            title = v.get("title") or v.get("name") or ""
-                            if not title or not is_relevant_opportunity(title, ""):
-                                continue
-                            slug = v.get("slug") or ""
-                            link = f"https://contra.com/opportunity/{slug}" if slug else "https://contra.com/opportunities"
-                            jobs.append(Job(
-                                title=title,
-                                company="Direct Client (Contra)",
-                                location="Remote (location unverified)",
-                                platform=self.platform,
-                                tier=self.tier,
-                                job_url=link,
-                                salary="",
-                                role_category=classify_role(title),
-                                experience_level=classify_experience_level(title),
-                                date_posted=v.get("datePosted") or v.get("publishedAt") or ""
-                            ))
-        except Exception as e:
-            self.last_error = str(e) or type(e).__name__
-            logger.warning(f"[{self.platform}] fetch notice: {e}")
-
-        ContraConnector._cached_jobs = jobs
-        ContraConnector._last_fetch = now if not self.last_error else 0
-        return jobs
-
-
-class FlexJobsConnector(BaseConnector):
-    platform = "FlexJobs"
-    tier = 2
-    is_feed = True
-    revision = 4
-    coverage_limit = "Coverage limited: FlexJobs requires an accessible authorized search/feed with publication dates and pagination"
-    _cached_jobs = None
-    _last_fetch = 0
-
-    def fetch(self, query: str = "developer", location: str = "") -> List[Job]:
-        self.last_error = ""
-        import os
-        import time
-
-        now = time.time()
-        if FlexJobsConnector._cached_jobs is not None and (now - FlexJobsConnector._last_fetch < 120):
-            return FlexJobsConnector._cached_jobs
-
-        jobs: List[Job] = []
-        custom_feed = os.environ.get("FLEXJOBS_FEED_URL", "").strip()
-        feed_url = custom_feed or "https://www.flexjobs.com/search?search=software"
-
-        try:
-            from bs4 import BeautifulSoup
-            resp = self.get_url(feed_url, impersonate="chrome120", timeout=12)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for item in soup.select("li.job, div.job-tile, .job-item"):
-                    title_elem = item.select_one("a.job-title, .job-title a, h5 a")
-                    if not title_elem:
-                        continue
-                    title = title_elem.get_text(strip=True)
-                    if not title or not is_relevant_opportunity(title, ""):
-                        continue
-                    link = title_elem.get("href", "")
-                    if link and not link.startswith("http"):
-                        link = f"https://www.flexjobs.com{link}"
-                    comp_elem = item.select_one(".job-company, .company")
-                    comp = comp_elem.get_text(strip=True) if comp_elem else "Screened Tech Client"
-                    jobs.append(Job(
-                        title=title,
-                        company=comp,
-                        location="Remote (location unverified)",
-                        platform=self.platform,
-                        tier=self.tier,
-                        job_url=link or "https://www.flexjobs.com",
-                        salary="",
-                        role_category=classify_role(title),
-                        experience_level=classify_experience_level(title),
-                        date_posted=(item.select_one("time").get("datetime", "") if item.select_one("time") else "")
-                    ))
-            elif resp.status_code == 403:
-                self.last_error = "Cloudflare Protected (HTTP 403); no undated sitemap fallback"
-            else:
-                self.last_error = f"FlexJobs HTTP {resp.status_code}"
-        except Exception as e:
-            self.last_error = str(e) or type(e).__name__
-            logger.warning(f"[{self.platform}] fetch notice: {e}")
-
-        if self.last_error and self.db_path and not custom_feed:
-            from src.proxy_manager import request_routes
-            if request_routes(self.db_path, platform=self.platform) == [None] and any(
-                m in self.last_error.lower() for m in ("403", "forbidden", "cloudflare")
-            ):
-                self.coverage_warning = "Coverage limited: FlexJobs blocks direct unauthenticated connections (HTTP 403); configure FLEXJOBS_FEED_URL or a proxy"
-                self.last_error = ""
-
-        FlexJobsConnector._cached_jobs = jobs
-        FlexJobsConnector._last_fetch = now if not self.last_error else 0
-        return jobs
 
 
 class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):

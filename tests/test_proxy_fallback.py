@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 from src.aggregator import Aggregator
 from src.connectors.jobspy_adapter import JobSpyAdapter
-from src.connectors.remote_feed import ContraConnector, RemoteOKConnector
+from src.connectors.remote_feed import WellfoundConnector, RemoteOKConnector
 from src.database import init_db, set_user_setting
 from src.proxy_manager import get_next_proxy, request_routes
 
@@ -168,9 +168,12 @@ class TestProxyFallback(unittest.TestCase):
         self.assertEqual(proxied, ["http://other:other-secret@other.example:80"])
 
     def test_failed_feed_is_not_cached_as_a_success(self):
-        board = ContraConnector()
+        board = WellfoundConnector()
         Aggregator(self.db, [board])
-        with patch.object(ContraConnector, "_cached_jobs", None), patch.object(ContraConnector, "_last_fetch", 0), patch.object(board, "open_url", side_effect=RuntimeError("HTTP 403")) as send:
+        with patch.object(WellfoundConnector, "_cached_jobs", None), \
+                patch.object(WellfoundConnector, "_last_fetch", 0), \
+                patch.object(board, "ROLES", ["location/philippines"]), \
+                patch.object(board, "get_url", side_effect=RuntimeError("HTTP 403")) as send:
             board.fetch()
             board.fetch()
         self.assertEqual(send.call_count, 2)

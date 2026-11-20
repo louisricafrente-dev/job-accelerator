@@ -13,7 +13,7 @@ from src.models import Job
 # Public boards with Philippine postings verified through the Posting API.
 COMPANIES = (
     "SGS", "Sutherland", "Canva", "IQEQ", "BoschGroup", "WesternDigital",
-    "TurnerTownsend", "EgisGroup", "Continental", "NielsenIQ", "DeliveryHero",
+    "TurnerTownsend", "EgisGroup", "Continental", "NielsenIQ", "DeliveryHero", "Grab",
 )
 POSTINGS = "https://api.smartrecruiters.com/v1/companies/{company}/postings"
 PAGE_SIZE = 100

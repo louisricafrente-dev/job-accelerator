@@ -72,15 +72,30 @@ class TestLocationFilter(unittest.TestCase):
         for location, platform, description in [
             ("United States (Remote)", "LinkedIn", ""),
             ("Poland", "Jobicy", ""),
-            ("Remote Worldwide", "FlexJobs", "Remote within Poland only."),
+            ("Remote Worldwide", "Remotive", "Remote within Poland only."),
             ("Remote", "Upwork", "x " * 300 + "Applicants must reside in the United States."),
             ("Remote", "Glassdoor", "You must be authorized to work in the US."),
             ("Remote - Europe", "Himalayas", ""),
             ("Sweden (Remote)", "Remote OK", ""),
+            ("San Francisco Bay Area, Los Angeles", "Greenhouse", ""),
+            ("San Mateo (Remote)", "Ashby", ""),
+            ("Santa Rosa, CA", "Ashby", ""),
+            ("Remote, AMER", "Ashby", ""),
+            ("Ukraine Anywhere", "Greenhouse", ""),
         ]:
             with self.subTest(location=location, description=description):
                 self.assertFalse(is_work_authorized_location(location, "Developer", platform, description))
-        self.assertTrue(is_work_authorized_location("Philippines (Remote)", "Developer", "LinkedIn"))
+        for location, platform in [
+            ("Philippines (Remote)", "LinkedIn"),
+            ("Angeles, Pampanga", "JobStreet"),
+            ("San Mateo, Rizal", "Indeed"),
+            ("Santa Rosa, Laguna", "Indeed"),
+            ("Manila, Philippines", "Greenhouse"),
+            ("Remote, Global", "Ashby"),
+            ("APAC - Remote", "Greenhouse"),
+        ]:
+            with self.subTest(allowed_location=location):
+                self.assertTrue(is_work_authorized_location(location, "Developer", platform))
         self.assertTrue(is_work_authorized_location("Remote Worldwide", "Developer", "Remotive", "Our clients are in the US."))
 
     def test_database_insert_skips_foreign_onsite(self):
