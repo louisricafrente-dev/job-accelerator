@@ -16,6 +16,8 @@ class _DirectATSConnector(BaseConnector):
 
     tier = 1
     is_feed = True
+    revision = 2
+    min_window_days = 7
     COMPANIES = ()
 
     def _read_json(self, session, url):

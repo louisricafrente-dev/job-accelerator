@@ -19,7 +19,8 @@ class RemoteOKConnector(BaseConnector):
     platform = "Remote OK"
     tier = 3
     is_feed = True
-    revision = 2
+    revision = 3
+    min_window_days = 3
     coverage_limit = "Coverage limited: Remote OK exposes a recent feed without a verified date-range or history cursor"
 
     def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
@@ -186,7 +187,8 @@ class RemotiveConnector(BaseConnector):
     platform = "Remotive"
     tier = 3
     is_feed = True
-    revision = 3
+    revision = 4
+    min_window_days = 3
     coverage_limit = "Coverage limited: Remotive public feed is delayed 24 hours and has no verified date-range pagination"
 
     def fetch(self, query: str = "software-dev", location: str = "remote") -> List[Job]:

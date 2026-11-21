@@ -61,15 +61,20 @@ class BaseConnector(ABC):
     MAX_RESPONSE_BYTES = 8 * 1024 * 1024
     _window_days_override = None
     _window_since = None
+    min_window_days: int = DEFAULT_SCRAPE_WINDOW_DAYS
     video_editor_mode = False
 
     @property
     def window_days(self) -> int:
         if self._window_days_override is not None:
             return self._window_days_override
+        floor = max(
+            DEFAULT_SCRAPE_WINDOW_DAYS,
+            int(getattr(self, "min_window_days", DEFAULT_SCRAPE_WINDOW_DAYS) or DEFAULT_SCRAPE_WINDOW_DAYS),
+        )
         if self._window_since is not None:
-            return scrape_window_days(since=self._window_since)
-        return DEFAULT_SCRAPE_WINDOW_DAYS
+            return max(floor, scrape_window_days(since=self._window_since))
+        return floor
 
     @window_days.setter
     def window_days(self, value: int):
@@ -91,6 +96,13 @@ class BaseConnector(ABC):
             if default_days > DEFAULT_SCRAPE_WINDOW_DAYS:
                 if self._window_since is None or scrape_window_days(since=self._window_since) <= default_days:
                     return None
+        floor = max(
+            DEFAULT_SCRAPE_WINDOW_DAYS,
+            int(getattr(self, "min_window_days", DEFAULT_SCRAPE_WINDOW_DAYS) or DEFAULT_SCRAPE_WINDOW_DAYS),
+        )
+        if floor > DEFAULT_SCRAPE_WINDOW_DAYS:
+            if self._window_since is None or scrape_window_days(since=self._window_since) <= floor:
+                return None
         return self._window_since
 
     def date_window(self, now=None):

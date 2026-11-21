@@ -1,6 +1,7 @@
 import json
 import re
 import time
+import xml.etree.ElementTree as ET
 from typing import List
 from urllib.parse import urlencode, urlsplit
 
@@ -60,9 +61,11 @@ class RedditConnector(BaseConnector):
     platform = "Reddit"
     tier = 2
     is_feed = True
-    revision = 1
-    SUBREDDITS = ("forhire", "jobbit", "remotejs", "DeveloperJobs", "buhaydigital", "pinoyprogrammer")
+    revision = 2
+    min_window_days = 7
+    SUBREDDITS = ("forhire", "jobbit", "remotejs", "DeveloperJobs", "TechJobs", "RemoteJobs", "buhaydigital", "pinoyprogrammer")
     PH_SUBREDDITS = {"buhaydigital", "pinoyprogrammer"}
+    MAX_PAGES_PER_SUB = {"forhire": 3}
     SEARCH_URL = "https://arctic-shift.photon-reddit.com/api/posts/search"
     MIN_BODY_CHARS = 80
 
@@ -78,29 +81,50 @@ class RedditConnector(BaseConnector):
 
         start, _ = self.date_window()
         after_date = start.date().isoformat()
+        start_ts = int(start.timestamp())
 
         for idx, sub in enumerate(self.SUBREDDITS):
-            if idx and self.db_path:
-                time.sleep(2.0)
-            params = urlencode({"subreddit": sub, "after": after_date, "limit": 100, "sort": "desc"})
-            url = f"{self.SEARCH_URL}?{params}"
-            try:
-                resp = self.get_url(url, impersonate="chrome120", timeout=10)
-                if getattr(resp, "status_code", 0) != 200:
-                    warnings.append(f"r/{sub}: HTTP {getattr(resp, 'status_code', 'error')}")
-                    continue
-                payload = resp.json() if callable(getattr(resp, "json", None)) else json.loads(resp.text)
-                posts = payload.get("data")
-                if not isinstance(posts, list):
-                    warnings.append(f"r/{sub}: invalid posts payload")
-                    continue
-                successful_subs += 1
-                raw_count += len(posts)
-            except Exception as exc:
-                warnings.append(f"r/{sub}: {exc}")
-                continue
+            max_pages = self.MAX_PAGES_PER_SUB.get(sub, 1)
+            before_ts = None
+            sub_posts: List[dict] = []
+            sub_succeeded = False
+            for page_idx in range(max_pages):
+                if (idx or page_idx) and self.db_path:
+                    time.sleep(2.0)
+                query_params = {"subreddit": sub, "after": after_date, "limit": 100, "sort": "desc"}
+                if before_ts is not None:
+                    query_params["before"] = before_ts
+                url = f"{self.SEARCH_URL}?{urlencode(query_params)}"
+                try:
+                    resp = self.get_url(url, impersonate="chrome120", timeout=10)
+                    if getattr(resp, "status_code", 0) != 200:
+                        warnings.append(f"r/{sub}: HTTP {getattr(resp, 'status_code', 'error')}")
+                        break
+                    payload = resp.json() if callable(getattr(resp, "json", None)) else json.loads(resp.text)
+                    posts = payload.get("data")
+                    if not isinstance(posts, list):
+                        warnings.append(f"r/{sub}: invalid posts payload")
+                        break
+                    sub_succeeded = True
+                    sub_posts.extend(posts)
+                    if len(posts) < 100:
+                        break
+                    oldest = min(
+                        (int(p["created_utc"]) for p in posts if isinstance(p, dict) and p.get("created_utc") is not None),
+                        default=0,
+                    )
+                    if not oldest or oldest < start_ts or (before_ts is not None and oldest >= before_ts):
+                        break
+                    before_ts = oldest - 1
+                except Exception as exc:
+                    warnings.append(f"r/{sub}: {exc}")
+                    break
 
-            for post in posts:
+            if sub_succeeded:
+                successful_subs += 1
+                raw_count += len(sub_posts)
+
+            for post in sub_posts:
                 if not isinstance(post, dict):
                     continue
                 if (
@@ -128,7 +152,10 @@ class RedditConnector(BaseConnector):
                     or re.search(r"^\s*for\s+hire\b", raw_title, re.I)
                 ):
                     continue
-                if not (re.search(r"\[\s*hiring\s*\]", raw_title, re.I) or flair in ("hiring", "job opening", "job posting")):
+                if not (
+                    re.search(r"\[\s*hiring\b", raw_title, re.I)
+                    or flair in ("hiring", "job opening", "job posting", "job posts", "job")
+                ):
                     continue
 
                 selftext = str(post.get("selftext") or "").strip()
@@ -207,7 +234,8 @@ class HackerNewsConnector(BaseConnector):
     platform = "Hacker News"
     tier = 2
     is_feed = True
-    revision = 1
+    revision = 2
+    min_window_days = 14
     STORY_SEARCH_URL = (
         "https://hn.algolia.com/api/v1/search_by_date"
         "?tags=story,author_whoishiring&query=Who%20is%20hiring&hitsPerPage=5"
@@ -308,6 +336,136 @@ class HackerNewsConnector(BaseConnector):
                     experience_level=classify_experience_level(title, plain_text),
                     description=plain_text,
                     date_posted=created_at,
+                ))
+        except Exception as exc:
+            self.last_error = str(exc) or type(exc).__name__
+        return jobs
+
+
+class VueJobsConnector(BaseConnector):
+    """Official VueJobs RSS feed for remote/PH-eligible frontend and full-stack roles."""
+
+    platform = "VueJobs"
+    tier = 2
+    is_feed = True
+    revision = 1
+    min_window_days = 7
+    FEED_URL = "https://vuejobs.com/feed"
+    MAX_ITEMS = 100
+
+    def fetch(self, query: str = "", location: str = "") -> List[Job]:
+        self.last_error = ""
+        self.coverage_warning = ""
+        self.last_route = "DIRECT"
+        jobs: List[Job] = []
+        seen_pairs = set()
+        try:
+            resp = self.get_url(self.FEED_URL, impersonate="chrome120", timeout=10)
+            if getattr(resp, "status_code", 0) != 200:
+                raise RuntimeError(f"VueJobs HTTP {getattr(resp, 'status_code', 'error')}")
+            root = ET.fromstring(resp.content if getattr(resp, "content", None) else resp.text.encode("utf-8"))
+            items = root.findall(".//item")[:self.MAX_ITEMS]
+            self.last_raw_count = len(items)
+            for item in items:
+                title = str(item.findtext("title") or "").strip()
+                pub = str(item.findtext("pubDate") or "").strip()
+                link = str(item.findtext("guid") or item.findtext("link") or "").strip()
+                host = urlsplit(link)
+                if not title or not pub or not self.accepts_date(pub) or host.scheme != "https" or not host.netloc:
+                    continue
+                raw_desc = str(item.findtext("description") or "").strip()
+                text_desc = BeautifulSoup(raw_desc, "html.parser").get_text("\n", strip=True)
+                if is_scam_or_sketchy_post(title, text_desc):
+                    continue
+                m_emp = re.search(r"Employer:\s*([^\n]+)", text_desc, re.I)
+                m_loc = re.search(r"Location:\s*([^\n]+)", text_desc, re.I)
+                comp = m_emp.group(1).strip() if m_emp else "VueJobs Employer"
+                loc = m_loc.group(1).strip() if m_loc else "Remote"
+                if "remote" in text_desc.lower() and "remote" not in loc.lower():
+                    loc = f"{loc} (Remote)"
+                pair = (comp.lower(), title.lower())
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                if not is_work_authorized_location(loc, title, self.platform, text_desc):
+                    continue
+                if not self.accepts_opportunity(title, text_desc, allow_va_training=False):
+                    continue
+                jobs.append(Job(
+                    title=title,
+                    company=comp,
+                    location=loc,
+                    platform=self.platform,
+                    tier=self.tier,
+                    job_url=link,
+                    salary=_extract_salary(text_desc),
+                    role_category=self.job_role(title, text_desc),
+                    experience_level=classify_experience_level(title, text_desc),
+                    description=text_desc,
+                    date_posted=pub,
+                ))
+        except Exception as exc:
+            self.last_error = str(exc) or type(exc).__name__
+        return jobs
+
+
+class LaraJobsConnector(BaseConnector):
+    """Official LaraJobs RSS feed for remote Laravel/PHP/full-stack roles."""
+
+    platform = "LaraJobs"
+    tier = 2
+    is_feed = True
+    revision = 1
+    min_window_days = 14
+    FEED_URL = "https://larajobs.com/feed"
+
+    def fetch(self, query: str = "", location: str = "") -> List[Job]:
+        self.last_error = ""
+        self.coverage_warning = ""
+        self.last_route = "DIRECT"
+        jobs: List[Job] = []
+        try:
+            resp = self.get_url(self.FEED_URL, impersonate="chrome120", timeout=10)
+            if getattr(resp, "status_code", 0) != 200:
+                raise RuntimeError(f"LaraJobs HTTP {getattr(resp, 'status_code', 'error')}")
+            root = ET.fromstring(resp.content if getattr(resp, "content", None) else resp.text.encode("utf-8"))
+            items = root.findall(".//item")
+            self.last_raw_count = len(items)
+            for item in items:
+                title = str(item.findtext("title") or "").strip()
+                pub = str(item.findtext("pubDate") or "").strip()
+                link = str(item.findtext("link") or item.findtext("guid") or "").strip()
+                host = urlsplit(link)
+                if not title or not pub or not self.accepts_date(pub) or host.scheme != "https" or not host.netloc:
+                    continue
+                comp = str(
+                    item.findtext("{https://larajobs.com}company")
+                    or item.findtext("{http://purl.org/dc/elements/1.1/}creator")
+                    or "LaraJobs Employer"
+                ).strip()
+                loc = str(item.findtext("{https://larajobs.com}location") or "Remote").strip()
+                salary = str(item.findtext("{https://larajobs.com}salary") or "").strip()
+                tags = str(item.findtext("{https://larajobs.com}tags") or "").strip()
+                raw_desc = BeautifulSoup(str(item.findtext("description") or ""), "html.parser").get_text(" ", strip=True)
+                desc = " | ".join(part for part in (tags, raw_desc) if part)
+                if is_scam_or_sketchy_post(title, desc):
+                    continue
+                if not is_work_authorized_location(loc, title, self.platform, desc):
+                    continue
+                if not self.accepts_opportunity(title, desc, allow_va_training=False):
+                    continue
+                jobs.append(Job(
+                    title=title,
+                    company=comp,
+                    location=loc,
+                    platform=self.platform,
+                    tier=self.tier,
+                    job_url=link,
+                    salary=salary,
+                    role_category=self.job_role(title, desc),
+                    experience_level=classify_experience_level(title, desc),
+                    description=desc,
+                    date_posted=pub,
                 ))
         except Exception as exc:
             self.last_error = str(exc) or type(exc).__name__

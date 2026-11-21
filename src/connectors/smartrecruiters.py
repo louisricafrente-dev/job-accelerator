@@ -26,6 +26,8 @@ class SmartRecruitersConnector(BaseConnector):
     platform = "SmartRecruiters"
     tier = 1
     is_feed = True
+    revision = 2
+    min_window_days = 7
 
     def fetch(self, query="", location=""):
         self.last_error = ""

@@ -3929,7 +3929,9 @@ const MONITORED_BOARDS = [
   { key: 'Y Combinator', label: 'Y Combinator', domain: 'workatastartup.com', type: 'YC Startup Remote' },
   { key: 'Web3.career', label: 'Web3.career', domain: 'web3.career', type: 'Global Remote Tech' },
   { key: 'Reddit', label: 'Reddit Direct [Hiring]', domain: 'reddit.com', type: 'Direct Client Feed' },
-  { key: 'Hacker News', label: 'HN Who is Hiring', domain: 'news.ycombinator.com', type: 'Direct Founder Feed' }
+  { key: 'Hacker News', label: 'HN Who is Hiring', domain: 'news.ycombinator.com', type: 'Direct Founder Feed' },
+  { key: 'VueJobs', label: 'VueJobs', domain: 'vuejobs.com', type: 'Frontend & Vue Feed' },
+  { key: 'LaraJobs', label: 'LaraJobs', domain: 'larajobs.com', type: 'Laravel & PHP Feed' }
 ];
 
 let telemetryTimer = null;

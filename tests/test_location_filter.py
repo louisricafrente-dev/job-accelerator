@@ -99,6 +99,7 @@ class TestLocationFilter(unittest.TestCase):
         for location, title, platform in [
             ("Remote (Worldwide)", "Web Developer (US Client)", "OnlineJobs.ph"),
             ("Manila, Philippines", "Software Engineer - US Shift", "JobStreet"),
+            ("Remote Worldwide", "Freelance Shopify Developer for 5-SKU Menswear Store (Qatar/GCC Gateway)", "Reddit"),
         ]:
             with self.subTest(allowed_title=title):
                 self.assertTrue(is_work_authorized_location(location, title, platform))

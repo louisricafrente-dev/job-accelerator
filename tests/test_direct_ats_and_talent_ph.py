@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import src.aggregator as aggregator_mod
 from src import execution_inbox as inbox
-from src.connectors.community_feeds import HackerNewsConnector, RedditConnector
+from src.connectors.community_feeds import HackerNewsConnector, LaraJobsConnector, RedditConnector, VueJobsConnector
 from src.connectors.direct_ats import AshbyConnector, GreenhouseConnector, WorkableConnector
 from src.connectors.ph_jobs import BossjobConnector
 from src.connectors.remote_feed import HimalayasConnector
@@ -317,6 +317,8 @@ class DirectATSAndTalentPHTests(TestCase):
         self.assertIn("Web3CareerConnector", call_names)
         self.assertIn("RedditConnector", call_names)
         self.assertIn("HackerNewsConnector", call_names)
+        self.assertIn("VueJobsConnector", call_names)
+        self.assertIn("LaraJobsConnector", call_names)
         self.assertIn("SmartRecruitersConnector", call_names)
         self.assertIn("WellfoundConnector", call_names)
         self.assertNotIn("ContraConnector", call_names)
@@ -325,7 +327,7 @@ class DirectATSAndTalentPHTests(TestCase):
 
         if not getattr(aggregator_mod.get_default_connectors, "_mock_name", None):
             platforms = {c.platform for c in aggregator_mod.get_default_connectors()}
-            self.assertTrue({"Greenhouse", "Ashby", "Workable", "Talent.com PH", "Web3.career", "Reddit", "Hacker News", "SmartRecruiters", "Wellfound"}.issubset(platforms))
+            self.assertTrue({"Greenhouse", "Ashby", "Workable", "Talent.com PH", "Web3.career", "Reddit", "Hacker News", "VueJobs", "LaraJobs", "SmartRecruiters", "Wellfound"}.issubset(platforms))
             self.assertTrue({"ZipRecruiter", "Contra", "FlexJobs"}.isdisjoint(platforms))
 
     def test_workable_parses_widget_and_handles_partial_failure(self):
@@ -841,3 +843,90 @@ class DirectATSAndTalentPHTests(TestCase):
         self.assertEqual(jobs[0].platform, "Hacker News")
         self.assertEqual(jobs[0].salary, "$90k-$120k")
         self.assertEqual(board.last_error, "")
+
+    def test_min_window_days_floor_overrides_short_window_since(self):
+        from src.connectors.remote_feed import RemoteOKConnector, RemotiveConnector
+        recent_since = time.time() - 3600
+        for cls, expected_days in [
+            (RemoteOKConnector, 3),
+            (RemotiveConnector, 3),
+            (GreenhouseConnector, 7),
+            (AshbyConnector, 7),
+            (WorkableConnector, 7),
+            (RedditConnector, 7),
+            (VueJobsConnector, 7),
+            (HackerNewsConnector, 14),
+            (LaraJobsConnector, 14),
+        ]:
+            board = cls()
+            board.window_since = recent_since
+            self.assertEqual(board.window_days, expected_days, msg=cls.__name__)
+            self.assertIsNone(board._effective_since(), msg=cls.__name__)
+
+    def test_vuejobs_and_larajobs_parse_rss_dedup_and_filter_locations(self):
+        today_rfc = datetime.now(MANILA).strftime("%a, %d %b %Y 08:00:00 +0800")
+        old_rfc = (datetime.now(MANILA) - timedelta(days=20)).strftime("%a, %d %b %Y 08:00:00 +0800")
+
+        vue_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>Junior Frontend Developer</title>
+            <guid>https://vuejobs.com/jobs/acme-jr-frontend-1</guid>
+            <pubDate>{today_rfc}</pubDate>
+            <description>&lt;p&gt;&lt;strong&gt;Employer:&lt;/strong&gt; Acme PH&lt;/p&gt;&lt;p&gt;&lt;strong&gt;Location:&lt;/strong&gt; Remote&lt;/p&gt;</description>
+          </item>
+          <item>
+            <title>Junior Frontend Developer</title>
+            <guid>https://vuejobs.com/jobs/acme-jr-frontend-2</guid>
+            <pubDate>{today_rfc}</pubDate>
+            <description>&lt;p&gt;&lt;strong&gt;Employer:&lt;/strong&gt; Acme PH&lt;/p&gt;&lt;p&gt;&lt;strong&gt;Location:&lt;/strong&gt; Remote&lt;/p&gt;</description>
+          </item>
+          <item>
+            <title>Frontend Platform Engineer</title>
+            <guid>https://vuejobs.com/jobs/nl-onsite</guid>
+            <pubDate>{today_rfc}</pubDate>
+            <description>&lt;p&gt;&lt;strong&gt;Employer:&lt;/strong&gt; Jumbo&lt;/p&gt;&lt;p&gt;&lt;strong&gt;Location:&lt;/strong&gt; Veghel, NL&lt;/p&gt;</description>
+          </item>
+          <item>
+            <title>Old Vue Developer</title>
+            <guid>https://vuejobs.com/jobs/old-1</guid>
+            <pubDate>{old_rfc}</pubDate>
+            <description>&lt;p&gt;&lt;strong&gt;Employer:&lt;/strong&gt; Old Co&lt;/p&gt;&lt;p&gt;&lt;strong&gt;Location:&lt;/strong&gt; Remote&lt;/p&gt;</description>
+          </item>
+        </channel></rss>""".encode("utf-8")
+
+        vj = VueJobsConnector()
+        with patch.object(vj, "get_url", return_value=MagicMock(status_code=200, content=vue_xml)):
+            v_jobs = vj.fetch()
+        self.assertEqual([j.job_url for j in v_jobs], ["https://vuejobs.com/jobs/acme-jr-frontend-1"])
+        self.assertEqual(v_jobs[0].company, "Acme PH")
+
+        lara_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0" xmlns:job="https://larajobs.com"><channel>
+          <item>
+            <title>Product Engineer (Laravel - Remote)</title>
+            <link>https://larajobs.com/job/3950</link>
+            <pubDate>{today_rfc}</pubDate>
+            <job:company>Hospitable</job:company>
+            <job:location>Remote</job:location>
+            <job:salary>$90,000 - $120,000</job:salary>
+            <job:tags>Laravel,VueJS,MySQL</job:tags>
+            <description></description>
+          </item>
+          <item>
+            <title>Laravel Developer</title>
+            <link>https://larajobs.com/job/3951</link>
+            <pubDate>{today_rfc}</pubDate>
+            <job:company>UK Co</job:company>
+            <job:location>Remote UK</job:location>
+            <job:tags>Laravel</job:tags>
+            <description></description>
+          </item>
+        </channel></rss>""".encode("utf-8")
+
+        lj = LaraJobsConnector()
+        with patch.object(lj, "get_url", return_value=MagicMock(status_code=200, content=lara_xml)):
+            l_jobs = lj.fetch()
+        self.assertEqual([j.job_url for j in l_jobs], ["https://larajobs.com/job/3950"])
+        self.assertEqual(l_jobs[0].company, "Hospitable")
+        self.assertEqual(l_jobs[0].salary, "$90,000 - $120,000")

@@ -124,12 +124,22 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
         title_allows_ph = bool(re.search(
             r"\b(?:philippines|manila|cebu|davao|worldwide|global|anywhere|apac|asia|southeast asia)\b", t
         ))
-        foreign_scoped = rf"{foreign_name}(?!\s+(?:client|clients|shift|hours|timezone|time\s*zone|account|accounts|market|entity)\b)"
-        if not title_allows_ph and any(
-            re.search(pat, t) for pat in (
-                rf"\([^)]*{foreign_scoped}[^)]*\)",
-                rf"(?:[-–—|/]|,\s*)\s*{foreign_scoped}",
-                rf"\b{foreign_scoped}[- ]based\b",
+        foreign_scoped = rf"{foreign_name}(?!\s+(?:client|clients|shift|hours|timezone|time\s*zone|account|accounts|market|entity|gateway|gateways|payment|payments|store|currency)\b)"
+        paren_foreign = any(
+            re.search(foreign_scoped, grp)
+            and not re.search(
+                r"\b(?:client|clients|shift|hours|timezone|time\s*zone|account|accounts|market|entity|gateway|gateways|payment|payments|store|currency)\b",
+                grp,
+            )
+            for grp in re.findall(r"\([^)]*\)", t)
+        )
+        if not title_allows_ph and (
+            paren_foreign
+            or any(
+                re.search(pat, t) for pat in (
+                    rf"(?:[-–—|/]|,\s*)\s*{foreign_scoped}",
+                    rf"\b{foreign_scoped}[- ]based\b",
+                )
             )
         ):
             return False
