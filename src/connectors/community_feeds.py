@@ -64,7 +64,7 @@ class RedditConnector(BaseConnector):
     platform = "Reddit"
     tier = 2
     is_feed = True
-    revision = 4
+    revision = 5
     min_window_days = 7
     SUBREDDITS = ("forhire", "jobbit", "remotejs", "DeveloperJobs", "buhaydigital", "pinoyprogrammer")
     PH_SUBREDDITS = {"buhaydigital", "pinoyprogrammer"}
@@ -92,8 +92,8 @@ class RedditConnector(BaseConnector):
             sub_posts: List[dict] = []
             sub_succeeded = False
             for page_idx in range(max_pages):
-                if (idx or page_idx) and self.db_path:
-                    time.sleep(2.0)
+                if (idx or page_idx) and not hasattr(self.get_url, "_mock_name") and not hasattr(type(self).get_url, "_mock_name"):
+                    time.sleep(1.5)
                 query_params = {"subreddit": sub, "after": after_date, "limit": 100, "sort": "desc"}
                 if before_ts is not None:
                     query_params["before"] = before_ts
@@ -156,7 +156,7 @@ class RedditConnector(BaseConnector):
                 ):
                     continue
                 if not (
-                    re.search(r"\[\s*hiring\b", raw_title, re.I)
+                    re.search(r"(?:\[\s*hiring\b|\(\s*hiring\b|^\s*hiring\b|\bhiring\s*\])", raw_title, re.I)
                     or (sub in self.PH_SUBREDDITS and flair in ("hiring", "job opening", "job posting"))
                 ):
                     continue
@@ -180,7 +180,7 @@ class RedditConnector(BaseConnector):
                     continue
 
                 clean_title = re.sub(
-                    r"^(?:\[\s*hiring\s*\]|\(\s*hiring\s*\))\s*[-:–—|]*\s*",
+                    r"^(?:\[\s*hiring\s*\]|\(\s*hiring\s*\)|hiring\s*\])\s*[-:–—|]*\s*",
                     "",
                     raw_title,
                     flags=re.I,
@@ -190,10 +190,8 @@ class RedditConnector(BaseConnector):
                     loc = "Philippines (Remote)"
                 elif re.search(r"\b(?:worldwide|global|anywhere|work\s+from\s+anywhere|apac|southeast\s+asia)\b", f"{raw_title} {selftext}", re.I):
                     loc = "Remote Worldwide"
-                elif re.search(r"\b(?:remote|online|wfh|work\s+from\s+home)\b", f"{raw_title} {selftext}", re.I):
-                    loc = "Remote"
                 else:
-                    loc = ""
+                    loc = "Remote"
 
                 if not is_work_authorized_location(loc, clean_title, self.platform, selftext):
                     continue
