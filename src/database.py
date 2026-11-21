@@ -4,6 +4,7 @@ import json
 import sqlite3
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from src.models import Job, normalize_date, clean_url
@@ -169,11 +170,16 @@ class TursoCursor:
         self.description = None
 
     def execute(self, sql, params=None):
-        if params is None:
-            self._last_rs = self._client.execute(sql)
-        else:
-            clean_params = [p if p is not None else None for p in list(params)]
-            self._last_rs = self._client.execute(sql, clean_params)
+        try:
+            if params is None:
+                self._last_rs = self._client.execute(sql)
+            else:
+                clean_params = [p if p is not None else None for p in list(params)]
+                self._last_rs = self._client.execute(sql, clean_params)
+        except Exception as exc:
+            if "closed" in str(exc).lower():
+                _evict_pooled_turso_client(self._client)
+            raise
         self._row_idx = 0
         self.rowcount = getattr(self._last_rs, "rows_affected", 0) if self._last_rs is not None else 0
         self.lastrowid = getattr(self._last_rs, "last_insert_rowid", None) if self._last_rs is not None else None
@@ -187,7 +193,12 @@ class TursoCursor:
     def executemany(self, sql, seq_of_params):
         stmts = [(sql, list(p)) for p in seq_of_params]
         if stmts:
-            self._client.batch(stmts)
+            try:
+                self._client.batch(stmts)
+            except Exception as exc:
+                if "closed" in str(exc).lower():
+                    _evict_pooled_turso_client(self._client)
+                raise
             self.rowcount = len(stmts)
         else:
             self.rowcount = 0
@@ -208,8 +219,9 @@ class TursoCursor:
         return rows
 
 class TursoConnection:
-    def __init__(self, client):
+    def __init__(self, client, close_client: bool = True):
         self._client = client
+        self._close_client = close_client
         self.row_factory = None
 
     def cursor(self):
@@ -232,10 +244,21 @@ class TursoConnection:
         pass
 
     def close(self):
+        if not self._close_client:
+            return
         try:
             self._client.close()
         except Exception:
             pass
+
+_TURSO_CLIENT_POOL: Dict[Tuple[str, str], Any] = {}
+_TURSO_POOL_LOCK = threading.Lock()
+
+def _evict_pooled_turso_client(client: Any) -> None:
+    with _TURSO_POOL_LOCK:
+        for key, pooled in list(_TURSO_CLIENT_POOL.items()):
+            if pooled is client:
+                _TURSO_CLIENT_POOL.pop(key, None)
 
 def get_turso_url() -> str:
     url = os.environ.get("TURSO_DATABASE_URL", "").strip()
@@ -273,8 +296,13 @@ def get_db_connection(db_path: str = "data/jobs.db", timeout: float = 25.0):
     if is_turso_active(db_path) and HAS_LIBSQL:
         url = get_turso_url()
         token = get_turso_token()
-        client = libsql_client.create_client_sync(url, auth_token=token)
-        return TursoConnection(client)
+        pool_key = (url, token)
+        with _TURSO_POOL_LOCK:
+            client = _TURSO_CLIENT_POOL.get(pool_key)
+            if client is None or getattr(client, "closed", False):
+                client = libsql_client.create_client_sync(url, auth_token=token)
+                _TURSO_CLIENT_POOL[pool_key] = client
+        return TursoConnection(client, close_client=False)
     conn = sqlite3.connect(db_path, timeout=timeout)
     conn.execute("PRAGMA busy_timeout = 25000;")
     return conn

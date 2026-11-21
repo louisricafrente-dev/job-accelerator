@@ -877,8 +877,7 @@ async function bootstrapDashboard() {
   flushPendingSettings();
   if (currentUserRole === 'admin') startTelemetryPolling();
   if (isDashboardBootstrapped) {
-    await loadStats();
-    await loadJobs();
+    await Promise.all([loadStats(), loadJobs()]);
     return;
   }
   isDashboardBootstrapped = true;
@@ -887,8 +886,7 @@ async function bootstrapDashboard() {
   const isTelemetryCollapsed = localStorage.getItem('job_accel_telemetry_collapsed') !== '0';
   toggleTelemetryCollapse(isTelemetryCollapsed);
   if (currentUserRole === 'admin') loadPortfolioViews();
-  await loadStats();
-  await loadJobs();
+  await Promise.all([loadStats(), loadJobs()]);
   if (currentUserRole === 'admin' && new URLSearchParams(location.search).get('view') === 'gmail') {
     setStatus('gmail', document.querySelector('.status-tab[data-val="gmail"]'));
   }
@@ -1323,6 +1321,165 @@ let loadJobsSequence = 0;
 const serverQueryCache = new Map();
 const MAX_QUERY_CACHE_ENTRIES = 25;
 let loadingIndicatorTimer = null;
+let tabPrefetchTimer = null;
+const inflightPrefetchKeys = new Set();
+
+function renderFeedSkeletonHtml(statusKey) {
+  const labelMap = {
+    new: 'Inbox',
+    saved: 'Saved',
+    applied: 'Pipeline',
+    ignored: 'Archived',
+    va: 'Remote VA'
+  };
+  const label = labelMap[statusKey] || 'opportunities';
+  const skeletonCard = `
+    <div class="job-card-skeleton" aria-hidden="true">
+      <div class="skeleton-main">
+        <div class="skeleton-line skeleton-title"></div>
+        <div class="skeleton-line skeleton-meta"></div>
+      </div>
+      <div class="skeleton-actions">
+        <div class="skeleton-pill"></div>
+        <div class="skeleton-circle"></div>
+      </div>
+    </div>
+  `;
+  return `
+    <div class="feed-skeleton-status" role="status" aria-live="polite">
+      <span class="sentinel-spinner" aria-hidden="true"></span>
+      <span>Loading ${label} opportunities...</span>
+    </div>
+    ${skeletonCard.repeat(4)}
+  `;
+}
+
+function syncJobMutationInQueryCache(jobId, updates, fallbackJob) {
+  if (!updates || typeof updates !== 'object') return;
+  for (const [key, rawList] of serverQueryCache.entries()) {
+    if (!Array.isArray(rawList)) continue;
+    const idx = rawList.findIndex(j => j.id === jobId);
+    if (idx !== -1) {
+      rawList[idx] = { ...rawList[idx], ...updates };
+    } else if (updates.status && key.includes(`status=${updates.status}&`) && fallbackJob) {
+      rawList.unshift({ ...fallbackJob, ...updates });
+    }
+  }
+}
+
+function findSupersetPreviewJobs(token, targetStatus, { isVA, isSavedView, isAppliedView }) {
+  const prefix = `${token || ''}::`;
+  const statusNeedle = `status=${encodeURIComponent(isVA ? 'all' : targetStatus)}`;
+  for (const [key, rawList] of serverQueryCache.entries()) {
+    if (!key.startsWith(prefix) || !key.includes(statusNeedle)) continue;
+    const qs = key.slice(prefix.length);
+    const kp = new URLSearchParams(qs);
+    if ((kp.get('role') || 'All') !== 'All') continue;
+    if ((kp.get('experience_level') || 'All') !== 'All') continue;
+    if ((kp.get('platform') || 'All') !== 'All') continue;
+    if (kp.get('search')) continue;
+    if (kp.get('has_salary') === '1' && !hasSalaryOnly) continue;
+    if (kp.get('remote_only') === '1' && !remoteOnly && !isVA) continue;
+    if (kp.get('hide_senior') === '1' && !hideSenior) continue;
+    const cachedDate = kp.get('date_filter') || 'all';
+    if (cachedDate !== currentDateFilter && cachedDate !== 'all') continue;
+
+    let preview = buildFilteredJobsFromRaw(rawList, { isVA, isSavedView, isAppliedView });
+    if (currentRole && currentRole !== 'All' && !isVA) {
+      const targetFamily = typeof roleFamily === 'function' ? roleFamily(currentRole) : currentRole;
+      preview = preview.filter(j => {
+        const cat = typeof inferJobCategoryForChip === 'function' ? inferJobCategoryForChip(j) : (j.role_category || '');
+        return cat === currentRole || cat === targetFamily || (j.role_category || '') === currentRole;
+      });
+    }
+    if (currentLevel && currentLevel !== 'All' && !isVA) {
+      const levels = new Set(currentLevel.split(',').map(s => s.trim()).filter(Boolean));
+      preview = preview.filter(j => levels.has(j.experience_level || 'Unspecified'));
+    }
+    if (currentPlatform && currentPlatform !== 'All') {
+      const pLower = currentPlatform.toLowerCase();
+      preview = preview.filter(j => (j.platform || '').toLowerCase() === pLower || (Array.isArray(j.sources) && j.sources.some(s => (s.platform || '').toLowerCase() === pLower)));
+    }
+    if (hasSalaryOnly) {
+      preview = preview.filter(j => j.salary && j.salary.toLowerCase() !== 'nan' && j.salary !== 'None');
+    }
+    if (remoteOnly && !isVA) {
+      preview = preview.filter(j => /remote|wfh|worldwide/i.test(j.location || ''));
+    }
+    if (searchQuery && searchQuery.trim()) {
+      const words = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      preview = preview.filter(j => {
+        const hay = `${j.title || ''} ${j.company || ''} ${j.location || ''} ${j.role_category || ''} ${j.notes || ''}`.toLowerCase();
+        return words.every(w => hay.includes(w));
+      });
+    }
+    return preview;
+  }
+  return null;
+}
+
+function prefetchSiblingStatusTabs(token) {
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') return;
+  if (typeof resilientFetchWithRetry !== 'function') return;
+  clearTimeout(tabPrefetchTimer);
+  tabPrefetchTimer = setTimeout(async () => {
+    if (token !== currentSessionToken) return;
+    const siblingStatuses = ['new', 'saved', 'applied'].filter(st => st !== currentStatus);
+    for (const st of siblingStatuses) {
+      if (token !== currentSessionToken) return;
+      const f = (typeof viewFilters !== 'undefined' && viewFilters[st]) ? viewFilters[st] : {};
+      const dateVal = f.date || (['saved', 'applied'].includes(st) ? 'all' : '7days');
+      const roleVal = f.role || 'All';
+      const levelVal = f.level || 'All';
+      const platformVal = f.platform || 'All';
+      const searchVal = f.search || '';
+      const p = new URLSearchParams({
+        status: st,
+        role: roleVal,
+        experience_level: levelVal,
+        search: searchVal,
+        date_filter: dateVal
+      });
+      if (f.salary) p.set('has_salary', '1');
+      if (f.remote) p.set('remote_only', '1');
+      if (f.senior) p.set('hide_senior', '1');
+      if (roleVal === 'All' || (typeof roleFamily === 'function' && roleFamily(roleVal) === 'Virtual Assistant')) {
+        p.set('include_va', '1');
+      }
+      if (platformVal && platformVal !== 'All') p.set('platform', platformVal);
+
+      const qKey = `${token || ''}::${p.toString()}`;
+      if (serverQueryCache.has(qKey) || inflightPrefetchKeys.has(qKey)) continue;
+      inflightPrefetchKeys.add(qKey);
+      try {
+        p.set('limit', '500');
+        let raw = [];
+        let hasMore = true;
+        while (hasMore) {
+          if (token !== currentSessionToken) return;
+          p.set('offset', String(raw.length));
+          const res = await resilientFetchWithRetry(`/api/jobs?${p.toString()}`, {}, 2);
+          if (!res.ok) break;
+          const data = await res.json();
+          const page = data.jobs || [];
+          raw.push(...page);
+          hasMore = Boolean(data.has_more) && page.length > 0;
+        }
+        if (token === currentSessionToken && raw.length >= 0) {
+          if (serverQueryCache.size >= MAX_QUERY_CACHE_ENTRIES) {
+            const oldestKey = serverQueryCache.keys().next().value;
+            if (oldestKey !== undefined) serverQueryCache.delete(oldestKey);
+          }
+          serverQueryCache.set(qKey, raw.map(j => ({ ...j })));
+        }
+      } catch (_) {
+        // Silent background prefetch failure is harmless
+      } finally {
+        inflightPrefetchKeys.delete(qKey);
+      }
+    }
+  }, 120);
+}
 
 function buildFilteredJobsFromRaw(rawServerJobs, { isVA, isSavedView, isAppliedView }) {
   let jobs = (rawServerJobs || []).map(j => ({ ...j }));
@@ -1435,7 +1592,7 @@ async function loadJobs() {
   const pipelineHeader = document.getElementById('pipeline-hub-header');
   const stageFilterRow = document.getElementById('pipeline-stage-filter-row');
   const feedSummary = document.querySelector('.feed-summary-bar');
-  if (feedSummary) feedSummary.style.display = status === 'gmail' ? 'none' : '';
+  if (feedSummary) feedSummary.style.display = currentStatus === 'gmail' ? 'none' : '';
   const activeView = typeof currentViewMode !== 'undefined' ? currentViewMode : 'tech';
   const isSavedView = activeView === 'tech' && currentStatus === 'saved';
   const tagFilterRow = document.getElementById('tag-filter-row');
@@ -1472,6 +1629,7 @@ async function loadJobs() {
 
     const queryKey = `${token || ''}::${params.toString()}`;
     const hasCached = serverQueryCache.has(queryKey);
+    let renderedFromPreview = false;
 
     if (hasCached) {
       const cachedFiltered = buildFilteredJobsFromRaw(serverQueryCache.get(queryKey), { isVA, isSavedView, isAppliedView });
@@ -1486,30 +1644,33 @@ async function loadJobs() {
       updateSummaryText(cachedFiltered.length);
       if (loadingIndicator) loadingIndicator.hidden = true;
       if (feed?.classList) feed.classList.remove('is-filtering');
+      renderedFromPreview = true;
     } else {
-      const hasRenderedFeed = Boolean(feed && feed.innerHTML && !feed.innerHTML.includes('state-loading'));
-      if (feed?.setAttribute) feed.setAttribute('aria-busy', 'true');
-      if (hasRenderedFeed) {
-        if (feed?.classList) feed.classList.add('is-filtering');
+      const supersetPreview = findSupersetPreviewJobs(token, currentStatus, { isVA, isSavedView, isAppliedView });
+      if (supersetPreview !== null) {
+        jobsList = supersetPreview;
+        selectedIndex = 0;
+        renderJobs();
+        if (typeof updateCategoryChipCounts === 'function') updateCategoryChipCounts(supersetPreview);
+        updateSummaryText(supersetPreview.length);
+        if (feed?.setAttribute) feed.setAttribute('aria-busy', 'true');
         loadingIndicatorTimer = setTimeout(() => {
           if (sequence === loadJobsSequence && token === currentSessionToken && loadingIndicator) {
             loadingIndicator.hidden = false;
           }
         }, 180);
+        renderedFromPreview = true;
       } else {
+        if (feed?.setAttribute) feed.setAttribute('aria-busy', 'true');
         if (loadingIndicator) loadingIndicator.hidden = false;
-        feed.innerHTML = `
-          <div class="state-loading">
-            <div class="loading-spinner"></div>
-            <p>Scanning job opportunities across platforms...</p>
-          </div>
-        `;
+        feed.innerHTML = renderFeedSkeletonHtml(isVA ? 'va' : currentStatus);
       }
     }
 
     params.set('limit', '500');
     let rawJobs = [];
     let hasMore = true;
+    let progressivePage1Rendered = false;
     while (hasMore) {
       if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
       params.set('offset', String(rawJobs.length));
@@ -1519,6 +1680,16 @@ async function loadJobs() {
       const page = data.jobs || [];
       rawJobs.push(...page);
       hasMore = Boolean(data.has_more) && page.length > 0;
+
+      if (hasMore && !renderedFromPreview && !progressivePage1Rendered && rawJobs.length > 0) {
+        if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
+        const page1Jobs = buildFilteredJobsFromRaw(rawJobs, { isVA, isSavedView, isAppliedView });
+        jobsList = page1Jobs;
+        selectedIndex = 0;
+        renderJobs();
+        updateSummaryText(data.total || page1Jobs.length);
+        progressivePage1Rendered = true;
+      }
     }
     if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
 
@@ -1535,9 +1706,10 @@ async function loadJobs() {
       const visibleIds = new Set(jobs.map(j => j.id));
       selectedJobIds = new Set([...selectedJobIds].filter(id => visibleIds.has(id)));
     }
-    renderJobs();
+    renderJobs(progressivePage1Rendered ? { preserveWindow: true } : undefined);
     if (typeof updateCategoryChipCounts === 'function') updateCategoryChipCounts(jobs);
     updateSummaryText(jobs.length);
+    prefetchSiblingStatusTabs(token);
   } catch (err) {
     if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
     feed.innerHTML = `
@@ -2904,6 +3076,9 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
   if (targetJob) overrideUpdate.job = { ...targetJob, ...overrideUpdate };
 
   saveLocalStatusOverride(jobId, overrideUpdate);
+  if (typeof syncJobMutationInQueryCache === 'function') {
+    syncJobMutationInQueryCache(jobId, overrideUpdate, jobIdx !== -1 ? jobsList[jobIdx] : null);
+  }
 
   // 2. In-place Optimistic UI Updates
   if (status === 'ignored') {
@@ -2933,6 +3108,9 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
         overrideUpdate.status = 'new';
         if (targetJob) overrideUpdate.job = { ...targetJob, status: 'new' };
         saveLocalStatusOverride(jobId, overrideUpdate);
+  if (typeof syncJobMutationInQueryCache === 'function') {
+    syncJobMutationInQueryCache(jobId, overrideUpdate, jobIdx !== -1 ? jobsList[jobIdx] : null);
+  }
 
         const cardEl = document.getElementById(`job-card-${jobIdx}`);
         if (cardEl) cardEl.classList.add('card-dismissing');
@@ -2970,6 +3148,9 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
         overrideUpdate.status = 'new';
         if (targetJob) overrideUpdate.job = { ...targetJob, status: 'new' };
         saveLocalStatusOverride(jobId, overrideUpdate);
+  if (typeof syncJobMutationInQueryCache === 'function') {
+    syncJobMutationInQueryCache(jobId, overrideUpdate, jobIdx !== -1 ? jobsList[jobIdx] : null);
+  }
 
         const cardEl = document.getElementById(`job-card-${jobIdx}`);
         if (cardEl) cardEl.classList.add('card-dismissing');
