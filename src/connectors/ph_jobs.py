@@ -266,7 +266,7 @@ class JobStreetConnector(BaseConnector):
             if arr and arr.lower() not in loc.lower():
                 loc = f"{loc} ({arr})"
             sal = (item.get("salaryLabel") or "").strip()
-            exp_lvl = classify_experience_level(title, desc, salary=sal, platform=self.platform)
+            exp_lvl = classify_experience_level(title, desc, salary=sal, platform=self.platform, allow_skill_fallback=False)
             if exp_lvl == "Unspecified" and len(desc) < 300 and can_fetch_details and detail_fetches < 15:
                 detail_fetches += 1
                 try:
@@ -280,9 +280,13 @@ class JobStreetConnector(BaseConnector):
                                 desc = full_ad
                                 if not self.accepts_opportunity(title, desc):
                                     continue
-                                exp_lvl = classify_experience_level(title, desc, salary=sal, platform=self.platform)
+                                exp_lvl = classify_experience_level(
+                                    title, desc, salary=sal, platform=self.platform, allow_skill_fallback=False
+                                )
                 except Exception:
                     pass
+            if exp_lvl == "Unspecified":
+                exp_lvl = classify_experience_level(title, desc, salary=sal, platform=self.platform, allow_skill_fallback=True)
             jobs.append(Job(
                 title=title,
                 company=comp,

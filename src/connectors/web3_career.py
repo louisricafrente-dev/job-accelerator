@@ -163,7 +163,7 @@ class Web3CareerConnector(BaseConnector):
                         job_url=job_url,
                         salary=salary,
                         role_category=self.job_role(title, desc),
-                        experience_level=classify_experience_level(title, desc),
+                        experience_level=classify_experience_level(title, desc, salary=salary),
                         description=desc,
                         date_posted=raw_dt,
                     ))

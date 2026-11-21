@@ -765,6 +765,59 @@ def classify_salary_level(salary: str, *, description: str = "", platform: str =
     return ""
 
 
+def classify_open_level_by_skill(title: str, description: str = "") -> str:
+    """Layer 6: split open-level jobs into Junior / Entry (candidate core stack) or Mid-Level."""
+    title_lower = str(title or "").lower()
+    desc_lower = str(description or "").lower()
+    if any(re.search(p, title_lower) for p in NON_CANDIDATE_SPECIALIST_TITLE_PATTERNS):
+        return "Mid-Level"
+    combined = f"{title_lower} {desc_lower}"
+    if any(re.search(p, combined) for p in CANDIDATE_CORE_SKILL_PATTERNS):
+        return "Junior / Entry"
+    return "Mid-Level"
+
+
+NON_CANDIDATE_SPECIALIST_TITLE_PATTERNS = [
+    r"\bmulesoft\b", r"\bsalesforce\b", r"\bservicenow\b", r"\bsap\b", r"\babap\b",
+    r"\bcobol\b", r"\boracle\b", r"\bnetsuite\b", r"\bdynamics 365\b", r"\bsharepoint\b",
+    r"\bpower automate\b", r"\bpower apps\b", r"\bpower bi\b", r"\btableau\b", r"\blooker\b",
+    r"\bsnowflake\b", r"\bdatabricks\b", r"\bairflow\b", r"\bspark\b", r"\bhadoop\b",
+    r"\bscala\b", r"\bgolang\b", r"\bgo (?:developer|engineer)\b", r"\brust\b", r"\bruby\b",
+    r"\brails\b", r"\belixir\b", r"\berlang\b", r"\bperl\b", r"\bdelphi\b",
+    r"\bflutter\b", r"\bdart\b", r"\bxamarin\b", r"\bionic\b", r"\bios\b",
+    r"\bswift\b", r"\bobjective-c\b", r"\bunity\b", r"\bunreal\b", r"\broblox\b", r"\bgodot\b",
+    r"\bblockchain\b", r"\bsolidity\b", r"\bweb3\b", r"\bsmart contract\b",
+    r"\bdevops\b", r"\bdevsecops\b", r"\bsite reliability\b", r"\bsre\b",
+    r"\bkubernetes\b", r"\bterraform\b", r"\bnetwork engineer\b",
+    r"\bsystems? administrator\b", r"\bsysadmin\b", r"\bdatabase administrator\b", r"\bdba\b",
+    r"\bcybersecurity\b", r"\bsecurity engineer\b", r"\bsecurity analyst\b",
+    r"\bpenetration tester\b", r"\bpentester\b", r"\bsoc analyst\b", r"\bnoc engineer\b",
+    r"\bdata scientist\b", r"\bdata engineer\b", r"\bmachine learning engineer\b", r"\bmlops\b",
+    r"\bembedded\b", r"\bfirmware\b", r"\biot\b", r"\bshopify\b", r"\bmagento\b", r"\bdrupal\b",
+    r"\bseo\b", r"\bvideo editor\b", r"\bgraphic designer\b", r"\bmotion designer\b",
+    r"\bcopywriter\b", r"\bsales\b", r"\bconsultant\b", r"\badvisor\b", r"\bcounsel\b",
+    r"\bcardiologist\b", r"\bphysician\b", r"\bdetective\b", r"\binterpreter\b", r"\btranslator\b",
+    r"\bpython (?:developer|dev|engineer)\b",
+]
+
+CANDIDATE_CORE_SKILL_PATTERNS = [
+    r"\bkotlin\b", r"\bjetpack compose\b", r"\bcompose multiplatform\b", r"\bcmp\b",
+    r"\bandroid\b", r"\bexoplayer\b", r"\bmedia3\b",
+    r"\breact\b", r"\bnext\.?js\b", r"\bnode\.?js\b", r"\bexpress\b", r"\bmongodb\b", r"\bmern\b",
+    r"\bphp\b", r"\bmysql\b", r"\bjavascript\b", r"\btypescript\b", r"\btailwind\b",
+    r"\bsocket\.?io\b", r"\bfirebase\b", r"\bsqlite\b",
+    r"\bjava\b", r"\bc#(?:[\s/,\.-]|$)", r"\.net\b", r"\bwinforms\b", r"\bhtml\b", r"\bcss\b", r"\brest\s*api\b",
+    r"\bplaywright\b", r"\bmanual test", r"\bqa tester\b", r"\bsoftware tester\b",
+    r"\bqa analyst\b", r"\btest analyst\b", r"\bquality assurance\b", r"\bqa engineer\b",
+    r"\btest engineer\b", r"\btester\b",
+    r"\bweb (?:developer|dev|engineer)\b", r"\bfront[- ]?end\b", r"\bback[- ]?end\b",
+    r"\bfull[- ]?stack\b", r"\bsoftware (?:engineer|developer|dev)\b",
+    r"\bapplication (?:developer|engineer)\b", r"\bmobile (?:developer|engineer|app)\b",
+    r"\bprogrammer\b", r"\bai (?:engineer|developer)\b", r"\bgenerative ai\b", r"\bgen ai\b",
+    r"\bllm\b", r"\bprompt engineer", r"\bwordpress\b",
+]
+
+
 def classify_experience_level(
     title: str,
     description: str = "",
@@ -772,6 +825,7 @@ def classify_experience_level(
     salary: str = "",
     raw_level: str = "",
     platform: str = "",
+    allow_skill_fallback: bool = True,
 ) -> str:
     t_str = str(title or "")
     d_str = str(description or "")
@@ -819,7 +873,9 @@ def classify_experience_level(
     if soft_api_level:
         return soft_api_level
 
-    return "Unspecified"
+    if not allow_skill_fallback:
+        return "Unspecified"
+    return classify_open_level_by_skill(t_str, d_str)
 
 def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True, matrix: list = None, location: str = "", platform: str = "") -> bool:
     t_str = str(title or "")

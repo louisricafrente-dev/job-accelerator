@@ -55,7 +55,7 @@ def fetch_jobs(connector, limit=30):
                             platform="Upwork", tier=2, job_url=f"https://www.upwork.com/jobs/~{uid}",
                             salary=salary, description=description, date_posted=item.get("publish_at", ""),
                             role_category=classify_role(title, description),
-                            experience_level=classify_experience_level(title, description)))
+                            experience_level=classify_experience_level(title, description, salary=salary)))
         return jobs
     except urllib.error.HTTPError as exc:
         connector.last_error = f"flconsole HTTP {exc.code}; check authentication or quota"

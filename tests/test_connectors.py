@@ -269,5 +269,116 @@ class TestConnectors(unittest.TestCase):
         self.assertEqual(jobs[0].company, "Acme YC (W26)")
         self.assertEqual(jobs[0].platform, "Y Combinator")
 
+    @patch("urllib.request.urlopen")
+    def test_himalayas_prefers_full_description_over_short_excerpt(self, mock_urlopen):
+        import json
+        from src.connectors.remote_feed import HimalayasConnector
+        from src.models import normalize_date
+
+        today = normalize_date("today")
+        payload = {
+            "jobs": [
+                {
+                    "guid": "him-1",
+                    "title": "Software Engineer",
+                    "companyName": "Cloud Co",
+                    "applicationLink": "https://himalayas.app/jobs/1",
+                    "pubDate": f"{today}T08:00:00Z",
+                    "excerpt": "Short 150-char teaser without years.",
+                    "description": "<p>Full description: Fresh graduates are welcome to apply!</p>",
+                    "seniority": ["Entry-level"],
+                    "locationRestrictions": [{"name": "Worldwide"}],
+                }
+            ],
+            "totalCount": 1,
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(payload).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        connector = HimalayasConnector()
+        jobs = connector.fetch()
+        self.assertEqual(len(jobs), 1)
+        self.assertIn("Fresh graduates are welcome", jobs[0].description)
+        self.assertEqual(jobs[0].experience_level, "Junior / Entry")
+
+    def test_linkedin_guest_detail_parser_and_glassdoor_graphql_enricher(self):
+        import json
+
+        class FakeResp:
+            def __init__(self, status_code, text="", json_data=None):
+                self.status_code = status_code
+                self.text = text
+                self._json = json_data
+
+            def json(self):
+                return self._json
+
+        class TestLinkedInAdapter(JobSpyAdapter):
+            def get_url(self, url, **kwargs):
+                return FakeResp(
+                    200,
+                    """<html><body>
+                    <div class="show-more-less-html__markup">Build Kotlin apps with 0-2 years experience.</div>
+                    <ul><li class="description__job-criteria-item">
+                      <h3 class="description__job-criteria-subheader">Seniority level</h3>
+                      <span class="description__job-criteria-text">Associate</span>
+                    </li></ul></body></html>""",
+                )
+
+        li = TestLinkedInAdapter("LinkedIn", "linkedin", 1)
+        li.db_path = "dummy.db"
+        desc, raw_lvl = li._fetch_linkedin_job_detail("4492793459")
+        self.assertIn("Build Kotlin apps", desc)
+        self.assertEqual(raw_lvl, "Associate")
+
+        fake_session = MagicMock()
+        fake_session.get.return_value = FakeResp(200, '{"token": "csrf-123"}')
+        fake_session.post.return_value = FakeResp(
+            200,
+            json_data=[{"data": {"j101033": {"job": {"description": "<p>Seeking 3+ years React dev.</p>"}}}}],
+        )
+        gd = JobSpyAdapter("Glassdoor", "glassdoor", 1)
+        gd.db_path = "dummy.db"
+        records = [{"job_url": "https://www.glassdoor.com/job-listing/j?jl=101033", "description": ""}]
+        with patch("curl_cffi.requests.Session", return_value=fake_session):
+            gd._enrich_glassdoor_descriptions(records)
+        self.assertEqual(records[0]["description"], "Seeking 3+ years React dev.")
+
+    def test_jobstreet_detail_fetch_upgrades_unspecified_teaser(self):
+        from src.connectors.ph_jobs import JobStreetConnector
+        from src.models import normalize_date
+
+        today = normalize_date("today")
+
+        class FakeResp:
+            def __init__(self, status_code, text):
+                self.status_code = status_code
+                self.text = text
+
+        class TestJS(JobStreetConnector):
+            def get_url(self, url, **kwargs):
+                return FakeResp(
+                    200,
+                    '<div data-automation="jobAdDetails">Fresh graduates are welcome! Build React and Node apps.</div>',
+                )
+
+        js = TestJS()
+        js.db_path = "dummy.db"
+        parsed = js._parse_items([
+            {
+                "id": "999999",
+                "title": "Software Developer",
+                "teaser": "Work on exciting web projects.",
+                "bulletPoints": ["Remote setup"],
+                "listingDate": f"{today}T08:00:00Z",
+                "advertiser": {"description": "Manila Dev Co"},
+                "locations": [{"label": "Makati"}],
+            }
+        ])
+        self.assertEqual(len(parsed), 1)
+        self.assertIn("Fresh graduates are welcome!", parsed[0].description)
+        self.assertEqual(parsed[0].experience_level, "Junior / Entry")
+
 if __name__ == "__main__":
     unittest.main()

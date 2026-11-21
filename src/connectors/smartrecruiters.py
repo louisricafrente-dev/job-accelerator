@@ -115,6 +115,8 @@ class SmartRecruitersConnector(BaseConnector):
         if (not is_work_authorized_location(job.location, job.title, job.platform, job.description)
                 or not self.accepts_opportunity(job.title, job.description, allow_va_training=False)):
             return None
+        exp_obj = detail.get("experienceLevel") or {}
+        raw_level = str(exp_obj.get("id") or exp_obj.get("label") or "")
         job.role_category = self.job_role(job.title, job.description)
-        job.experience_level = classify_experience_level(job.title, job.description)
+        job.experience_level = classify_experience_level(job.title, job.description, raw_level=raw_level)
         return job

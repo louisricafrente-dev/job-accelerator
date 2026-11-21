@@ -432,8 +432,17 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                 cursor.execute(sql, params)
 
         for position, job in enumerate(jobs):
-            if classify_experience_level(job.title, job.description or "") == "Junior / Entry":
+            classified = classify_experience_level(
+                job.title,
+                job.description or "",
+                salary=job.salary or "",
+                raw_level=job.experience_level if job.experience_level not in ("", "Unspecified") else "",
+                platform=job.platform or "",
+            )
+            if classified == "Junior / Entry":
                 job.experience_level = "Junior / Entry"
+            elif job.experience_level in ("", "Unspecified") and classified != "Unspecified":
+                job.experience_level = classified
             if not is_work_authorized_location(job.location, job.title, job.platform, job.description):
                 skipped += 1
                 continue
@@ -559,11 +568,20 @@ def insert_jobs(db_path: str, jobs: List[Job], *, sync_cache: Optional[dict] = N
                     skipped += 1
 
                 encoded_sources = json.dumps(sources_list)
-                if (existing.get("experience_level") != "Junior / Entry"
-                        and classify_experience_level(existing["title"], new_description) == "Junior / Entry"):
+                reclassified = classify_experience_level(
+                    existing["title"],
+                    new_description,
+                    salary=new_salary,
+                    platform=existing.get("platform") or job.platform or "",
+                )
+                if existing.get("experience_level") != "Junior / Entry" and reclassified == "Junior / Entry":
                     write("UPDATE jobs SET experience_level = ? WHERE dedup_hash = ?",
                           ("Junior / Entry", existing["dedup_hash"]))
                     existing["experience_level"] = "Junior / Entry"
+                elif existing.get("experience_level") in ("", "Unspecified", None) and reclassified != "Unspecified":
+                    write("UPDATE jobs SET experience_level = ? WHERE dedup_hash = ?",
+                          (reclassified, existing["dedup_hash"]))
+                    existing["experience_level"] = reclassified
                 if (encoded_sources == existing["sources"]
                         and new_job_url == existing["job_url"]
                         and new_salary == (existing["salary"] or "")
@@ -688,7 +706,7 @@ def get_jobs(
                 for el in raw_levels:
                     if el in ("Junior / Entry", "Junior", "Entry", "Junior / Entry Level"):
                         senior_guard = "lower(title) NOT LIKE '%senior%' AND lower(title) NOT LIKE '%sr%' AND lower(title) NOT LIKE '%lead%' AND lower(title) NOT LIKE '%director%' AND lower(title) NOT LIKE '%manager%'"
-                        roman_guard = "lower(title) NOT LIKE '%engineer ii%' AND lower(title) NOT LIKE '%developer ii%' AND lower(title) NOT LIKE '%programmer ii%'"
+                        roman_guard = "lower(title) NOT LIKE '%engineer ii%' AND lower(title) NOT LIKE '%developer ii%' AND lower(title) NOT LIKE '%programmer ii%' AND lower(title) NOT LIKE '%tester ii%' AND lower(title) NOT LIKE '%analyst ii%'"
                         jr_sub = [
                             "experience_level = 'Junior / Entry'",
                             f"(lower(title) LIKE '%junior%' AND {senior_guard})",
@@ -704,6 +722,8 @@ def get_jobs(
                             f"(lower(title) LIKE '%engineer i%' AND {senior_guard} AND {roman_guard})",
                             f"(lower(title) LIKE '%developer i%' AND {senior_guard} AND {roman_guard})",
                             f"(lower(title) LIKE '%programmer i%' AND {senior_guard} AND {roman_guard})",
+                            f"(lower(title) LIKE '%tester i%' AND {senior_guard} AND {roman_guard})",
+                            f"(lower(title) LIKE '%analyst i%' AND {senior_guard} AND {roman_guard})",
                             f"(lower(title) LIKE '%0-1 year%' AND {senior_guard})",
                             f"(lower(title) LIKE '%0-2 year%' AND {senior_guard})"
                         ]

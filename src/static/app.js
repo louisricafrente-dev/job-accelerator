@@ -2503,7 +2503,7 @@ function filterByTag(jobs, tagFilter) {
       return rawKey.includes('PAYWALL') || rawKey.includes('BID') || rawKey.includes('CONNECT');
     }
     if (tagFilter === 'INELIGIBLE') {
-      return rawKey.includes('INELIGIBLE') || rawKey.includes('OUT_OF_SCOPE');
+      return rawKey.includes('INELIGIBLE') || rawKey.includes('OUT_OF_SCOPE') || rawKey.includes('CHECKED_SKIP');
     }
     if (tagFilter === 'ALREADY_APPLIED') {
       return rawKey.includes('APPLIED') || rawKey.includes('RECEIPT');
@@ -2606,6 +2606,7 @@ function needsHumanTagBadge(job) {
     'INELIGIBLE': { label: 'Ineligible', cls: 'badge-tag-ineligible' },
     'OUT_OF_SCOPE': { label: 'Out of Scope', cls: 'badge-tag-ineligible' },
     'OUT_OF_SCOPE_ROLE': { label: 'Out of Scope', cls: 'badge-tag-ineligible' },
+    'CHECKED_SKIP': { label: 'Checked (Skip)', cls: 'badge-tag-ineligible' },
     'EXPIRED': { label: 'Expired / Link Broken', cls: 'badge-tag-ineligible' },
     'EXPIRED_OR_REDIRECTED': { label: 'Expired / Link Broken', cls: 'badge-tag-ineligible' },
     'ALREADY_APPLIED': { label: 'Already Applied', cls: 'badge-tag-applied' },
