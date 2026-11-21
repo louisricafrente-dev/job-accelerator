@@ -1320,19 +1320,115 @@ function updateActiveSkillsBadge() {
 
 // Load jobs with current filters
 let loadJobsSequence = 0;
+const serverQueryCache = new Map();
+const MAX_QUERY_CACHE_ENTRIES = 25;
+let loadingIndicatorTimer = null;
+
+function buildFilteredJobsFromRaw(rawServerJobs, { isVA, isSavedView, isAppliedView }) {
+  let jobs = (rawServerJobs || []).map(j => ({ ...j }));
+
+  // Local-First Overrides Overlay
+  const overrides = getLocalStatusOverrides();
+  jobs.forEach(j => {
+    const ov = overrides[String(j.id)];
+    if (ov) {
+      if (ov.status !== undefined && ov.status !== null) j.status = ov.status;
+      if (ov.notes !== undefined && ov.notes !== null) j.notes = ov.notes;
+      if (ov.stage !== undefined && ov.stage !== null) j.pipeline_stage = ov.stage;
+      if (ov.follow_up_date !== undefined && ov.follow_up_date !== null) j.follow_up_date = ov.follow_up_date;
+      if (ov.application_handling !== undefined) j.application_handling = ov.application_handling;
+      if (ov.applied_at) j.applied_at = ov.applied_at;
+    }
+  });
+
+  // Filter out jobs whose overridden status doesn't match currentStatus
+  if (!isVA && currentStatus !== 'all') {
+    jobs = jobs.filter(j => (j.status || 'new') === currentStatus);
+  } else if (isVA) {
+    if (currentStatus === 'ignored') {
+      jobs = jobs.filter(j => j.status === 'ignored');
+    } else {
+      jobs = jobs.filter(j => j.status !== 'ignored');
+    }
+  }
+
+  if (isAppliedView && currentPipelineStage && currentPipelineStage !== 'All') {
+    const targetStage = currentPipelineStage.toLowerCase();
+    jobs = jobs.filter(j => {
+      const stage = (j.pipeline_stage || '').toLowerCase();
+      const notes = (j.notes || '').toLowerCase();
+      const handling = (j.application_handling || '').toLowerCase();
+      if (targetStage === 'screening' || targetStage === 'hr_screening') {
+        return stage === 'hr_screening' || stage === 'screening' || notes.includes('screening');
+      }
+      if (targetStage === 'tech_exam' || targetStage === 'tech' || targetStage === 'technical') {
+        return stage === 'tech_exam' || stage === 'tech' || notes.includes('assessment') || notes.includes('exam');
+      }
+      if (targetStage === 'final_interview' || targetStage === 'final' || targetStage === 'interview') {
+        return stage === 'final_interview' || stage === 'final' || stage === 'interview' || notes.includes('interview');
+      }
+      if (targetStage === 'offer') {
+        return stage === 'offer' || notes.includes('offer');
+      }
+      if (targetStage === 'rejected') {
+        return stage === 'rejected' || notes.includes('reject');
+      }
+      if (targetStage === 'needs_human' || targetStage === 'action_required') {
+        return handling === 'needs_human' || notes.includes('action required') || notes.includes('action items');
+      }
+      if (targetStage === 'applied') {
+        return stage === 'applied' || !stage;
+      }
+      return stage === targetStage;
+    });
+  }
+
+  // Inject any locally saved/applied jobs that the server might not have yet (e.g. serverless cold start / lag)
+  if ((currentStatus === 'applied' || currentStatus === 'saved') && !isVA &&
+      currentRole === 'All' && currentPlatform === 'All' && !searchQuery &&
+      currentLevel === 'All' && ['all', 'anytime'].includes(currentDateFilter) &&
+      !hasSalaryOnly && !remoteOnly) {
+    const existingIds = new Set(jobs.map(j => j.id));
+    for (const [idStr, ov] of Object.entries(overrides)) {
+      const idNum = parseInt(idStr, 10);
+      if (!existingIds.has(idNum) && ov.status === currentStatus && ov.job) {
+        const injectedJob = { ...ov.job };
+        injectedJob.status = ov.status;
+        if (ov.notes) injectedJob.notes = ov.notes;
+        if (ov.application_handling !== undefined) injectedJob.application_handling = ov.application_handling;
+        if (ov.stage) injectedJob.pipeline_stage = ov.stage;
+        if (ov.follow_up_date) injectedJob.follow_up_date = ov.follow_up_date;
+        if (ov.applied_at) injectedJob.applied_at = ov.applied_at;
+        jobs.unshift(injectedJob);
+      }
+    }
+  }
+
+  // Client-side Senior suppression
+  if (hideSenior && !selectedLevels.has('Senior / Lead')) {
+    const seniorRegex = /\b(senior|sr\.?|lead|principal|staff|architect|director|manager)\b/i;
+    jobs = jobs.filter(j => j.experience_level !== 'Senior / Lead' && !seniorRegex.test(j.title));
+  }
+
+  // Client-side Filter by Selected Skills
+  if (filterBySkillsOnly && userStack.trim()) {
+    jobs = jobs.filter(j => j.role_category === 'Video Editor' || getSkillsMatch(j).count > 0);
+  }
+
+  const applicationFilter = document.getElementById('application-filter')?.value || 'all';
+  if (applicationFilter !== 'all') {
+    jobs = filterByApplicationHandling(jobs, applicationFilter);
+  }
+  if (isSavedView) jobs = filterByTag(jobs, document.getElementById('tag-filter')?.value || 'all');
+  return jobs;
+}
+
 async function loadJobs() {
   const sequence = ++loadJobsSequence;
   const token = currentSessionToken;
   const feed = document.getElementById('job-feed');
   const loadingIndicator = document.getElementById('feed-loading-indicator');
-  if (loadingIndicator) loadingIndicator.hidden = false;
-  if (feed?.setAttribute) feed.setAttribute('aria-busy', 'true');
-  feed.innerHTML = `
-    <div class="state-loading">
-      <div class="loading-spinner"></div>
-      <p>Scanning job opportunities across platforms...</p>
-    </div>
-  `;
+  clearTimeout(loadingIndicatorTimer);
 
   const handlingFilterRow = document.getElementById('application-filter-row');
   if (handlingFilterRow) handlingFilterRow.style.display = 'flex';
@@ -1374,114 +1470,65 @@ async function loadJobs() {
       params.set('pipeline_stage', currentPipelineStage);
     }
 
+    const queryKey = `${token || ''}::${params.toString()}`;
+    const hasCached = serverQueryCache.has(queryKey);
+
+    if (hasCached) {
+      const cachedFiltered = buildFilteredJobsFromRaw(serverQueryCache.get(queryKey), { isVA, isSavedView, isAppliedView });
+      jobsList = cachedFiltered;
+      selectedIndex = 0;
+      if (typeof selectedJobIds !== 'undefined') {
+        const visibleIds = new Set(cachedFiltered.map(j => j.id));
+        selectedJobIds = new Set([...selectedJobIds].filter(id => visibleIds.has(id)));
+      }
+      renderJobs();
+      if (typeof updateCategoryChipCounts === 'function') updateCategoryChipCounts(cachedFiltered);
+      updateSummaryText(cachedFiltered.length);
+      if (loadingIndicator) loadingIndicator.hidden = true;
+      if (feed?.classList) feed.classList.remove('is-filtering');
+    } else {
+      const hasRenderedFeed = Boolean(feed && feed.innerHTML && !feed.innerHTML.includes('state-loading'));
+      if (feed?.setAttribute) feed.setAttribute('aria-busy', 'true');
+      if (hasRenderedFeed) {
+        if (feed?.classList) feed.classList.add('is-filtering');
+        loadingIndicatorTimer = setTimeout(() => {
+          if (sequence === loadJobsSequence && token === currentSessionToken && loadingIndicator) {
+            loadingIndicator.hidden = false;
+          }
+        }, 180);
+      } else {
+        if (loadingIndicator) loadingIndicator.hidden = false;
+        feed.innerHTML = `
+          <div class="state-loading">
+            <div class="loading-spinner"></div>
+            <p>Scanning job opportunities across platforms...</p>
+          </div>
+        `;
+      }
+    }
+
     params.set('limit', '500');
-    let jobs = [];
+    let rawJobs = [];
     let hasMore = true;
     while (hasMore) {
       if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
-      params.set('offset', String(jobs.length));
+      params.set('offset', String(rawJobs.length));
       const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, {}, 3);
       if (!res.ok) throw new Error(`Unable to load jobs (${res.status})`);
       const data = await res.json();
       const page = data.jobs || [];
-      jobs.push(...page);
+      rawJobs.push(...page);
       hasMore = Boolean(data.has_more) && page.length > 0;
     }
     if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
 
-    // Local-First Overrides Overlay
-    const overrides = getLocalStatusOverrides();
-    jobs.forEach(j => {
-      const ov = overrides[String(j.id)];
-      if (ov) {
-        if (ov.status !== undefined && ov.status !== null) j.status = ov.status;
-        if (ov.notes !== undefined && ov.notes !== null) j.notes = ov.notes;
-        if (ov.stage !== undefined && ov.stage !== null) j.pipeline_stage = ov.stage;
-        if (ov.follow_up_date !== undefined && ov.follow_up_date !== null) j.follow_up_date = ov.follow_up_date;
-        if (ov.application_handling !== undefined) j.application_handling = ov.application_handling;
-        if (ov.applied_at) j.applied_at = ov.applied_at;
-      }
-    });
-
-    // Filter out jobs whose overridden status doesn't match currentStatus
-    if (!isVA && currentStatus !== 'all') {
-      jobs = jobs.filter(j => (j.status || 'new') === currentStatus);
-    } else if (isVA) {
-      if (currentStatus === 'ignored') {
-        jobs = jobs.filter(j => j.status === 'ignored');
-      } else {
-        jobs = jobs.filter(j => j.status !== 'ignored');
-      }
+    if (serverQueryCache.size >= MAX_QUERY_CACHE_ENTRIES) {
+      const oldestKey = serverQueryCache.keys().next().value;
+      if (oldestKey !== undefined) serverQueryCache.delete(oldestKey);
     }
+    serverQueryCache.set(queryKey, rawJobs.map(j => ({ ...j })));
 
-    if (isAppliedView && currentPipelineStage && currentPipelineStage !== 'All') {
-      const targetStage = currentPipelineStage.toLowerCase();
-      jobs = jobs.filter(j => {
-        const stage = (j.pipeline_stage || '').toLowerCase();
-        const notes = (j.notes || '').toLowerCase();
-        const handling = (j.application_handling || '').toLowerCase();
-        if (targetStage === 'screening' || targetStage === 'hr_screening') {
-          return stage === 'hr_screening' || stage === 'screening' || notes.includes('screening');
-        }
-        if (targetStage === 'tech_exam' || targetStage === 'tech' || targetStage === 'technical') {
-          return stage === 'tech_exam' || stage === 'tech' || notes.includes('assessment') || notes.includes('exam');
-        }
-        if (targetStage === 'final_interview' || targetStage === 'final' || targetStage === 'interview') {
-          return stage === 'final_interview' || stage === 'final' || stage === 'interview' || notes.includes('interview');
-        }
-        if (targetStage === 'offer') {
-          return stage === 'offer' || notes.includes('offer');
-        }
-        if (targetStage === 'rejected') {
-          return stage === 'rejected' || notes.includes('reject');
-        }
-        if (targetStage === 'needs_human' || targetStage === 'action_required') {
-          return handling === 'needs_human' || notes.includes('action required') || notes.includes('action items');
-        }
-        if (targetStage === 'applied') {
-          return stage === 'applied' || !stage;
-        }
-        return stage === targetStage;
-      });
-    }
-
-    // Inject any locally saved/applied jobs that the server might not have yet (e.g. serverless cold start / lag)
-    if ((currentStatus === 'applied' || currentStatus === 'saved') && !isVA &&
-        currentRole === 'All' && currentPlatform === 'All' && !searchQuery &&
-        currentLevel === 'All' && ['all', 'anytime'].includes(currentDateFilter) &&
-        !hasSalaryOnly && !remoteOnly) {
-      const existingIds = new Set(jobs.map(j => j.id));
-      for (const [idStr, ov] of Object.entries(overrides)) {
-        const idNum = parseInt(idStr, 10);
-        if (!existingIds.has(idNum) && ov.status === currentStatus && ov.job) {
-          const injectedJob = { ...ov.job };
-          injectedJob.status = ov.status;
-          if (ov.notes) injectedJob.notes = ov.notes;
-          if (ov.application_handling !== undefined) injectedJob.application_handling = ov.application_handling;
-          if (ov.stage) injectedJob.pipeline_stage = ov.stage;
-          if (ov.follow_up_date) injectedJob.follow_up_date = ov.follow_up_date;
-          if (ov.applied_at) injectedJob.applied_at = ov.applied_at;
-          jobs.unshift(injectedJob);
-        }
-      }
-    }
-
-    // Client-side Senior suppression
-    if (hideSenior && !selectedLevels.has('Senior / Lead')) {
-      const seniorRegex = /\b(senior|sr\.?|lead|principal|staff|architect|director|manager)\b/i;
-      jobs = jobs.filter(j => j.experience_level !== 'Senior / Lead' && !seniorRegex.test(j.title));
-    }
-
-    // Client-side Filter by Selected Skills
-    if (filterBySkillsOnly && userStack.trim()) {
-      jobs = jobs.filter(j => j.role_category === 'Video Editor' || getSkillsMatch(j).count > 0);
-    }
-
-    const applicationFilter = document.getElementById('application-filter')?.value || 'all';
-    if (applicationFilter !== 'all') {
-      jobs = filterByApplicationHandling(jobs, applicationFilter);
-    }
-    if (isSavedView) jobs = filterByTag(jobs, document.getElementById('tag-filter')?.value || 'all');
+    const jobs = buildFilteredJobsFromRaw(rawJobs, { isVA, isSavedView, isAppliedView });
     jobsList = jobs;
     selectedIndex = 0;
     if (typeof selectedJobIds !== 'undefined') {
@@ -1499,11 +1546,13 @@ async function loadJobs() {
         <span class="sub-text">Check server connectivity on localhost:8000</span>
       </div>`;
   } finally {
+    clearTimeout(loadingIndicatorTimer);
     if (sequence === loadJobsSequence && token === currentSessionToken) {
+      if (feed?.classList) feed.classList.remove('is-filtering');
       if (feed?.setAttribute) feed.setAttribute('aria-busy', 'false');
       if (loadingIndicator) setTimeout(() => {
         if (sequence === loadJobsSequence) loadingIndicator.hidden = true;
-      }, 220);
+      }, 150);
     }
   }
 }
@@ -1511,17 +1560,46 @@ async function loadJobs() {
 // Skills matching calculator
 function getSkillsMatch(job) {
   if (!userStack || !userStack.trim()) return { count: 0, matched: [] };
-  const tokens = userStack.split(',').map(s => s.trim()).filter(Boolean);
-  const targetText = `${job.title} ${job.description || ''} ${job.company || ''} ${job.location || ''} ${job.role_category || ''} ${job.experience_level || ''} ${job.notes || ''}`.toLowerCase();
+  if (!job || typeof job !== 'object') return { count: 0, matched: [] };
+
+  const memoKey = `${userStack}\0${job.title || ''}\0${job.experience_level || ''}\0${job.notes || ''}`;
+  if (job._skillsMemoKey === memoKey && job._skillsMemoResult) {
+    return job._skillsMemoResult;
+  }
+
+  let compiled = getSkillsMatch._compiledStack;
+  if (!compiled || compiled.rawStack !== userStack) {
+    const rawTokens = userStack.split(',').map(s => s.trim()).filter(Boolean);
+    const compiledTokens = rawTokens.map(token => {
+      const subParts = (token.includes('/') ? token.split('/').map(p => p.trim()) : [token])
+        .filter(Boolean)
+        .map(part => {
+          const cleanPart = part.toLowerCase();
+          const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return {
+            cleanPart,
+            regex: new RegExp(`(^|\\W)${escaped}(\\W|$)`, 'i')
+          };
+        });
+      return { token, subParts };
+    });
+    compiled = { rawStack: userStack, tokens: compiledTokens };
+    getSkillsMatch._compiledStack = compiled;
+  }
+
+  const targetKey = `${job.title || ''}\0${job.notes || ''}`;
+  let targetText = job._lowerSearchTarget;
+  if (job._lowerSearchTargetKey !== targetKey || typeof targetText !== 'string') {
+    targetText = `${job.title || ''} ${job.description || ''} ${job.company || ''} ${job.location || ''} ${job.role_category || ''} ${job.experience_level || ''} ${job.notes || ''}`.toLowerCase();
+    job._lowerSearchTargetKey = targetKey;
+    job._lowerSearchTarget = targetText;
+  }
 
   const matched = [];
-  for (const token of tokens) {
-    const subParts = token.includes('/') ? token.split('/').map(p => p.trim()) : [token];
+  for (const { token, subParts } of compiled.tokens) {
     let isMatch = false;
 
-    for (const part of subParts) {
-      if (!part) continue;
-      const cleanPart = part.toLowerCase();
+    for (const { cleanPart, regex } of subParts) {
       if (cleanPart === 'junior' || cleanPart === 'entry' || cleanPart === 'junior / entry') {
         isMatch = job.experience_level === 'Junior / Entry';
         if (!job.experience_level || job.experience_level === 'Unspecified') {
@@ -1567,8 +1645,6 @@ function getSkillsMatch(job) {
         isMatch = true;
         break;
       }
-      const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`(^|\\W)${escaped}(\\W|$)`, 'i');
       if (regex.test(targetText)) {
         isMatch = true;
         break;
@@ -1579,7 +1655,10 @@ function getSkillsMatch(job) {
       matched.push(token);
     }
   }
-  return { count: matched.length, matched };
+  const result = { count: matched.length, matched };
+  job._skillsMemoKey = memoKey;
+  job._skillsMemoResult = result;
+  return result;
 }
 
 // Chip & Stack helpers
@@ -1762,7 +1841,7 @@ function saveActiveSkills(activeList) {
   if (filterBySkillsOnly) {
     loadJobs();
   } else {
-    renderJobs();
+    renderJobs({ preserveWindow: true });
     updateSummaryText(jobsList.length);
   }
 }
@@ -1956,7 +2035,284 @@ function showToast(message, actionText = null, onAction = null) {
 }
 
 // Render cards
-function renderJobs() {
+const FEED_BATCH_SIZE = 40;
+let renderedJobsCount = 0;
+let feedScrollObserver = null;
+let feedScrollListenerAttached = false;
+let feedScrollRafPending = false;
+
+function hydrateJobDescription(detailsEl, idx) {
+  if (!detailsEl || !detailsEl.open) return;
+  const body = detailsEl.querySelector('.job-description-body[data-lazy-desc="1"]');
+  if (!body) return;
+  const job = jobsList[idx];
+  body.textContent = (job && job.description) ? job.description : '';
+  body.removeAttribute('data-lazy-desc');
+}
+
+function renderJobCardHtml(job, idx, overrides, isBulkOn, isAppliedView) {
+  const isSelected = idx === selectedIndex ? 'selected' : '';
+  const isBulkChecked = isBulkOn && typeof selectedJobIds !== 'undefined' && selectedJobIds.has(job.id);
+  const ov = overrides[String(job.id)];
+
+  // Level badge class
+  let levelClass = 'badge-level-mid';
+  const expLevel = job.experience_level || '';
+  if (expLevel.includes('Junior') || expLevel.includes('Entry')) {
+    levelClass = 'badge-level-junior';
+  } else if (expLevel.includes('Senior') || expLevel.includes('Lead')) {
+    levelClass = 'badge-level-senior';
+  }
+
+  const skillsMatch = getSkillsMatch(job);
+
+  // Follow-up indicator logic
+  const currentStage = job.pipeline_stage || 'applied';
+  const appliedDays = getDaysSince(job.applied_at || job.date_posted || job.created_at);
+  let followUpBadge = '';
+  if (job.status === 'applied') {
+    if (currentStage === 'applied' && appliedDays >= 5) {
+      followUpBadge = `<span class="badge-followup-due" title="Applied ${appliedDays} days ago without status update">Follow-up due (${appliedDays}d)</span>`;
+    } else if (currentStage === 'offer') {
+      followUpBadge = `<span class="badge-offer-stage">Offer Received</span>`;
+    } else if (currentStage !== 'rejected') {
+      followUpBadge = `<span class="badge-date date-recent">${appliedDays}d in pipeline</span>`;
+    }
+  }
+
+  const descStr = job.description || '';
+  const isLazyDesc = descStr.length > 500;
+  const descBodyHtml = isLazyDesc
+    ? '<div class="job-description-body" data-lazy-desc="1"></div>'
+    : `<div class="job-description-body">${escapeHtml(descStr)}</div>`;
+
+  return `
+    <div class="job-card ${isSelected}${isBulkChecked ? ' is-bulk-selected' : ''}" id="job-card-${idx}" onclick="selectCard(${idx})">
+      ${isBulkOn ? `
+        <label class="bulk-check-wrap" onclick="event.stopPropagation()" title="Select ${escapeHtml(job.title)}">
+          <input type="checkbox" class="bulk-card-checkbox" ${isBulkChecked ? 'checked' : ''} onchange="toggleJobSelection(${job.id}, this.checked)" aria-label="Select ${escapeHtml(job.title)}">
+        </label>
+      ` : ''}
+      <div class="job-main-block">
+        <div class="job-headline">
+          <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer"
+             class="job-title-link" onclick="event.stopPropagation()">
+            ${escapeHtml(job.title)}
+          </a>
+          <span class="company-identifier">@ ${escapeHtml(job.company)}</span>
+          ${followUpBadge}
+          ${applicationHandlingLabel(job) ? `<span class="badge-date ${job.application_handling === 'in_progress' ? 'badge-in-progress' : ''}" title="Application handling">${applicationHandlingLabel(job)}</span>` : ''}
+          ${needsHumanTagBadge(job)}
+        </div>
+
+        <div class="job-meta-row">
+          ${(() => {
+            const rawSources = Array.isArray(job.sources) && job.sources.length > 0
+              ? job.sources
+              : [{ platform: job.platform, url: job.job_url }];
+            const seenPlatforms = new Set();
+            const sources = rawSources.filter(s => {
+              const key = String(s.platform || job.platform || '').toLowerCase();
+              if (seenPlatforms.has(key)) return false;
+              seenPlatforms.add(key);
+              return true;
+            });
+
+            if (sources.length > 1) {
+              const visibleSources = sources.slice(0, 4);
+              const extraCount = sources.length - visibleSources.length;
+              return `
+                <div class="multi-platform-group" title="Available on ${sources.length} job boards">
+                  <span class="multi-platform-label">Available on:</span>
+                  ${visibleSources.map(s => `
+                    <a href="${escapeHtml(safeJobUrl(s.url))}" target="_blank" rel="noopener noreferrer"
+                       class="badge-platform badge-source-link multi-source-badge"
+                       onclick="event.stopPropagation()"
+                       title="Open on ${escapeHtml(s.platform)}">
+                      ${escapeHtml(s.platform)} ↗
+                    </a>
+                  `).join('')}
+                  ${extraCount > 0 ? `<span class="multi-platform-label">+${extraCount} more</span>` : ''}
+                </div>
+              `;
+            }
+            const single = sources[0];
+            return `
+              <a href="${escapeHtml(safeJobUrl(single.url || job.job_url))}" target="_blank" rel="noopener noreferrer"
+                 class="badge-platform badge-source-link"
+                 onclick="event.stopPropagation()"
+                 title="Open on ${escapeHtml(single.platform || job.platform)}">
+                ${escapeHtml(single.platform || job.platform)} ↗
+              </a>
+            `;
+          })()}
+          <span class="badge-level ${levelClass}">${escapeHtml(expLevel)}</span>
+          <span class="job-location-tag">${escapeHtml((!job.location || job.location.toLowerCase() === 'nan' || job.location === 'None') ? 'Remote / Philippines' : job.location)}</span>
+          ${(job.salary && job.salary.toLowerCase() !== 'nan' && job.salary !== 'None') ? `<span class="job-salary-tag">${escapeHtml(job.salary)}</span>` : ''}
+          ${skillsMatch.count > 0 ? `<span class="job-skills-matched">Match: ${escapeHtml(skillsMatch.matched.join(', '))}</span>` : ''}
+          ${formatPostingDate(job.date_posted)}
+        </div>
+
+        ${descStr ? `<details class="job-description" data-job-idx="${idx}" onclick="event.stopPropagation()" ontoggle="hydrateJobDescription(this, ${idx})">
+            <summary>Read saved job details</summary>
+            <p class="job-description-note">Source-provided text; some sites supply only a preview.</p>
+            ${descBodyHtml}
+          </details>` : ''}
+
+          ${['saved', 'applied'].includes(job.status) ? `
+          <div class="application-handling-controls" onclick="event.stopPropagation()">
+            <label for="handling-${job.id}">Application:</label>
+            <select id="handling-${job.id}" class="stage-dropdown" onchange="changeApplicationHandling(${job.id}, this.value)">
+              <option value="" ${!job.application_handling && job.status !== 'applied' ? 'selected' : ''}>No application label</option>
+              <option value="in_progress" ${job.application_handling === 'in_progress' ? 'selected' : ''}>In progress</option>
+              <option value="needs_human" ${job.application_handling === 'needs_human' ? 'selected' : ''}>Needs human verification</option>
+              <option value="applied_ai" ${job.application_handling === 'applied_ai' ? 'selected' : ''}>Applied by AI</option>
+              <option value="applied_human" ${(job.application_handling === 'applied_human' || (!job.application_handling && job.status === 'applied')) ? 'selected' : ''}>Applied by me / human</option>
+            </select>
+            <span id="handling-save-${job.id}" role="status"></span>
+            ${job.status === 'saved' && ['needs_human', 'in_progress'].includes(job.application_handling) ? `<input type="text" class="notes-text-input" aria-label="${job.application_handling === 'in_progress' ? 'In progress notes' : 'Reason human verification is needed'}" placeholder="${job.application_handling === 'in_progress' ? 'Worker notes (e.g. AI model name, human applying)...' : 'What needs your attention?'}" value="${escapeHtml(job.notes || '')}" onblur="saveJobNotes(${job.id}, this.value)" onkeydown="if(event.key==='Enter')this.blur()"><button type="button" id="note-save-${job.id}" class="note-save-state" onclick="retryNoteSave(${job.id})">${ov?.save_state === 'failed' ? 'Failed - retry' : 'Saved'}</button>` : ''}
+          </div>` : ''}
+          ${isAppliedView ? `
+          <div class="pipeline-card-controls" onclick="event.stopPropagation()">
+            <div class="stage-select-wrapper">
+              <label class="stage-label-text">Stage:</label>
+              <select class="stage-dropdown" onchange="changeJobStage(${job.id}, this.value)">
+                ${PIPELINE_STAGES.map(s => `
+                  <option value="${s.key}" ${currentStage === s.key ? 'selected' : ''}>${s.label}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="followup-input-wrapper" title="Set follow-up reminder date">
+              <label class="stage-label-text">Follow Up:</label>
+              <input type="date" class="followup-date-input"
+                     value="${escapeHtml(job.follow_up_date ? job.follow_up_date.slice(0, 10) : '')}"
+                     onchange="saveJobFollowUp(${job.id}, this.value)">
+            </div>
+            <div class="notes-input-wrapper">
+              <input type="text" class="notes-text-input" placeholder="Recruiter notes or assessment deadline..."
+                     value="${escapeHtml(job.notes || '')}" onblur="saveJobNotes(${job.id}, this.value)"
+                     onkeydown="if(event.key==='Enter')this.blur()">
+              <button type="button" id="note-save-${job.id}" class="note-save-state" aria-live="polite"
+                      ${ov?.save_state === 'failed' ? '' : 'disabled'}
+                      onclick="retryNoteSave(${job.id})">${ov?.save_state === 'failed' ? 'Failed - retry' : ov ? 'Pending' : 'Saved'}</button>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+
+      <div class="card-actions-cluster" onclick="event.stopPropagation()">
+        <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer"
+           class="btn-card-apply" onclick="handleApplyClick(event, ${job.id})">
+          <span>${isAppliedView ? 'Open' : 'Apply'}</span>
+          ${ICONS.external}
+        </a>
+
+        <button class="btn-icon-action ${job.status === 'applied' ? 'is-applied' : ''}"
+                title="Mark as Applied" onclick="updateJobStatus(${job.id}, 'applied')">
+          ${ICONS.check}
+        </button>
+
+        <button class="btn-icon-action ${job.status === 'saved' ? 'is-saved' : ''}"
+                title="Save Opportunity" onclick="updateJobStatus(${job.id}, 'saved')">
+          ${ICONS.star}
+        </button>
+
+        <button class="btn-icon-action action-dismiss"
+                title="Archive Opportunity" onclick="updateJobStatus(${job.id}, 'ignored')">
+          ${ICONS.dismiss}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function renderFeedSentinelHtml() {
+  if (renderedJobsCount < jobsList.length) {
+    return `
+      <div id="feed-infinite-sentinel" class="feed-infinite-sentinel" aria-live="polite">
+        <span class="sentinel-spinner" aria-hidden="true"></span>
+        <span>Showing <strong>${renderedJobsCount}</strong> of <strong>${jobsList.length}</strong> opportunities &middot; Automatic scroll loading active</span>
+      </div>
+    `;
+  }
+  if (jobsList.length > FEED_BATCH_SIZE) {
+    return `
+      <div id="feed-infinite-sentinel" class="feed-infinite-sentinel is-complete">
+        <span>All <strong>${jobsList.length}</strong> opportunities loaded</span>
+      </div>
+    `;
+  }
+  return '';
+}
+
+function appendNextJobsBatch(targetCount) {
+  if (renderedJobsCount >= jobsList.length) return;
+  const nextCount = Math.min(
+    jobsList.length,
+    Math.max(targetCount || (renderedJobsCount + FEED_BATCH_SIZE), renderedJobsCount + FEED_BATCH_SIZE)
+  );
+  if (nextCount <= renderedJobsCount) return;
+
+  const sentinel = document.getElementById('feed-infinite-sentinel');
+  if (!sentinel) return;
+
+  const overrides = getLocalStatusOverrides();
+  const isBulkOn = typeof bulkSelectMode !== 'undefined' && bulkSelectMode;
+  const isAppliedView = currentStatus === 'applied';
+
+  let batchHtml = '';
+  for (let i = renderedJobsCount; i < nextCount; i++) {
+    batchHtml += renderJobCardHtml(jobsList[i], i, overrides, isBulkOn, isAppliedView);
+  }
+  sentinel.insertAdjacentHTML('beforebegin', batchHtml);
+  renderedJobsCount = nextCount;
+
+  const nextSentinelHtml = renderFeedSentinelHtml();
+  if (nextSentinelHtml) {
+    sentinel.outerHTML = nextSentinelHtml;
+  } else {
+    sentinel.remove();
+  }
+  setupFeedInfiniteScroll();
+}
+
+function setupFeedInfiniteScroll() {
+  if (feedScrollObserver) {
+    feedScrollObserver.disconnect();
+    feedScrollObserver = null;
+  }
+  if (renderedJobsCount >= jobsList.length) return;
+
+  const sentinel = document.getElementById('feed-infinite-sentinel');
+  if (!sentinel) return;
+
+  if (typeof IntersectionObserver !== 'undefined') {
+    feedScrollObserver = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) {
+        appendNextJobsBatch();
+      }
+    }, { root: null, rootMargin: '700px 0px', threshold: 0.01 });
+    feedScrollObserver.observe(sentinel);
+  }
+
+  if (!feedScrollListenerAttached && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    feedScrollListenerAttached = true;
+    window.addEventListener('scroll', () => {
+      if (feedScrollRafPending || renderedJobsCount >= jobsList.length) return;
+      feedScrollRafPending = true;
+      const schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn => setTimeout(fn, 16));
+      schedule(() => {
+        feedScrollRafPending = false;
+        const s = document.getElementById('feed-infinite-sentinel');
+        if (s && s.getBoundingClientRect().top <= (window.innerHeight || 800) + 700) {
+          appendNextJobsBatch();
+        }
+      });
+    }, { passive: true });
+  }
+}
+
+function renderJobs(options = {}) {
   const feed = document.getElementById('job-feed');
   let headerHtml = '';
   if (currentStatus === 'saved' && currentViewMode !== 'va') {
@@ -1985,182 +2341,33 @@ function renderJobs() {
   }
 
   if (jobsList.length === 0) {
+    renderedJobsCount = 0;
+    if (feedScrollObserver) {
+      feedScrollObserver.disconnect();
+      feedScrollObserver = null;
+    }
     feed.innerHTML = headerHtml + renderEmptyStateHtml();
     if (typeof syncWorkspaceModesUI === 'function') syncWorkspaceModesUI();
     if (typeof renderInspectorPane === 'function') renderInspectorPane();
     return;
   }
 
+  const preserveWindow = Boolean(options && options.preserveWindow && renderedJobsCount > 0);
+  renderedJobsCount = preserveWindow
+    ? Math.min(jobsList.length, Math.max(FEED_BATCH_SIZE, renderedJobsCount, selectedIndex + 1))
+    : Math.min(jobsList.length, Math.max(FEED_BATCH_SIZE, selectedIndex + 1));
+
+  const overrides = getLocalStatusOverrides();
   const isBulkOn = typeof bulkSelectMode !== 'undefined' && bulkSelectMode;
-  feed.innerHTML = headerHtml + jobsList.map((job, idx) => {
-    const isSelected = idx === selectedIndex ? 'selected' : '';
-    const isBulkChecked = isBulkOn && typeof selectedJobIds !== 'undefined' && selectedJobIds.has(job.id);
+  const isAppliedView = currentStatus === 'applied';
 
-    // Level badge class
-    let levelClass = 'badge-level-mid';
-    if (job.experience_level.includes('Junior') || job.experience_level.includes('Entry')) {
-      levelClass = 'badge-level-junior';
-    } else if (job.experience_level.includes('Senior') || job.experience_level.includes('Lead')) {
-      levelClass = 'badge-level-senior';
-    }
+  let cardsHtml = '';
+  for (let i = 0; i < renderedJobsCount; i++) {
+    cardsHtml += renderJobCardHtml(jobsList[i], i, overrides, isBulkOn, isAppliedView);
+  }
 
-    const skillsMatch = getSkillsMatch(job);
-
-    // Follow-up indicator logic
-    const currentStage = job.pipeline_stage || 'applied';
-    const appliedDays = getDaysSince(job.applied_at || job.date_posted || job.created_at);
-    let followUpBadge = '';
-    if (job.status === 'applied') {
-      if (currentStage === 'applied' && appliedDays >= 5) {
-        followUpBadge = `<span class="badge-followup-due" title="Applied ${appliedDays} days ago without status update">Follow-up due (${appliedDays}d)</span>`;
-      } else if (currentStage === 'offer') {
-        followUpBadge = `<span class="badge-offer-stage">Offer Received</span>`;
-      } else if (currentStage !== 'rejected') {
-        followUpBadge = `<span class="badge-date date-recent">${appliedDays}d in pipeline</span>`;
-      }
-    }
-
-    const isAppliedView = currentStatus === 'applied';
-
-    return `
-      <div class="job-card ${isSelected}${isBulkChecked ? ' is-bulk-selected' : ''}" id="job-card-${idx}" onclick="selectCard(${idx})">
-        ${isBulkOn ? `
-          <label class="bulk-check-wrap" onclick="event.stopPropagation()" title="Select ${escapeHtml(job.title)}">
-            <input type="checkbox" class="bulk-card-checkbox" ${isBulkChecked ? 'checked' : ''} onchange="toggleJobSelection(${job.id}, this.checked)" aria-label="Select ${escapeHtml(job.title)}">
-          </label>
-        ` : ''}
-        <div class="job-main-block">
-          <div class="job-headline">
-            <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer"
-               class="job-title-link" onclick="event.stopPropagation()">
-              ${escapeHtml(job.title)}
-            </a>
-            <span class="company-identifier">@ ${escapeHtml(job.company)}</span>
-            ${followUpBadge}
-            ${applicationHandlingLabel(job) ? `<span class="badge-date ${job.application_handling === 'in_progress' ? 'badge-in-progress' : ''}" title="Application handling">${applicationHandlingLabel(job)}</span>` : ''}
-            ${needsHumanTagBadge(job)}
-          </div>
-
-          <div class="job-meta-row">
-            ${(() => {
-              const rawSources = Array.isArray(job.sources) && job.sources.length > 0
-                ? job.sources
-                : [{ platform: job.platform, url: job.job_url }];
-              const seenPlatforms = new Set();
-              const sources = rawSources.filter(s => {
-                const key = String(s.platform || job.platform || '').toLowerCase();
-                if (seenPlatforms.has(key)) return false;
-                seenPlatforms.add(key);
-                return true;
-              });
-
-              if (sources.length > 1) {
-                const visibleSources = sources.slice(0, 4);
-                const extraCount = sources.length - visibleSources.length;
-                return `
-                  <div class="multi-platform-group" title="Available on ${sources.length} job boards">
-                    <span class="multi-platform-label">Available on:</span>
-                    ${visibleSources.map(s => `
-                      <a href="${escapeHtml(safeJobUrl(s.url))}" target="_blank" rel="noopener noreferrer"
-                         class="badge-platform badge-source-link multi-source-badge"
-                         onclick="event.stopPropagation()"
-                         title="Open on ${escapeHtml(s.platform)}">
-                        ${escapeHtml(s.platform)} ↗
-                      </a>
-                    `).join('')}
-                    ${extraCount > 0 ? `<span class="multi-platform-label">+${extraCount} more</span>` : ''}
-                  </div>
-                `;
-              }
-              const single = sources[0];
-              return `
-                <a href="${escapeHtml(safeJobUrl(single.url || job.job_url))}" target="_blank" rel="noopener noreferrer"
-                   class="badge-platform badge-source-link"
-                   onclick="event.stopPropagation()"
-                   title="Open on ${escapeHtml(single.platform || job.platform)}">
-                  ${escapeHtml(single.platform || job.platform)} ↗
-                </a>
-              `;
-            })()}
-            <span class="badge-level ${levelClass}">${escapeHtml(job.experience_level)}</span>
-            <span class="job-location-tag">${escapeHtml((!job.location || job.location.toLowerCase() === 'nan' || job.location === 'None') ? 'Remote / Philippines' : job.location)}</span>
-            ${(job.salary && job.salary.toLowerCase() !== 'nan' && job.salary !== 'None') ? `<span class="job-salary-tag">${escapeHtml(job.salary)}</span>` : ''}
-            ${skillsMatch.count > 0 ? `<span class="job-skills-matched">Match: ${escapeHtml(skillsMatch.matched.join(', '))}</span>` : ''}
-            ${formatPostingDate(job.date_posted)}
-          </div>
-
-          ${job.description ? `<details class="job-description" onclick="event.stopPropagation()">
-              <summary>Read saved job details</summary>
-              <p class="job-description-note">Source-provided text; some sites supply only a preview.</p>
-              <div class="job-description-body">${escapeHtml(job.description)}</div>
-            </details>` : ''}
-
-            ${['saved', 'applied'].includes(job.status) ? `
-            <div class="application-handling-controls" onclick="event.stopPropagation()">
-              <label for="handling-${job.id}">Application:</label>
-              <select id="handling-${job.id}" class="stage-dropdown" onchange="changeApplicationHandling(${job.id}, this.value)">
-                <option value="" ${!job.application_handling && job.status !== 'applied' ? 'selected' : ''}>No application label</option>
-                <option value="in_progress" ${job.application_handling === 'in_progress' ? 'selected' : ''}>In progress</option>
-                <option value="needs_human" ${job.application_handling === 'needs_human' ? 'selected' : ''}>Needs human verification</option>
-                <option value="applied_ai" ${job.application_handling === 'applied_ai' ? 'selected' : ''}>Applied by AI</option>
-                <option value="applied_human" ${(job.application_handling === 'applied_human' || (!job.application_handling && job.status === 'applied')) ? 'selected' : ''}>Applied by me / human</option>
-              </select>
-              <span id="handling-save-${job.id}" role="status"></span>
-              ${job.status === 'saved' && ['needs_human', 'in_progress'].includes(job.application_handling) ? `<input type="text" class="notes-text-input" aria-label="${job.application_handling === 'in_progress' ? 'In progress notes' : 'Reason human verification is needed'}" placeholder="${job.application_handling === 'in_progress' ? 'Worker notes (e.g. AI model name, human applying)...' : 'What needs your attention?'}" value="${escapeHtml(job.notes || '')}" onblur="saveJobNotes(${job.id}, this.value)" onkeydown="if(event.key==='Enter')this.blur()"><button type="button" id="note-save-${job.id}" class="note-save-state" onclick="retryNoteSave(${job.id})">${getLocalStatusOverrides()[String(job.id)]?.save_state === 'failed' ? 'Failed - retry' : 'Saved'}</button>` : ''}
-            </div>` : ''}
-            ${isAppliedView ? `
-            <div class="pipeline-card-controls" onclick="event.stopPropagation()">
-              <div class="stage-select-wrapper">
-                <label class="stage-label-text">Stage:</label>
-                <select class="stage-dropdown" onchange="changeJobStage(${job.id}, this.value)">
-                  ${PIPELINE_STAGES.map(s => `
-                    <option value="${s.key}" ${currentStage === s.key ? 'selected' : ''}>${s.label}</option>
-                  `).join('')}
-                </select>
-              </div>
-              <div class="followup-input-wrapper" title="Set follow-up reminder date">
-                <label class="stage-label-text">Follow Up:</label>
-                <input type="date" class="followup-date-input"
-                       value="${escapeHtml(job.follow_up_date ? job.follow_up_date.slice(0, 10) : '')}"
-                       onchange="saveJobFollowUp(${job.id}, this.value)">
-              </div>
-              <div class="notes-input-wrapper">
-                <input type="text" class="notes-text-input" placeholder="Recruiter notes or assessment deadline..."
-                       value="${escapeHtml(job.notes || '')}" onblur="saveJobNotes(${job.id}, this.value)"
-                       onkeydown="if(event.key==='Enter')this.blur()">
-                <button type="button" id="note-save-${job.id}" class="note-save-state" aria-live="polite"
-                        ${getLocalStatusOverrides()[String(job.id)]?.save_state === 'failed' ? '' : 'disabled'}
-                        onclick="retryNoteSave(${job.id})">${getLocalStatusOverrides()[String(job.id)]?.save_state === 'failed' ? 'Failed - retry' : getLocalStatusOverrides()[String(job.id)] ? 'Pending' : 'Saved'}</button>
-              </div>
-            </div>
-          ` : ''}
-        </div>
-
-        <div class="card-actions-cluster" onclick="event.stopPropagation()">
-          <a href="${escapeHtml(safeJobUrl(job.job_url))}" target="_blank" rel="noopener noreferrer"
-             class="btn-card-apply" onclick="handleApplyClick(event, ${job.id})">
-            <span>${isAppliedView ? 'Open' : 'Apply'}</span>
-            ${ICONS.external}
-          </a>
-
-          <button class="btn-icon-action ${job.status === 'applied' ? 'is-applied' : ''}"
-                  title="Mark as Applied" onclick="updateJobStatus(${job.id}, 'applied')">
-            ${ICONS.check}
-          </button>
-
-          <button class="btn-icon-action ${job.status === 'saved' ? 'is-saved' : ''}"
-                  title="Save Opportunity" onclick="updateJobStatus(${job.id}, 'saved')">
-            ${ICONS.star}
-          </button>
-
-          <button class="btn-icon-action action-dismiss"
-                  title="Archive Opportunity" onclick="updateJobStatus(${job.id}, 'ignored')">
-            ${ICONS.dismiss}
-          </button>
-        </div>
-      </div>
-    `;
-  }).join('');
+  feed.innerHTML = headerHtml + cardsHtml + renderFeedSentinelHtml();
+  setupFeedInfiniteScroll();
   if (typeof syncWorkspaceModesUI === 'function') syncWorkspaceModesUI();
   if (typeof renderInspectorPane === 'function') renderInspectorPane();
 }
@@ -2168,6 +2375,9 @@ function renderJobs() {
 // Select card by index
 function selectCard(idx) {
   if (idx < 0 || idx >= jobsList.length) return;
+  if (idx >= renderedJobsCount) {
+    appendNextJobsBatch(idx + FEED_BATCH_SIZE);
+  }
   const oldCard = document.getElementById(`job-card-${selectedIndex}`);
   if (oldCard) oldCard.classList.remove('selected');
 
@@ -2652,7 +2862,7 @@ async function changeApplicationHandling(jobId, value) {
   if (!job) return;
   const applied = value === 'applied_ai' || value === 'applied_human';
   await updateJobStatus(jobId, applied && job.status !== 'applied' ? 'applied' : null, null, null, null, value);
-  renderJobs();
+  renderJobs({ preserveWindow: true });
   const failed = getLocalStatusOverrides()[String(jobId)]?.save_state === 'failed';
   const indicator = document.getElementById(`handling-save-${jobId}`);
   if (indicator) indicator.textContent = failed ? 'Save failed - change selection to retry' : 'Saved';
@@ -2709,7 +2919,7 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
     updateSummaryText(jobsList.length);
 
     setTimeout(() => {
-      renderJobs();
+      renderJobs({ preserveWindow: true });
       if (selectedIndex >= jobsList.length) {
         selectedIndex = Math.max(0, jobsList.length - 1);
       }
@@ -2730,7 +2940,7 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
         if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
         updateSummaryText(jobsList.length);
         setTimeout(() => {
-          renderJobs();
+          renderJobs({ preserveWindow: true });
           if (selectedIndex >= jobsList.length) {
             selectedIndex = Math.max(0, jobsList.length - 1);
           }
@@ -2744,7 +2954,7 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
         if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
         updateSummaryText(jobsList.length);
         setTimeout(() => {
-          renderJobs();
+          renderJobs({ preserveWindow: true });
           if (selectedIndex >= jobsList.length) {
             selectedIndex = Math.max(0, jobsList.length - 1);
           }
@@ -2769,7 +2979,7 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
         if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
         updateSummaryText(jobsList.length);
         setTimeout(() => {
-          renderJobs();
+          renderJobs({ preserveWindow: true });
           if (selectedIndex >= jobsList.length) {
             selectedIndex = Math.max(0, jobsList.length - 1);
           }
@@ -2789,7 +2999,7 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
         if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
         updateSummaryText(jobsList.length);
         setTimeout(() => {
-          renderJobs();
+          renderJobs({ preserveWindow: true });
           if (selectedIndex >= jobsList.length) {
             selectedIndex = Math.max(0, jobsList.length - 1);
           }
@@ -2806,7 +3016,7 @@ async function updateJobStatus(jobId, status = null, notes = null, stage = null,
         if (jobIdx >= 0) jobsList.splice(jobIdx, 1);
         updateSummaryText(jobsList.length);
         setTimeout(() => {
-          renderJobs();
+          renderJobs({ preserveWindow: true });
           if (selectedIndex >= jobsList.length) {
             selectedIndex = Math.max(0, jobsList.length - 1);
           }
@@ -3709,26 +3919,39 @@ function syncPresetSelect(preferredKey = '') {
   if (delBtn) delBtn.hidden = !(matchedKey && Boolean(customFilterPresets[matchedKey]));
 }
 
+const CHIP_CAT_VA_RE = /\b(virtual assistant|administrative assistant|executive assistant|remote assistant|customer support|customer service|chat support|email support|technical support|tech support|technical writer|data entry|data encoder|cyberbacker)\b/;
+const CHIP_CAT_QA_RE = /\b(qa|quality assurance|software test|tester|test automation|automation test|sdet|software development engineer in test|test analyst|test engineer|quality engineer)\b/;
+const CHIP_CAT_SEC_RE = /\b(cybersecurity|cyber security|security engineer|security analyst|soc analyst|penetration test|information security|application security|product security|devsecops|iam engineer|it auditor)\b/;
+const CHIP_CAT_IT_RE = /\b(it support|helpdesk|help desk|service desk|desktop support|systems administrator|system administrator|sysadmin|systems engineer|it engineer|network engineer|network administrator|noc engineer|database administrator|dba|it specialist|it operations|application support|software support|product support|implementation engineer|devops|cloud engineer|cloud architect|aws engineer|azure engineer|sre|site reliability|platform engineer|infrastructure engineer|build engineer|release engineer|salesforce administrator|servicenow administrator|crm administrator)\b/;
+const CHIP_CAT_DATA_RE = /\b(data analyst|data analytics|analytics analyst|reporting analyst|business intelligence|bi analyst|bi developer|power bi|tableau|data scientist|data science|data engineer|data engineering|analytics engineer|etl|data warehouse|machine learning|ml engineer|mlops|business analyst|systems analyst|system analyst|product analyst|operations analyst|gis analyst)\b/;
+
 function inferJobCategoryForChip(job) {
+  if (!job || typeof job !== 'object') return 'Web/Software Dev';
   const cat = String(job.role_category || '');
-  const title = ` ${String(job.title || '').toLowerCase().replace(/[-/.,]/g, ' ')} `;
-  if (cat === 'Video Editor') return 'Video Editor';
-  if (cat === 'Virtual Assistant' || /\b(virtual assistant|administrative assistant|executive assistant|remote assistant|customer support|customer service|chat support|email support|technical support|tech support|technical writer|data entry|data encoder|cyberbacker)\b/.test(title)) {
-    return 'Virtual Assistant';
+  const chipKey = `${cat}\0${job.title || ''}`;
+  if (job._chipCatKey === chipKey && job._chipCatVal) {
+    return job._chipCatVal;
   }
-  if (/\b(qa|quality assurance|software test|tester|test automation|automation test|sdet|software development engineer in test|test analyst|test engineer|quality engineer)\b/.test(title)) {
-    return 'QA / Testing';
+  let result = 'Web/Software Dev';
+  if (cat === 'Video Editor') {
+    result = 'Video Editor';
+  } else {
+    const title = ` ${String(job.title || '').toLowerCase().replace(/[-/.,]/g, ' ')} `;
+    if (cat === 'Virtual Assistant' || CHIP_CAT_VA_RE.test(title)) {
+      result = 'Virtual Assistant';
+    } else if (CHIP_CAT_QA_RE.test(title)) {
+      result = 'QA / Testing';
+    } else if (CHIP_CAT_SEC_RE.test(title)) {
+      result = 'Cybersecurity';
+    } else if (CHIP_CAT_IT_RE.test(title)) {
+      result = 'IT / Cloud / Infrastructure';
+    } else if (cat === 'Data/AI/ML' || CHIP_CAT_DATA_RE.test(title)) {
+      result = 'Data/AI/ML';
+    }
   }
-  if (/\b(cybersecurity|cyber security|security engineer|security analyst|soc analyst|penetration test|information security|application security|product security|devsecops|iam engineer|it auditor)\b/.test(title)) {
-    return 'Cybersecurity';
-  }
-  if (/\b(it support|helpdesk|help desk|service desk|desktop support|systems administrator|system administrator|sysadmin|systems engineer|it engineer|network engineer|network administrator|noc engineer|database administrator|dba|it specialist|it operations|application support|software support|product support|implementation engineer|devops|cloud engineer|cloud architect|aws engineer|azure engineer|sre|site reliability|platform engineer|infrastructure engineer|build engineer|release engineer|salesforce administrator|servicenow administrator|crm administrator)\b/.test(title)) {
-    return 'IT / Cloud / Infrastructure';
-  }
-  if (cat === 'Data/AI/ML' || /\b(data analyst|data analytics|analytics analyst|reporting analyst|business intelligence|bi analyst|bi developer|power bi|tableau|data scientist|data science|data engineer|data engineering|analytics engineer|etl|data warehouse|machine learning|ml engineer|mlops|business analyst|systems analyst|system analyst|product analyst|operations analyst|gis analyst)\b/.test(title)) {
-    return 'Data/AI/ML';
-  }
-  return 'Web/Software Dev';
+  job._chipCatKey = chipKey;
+  job._chipCatVal = result;
+  return result;
 }
 
 function updateCategoryChipCounts(jobs) {
@@ -3761,7 +3984,7 @@ function toggleBulkSelectMode(forceState) {
   if (!bulkSelectMode && typeof selectedJobIds !== 'undefined') {
     selectedJobIds.clear();
   }
-  renderJobs();
+  renderJobs({ preserveWindow: true });
 }
 
 function toggleJobSelection(jobId, checked) {
@@ -3781,7 +4004,7 @@ function selectAllVisibleJobs() {
   } else {
     jobsList.forEach(j => selectedJobIds.add(j.id));
   }
-  renderJobs();
+  renderJobs({ preserveWindow: true });
 }
 
 function syncBulkSelectionBar() {

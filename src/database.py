@@ -115,6 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_level ON jobs(experience_level);
 CREATE INDEX IF NOT EXISTS idx_jobs_category ON jobs(role_category);
 CREATE INDEX IF NOT EXISTS idx_jobs_tier ON jobs(tier);
 CREATE INDEX IF NOT EXISTS idx_jobs_url ON jobs(job_url);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_date ON jobs(status, date_posted DESC, updated_at DESC, id DESC);
 """
 
 try:

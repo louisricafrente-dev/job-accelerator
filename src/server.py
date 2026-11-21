@@ -1120,21 +1120,32 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = True)
     @app.route("/favicon.ico")
     def favicon_ico():
         static_dir = os.path.join(os.path.dirname(__file__), "static")
-        return bottle.static_file("favicon.ico", root=static_dir)
+        res = bottle.static_file("favicon.ico", root=static_dir)
+        res.set_header("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800")
+        return res
 
     @app.route("/favicon.svg")
     def favicon_svg():
         static_dir = os.path.join(os.path.dirname(__file__), "static")
-        return bottle.static_file("favicon.svg", root=static_dir, mimetype="image/svg+xml")
+        res = bottle.static_file("favicon.svg", root=static_dir, mimetype="image/svg+xml")
+        res.set_header("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800")
+        return res
 
     @app.route("/apple-touch-icon.png")
     def apple_touch_icon():
         static_dir = os.path.join(os.path.dirname(__file__), "static")
-        return bottle.static_file("apple-touch-icon.png", root=static_dir)
+        res = bottle.static_file("apple-touch-icon.png", root=static_dir)
+        res.set_header("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800")
+        return res
 
     @app.route("/static/<filepath:path>")
     def static_files(filepath: str):
         static_dir = os.path.join(os.path.dirname(__file__), "static")
-        return bottle.static_file(filepath, root=static_dir)
+        res = bottle.static_file(filepath, root=static_dir)
+        if bottle.request.query.get("v"):
+            res.set_header("Cache-Control", "public, max-age=31536000, immutable")
+        else:
+            res.set_header("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+        return res
 
     return app
