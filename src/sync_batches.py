@@ -129,6 +129,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                     "rate_limit_failures": 0 if clear_cloud_block else old.get("rate_limit_failures", 0),
                     "last_error": "" if clear_cloud_block else old.get("last_error", ""),
                     "revision": old.get("revision", 1),
+                    "initial_backfill_done": False if restart else bool(old.get("initial_backfill_done", False)),
                 }
         else:
             if cycle_expired or "window_since_ts" not in checkpoint:
@@ -184,8 +185,10 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                 if any(code in state.get("last_error", "") for code in ("404", "429")):
                     state.update(blocked_until=0, next_at=0, last_error="", deferred=False)
                 state["revision"] = revision
+                state["initial_backfill_done"] = False
                 state.pop("yield_counts", None)
                 state.pop("continue_page", None)
+            connector.initial_backfill_done = bool(state.get("initial_backfill_done", False))
             blocked_error = any(code in state.get("last_error", "").lower() for code in ("429", "403", "404", "410", "captcha", "rate limit", "forbidden", "cloudflare challenge", "requires verification"))
             if executor_switched_to_local and (
                 state.get("blocked_until", 0) > 0
@@ -549,6 +552,8 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
                         else:
                             step_delay = QUERY_DELAY_SECONDS
                         state["next_at"] = time.time() + (REFRESH_SECONDS if is_complete(connector, state) else step_delay)
+                        if is_complete(connector, state):
+                            state["initial_backfill_done"] = True
                     coverage_warning = state.get("coverage_warning", "")
                     telemetry[connector.platform] = {"status": "error" if error else "active", "count": len(jobs), "tier": connector.tier, "error": error,
                                                      "coverage_warning": coverage_warning,

@@ -69,7 +69,7 @@ class SmartRecruitersConnector(BaseConnector):
                 matches = [
                     row for row in rows
                     if isinstance(row, dict) and self.accepts_date(row.get("releasedDate"))
-                    and self.accepts_opportunity(row.get("name") or "", allow_va_training=False)
+                    and self.accepts_opportunity(row.get("name") or "", allow_va_training=True)
                 ]
                 if len(matches) > DETAIL_LIMIT:
                     warnings.append("detail cap reached")
@@ -113,7 +113,7 @@ class SmartRecruitersConnector(BaseConnector):
         job = Job(title, company, place, self.platform, self.tier, url,
                   date_posted=published, description=description)
         if (not is_work_authorized_location(job.location, job.title, job.platform, job.description)
-                or not self.accepts_opportunity(job.title, job.description, allow_va_training=False)):
+                or not self.accepts_opportunity(job.title, job.description, allow_va_training=True)):
             return None
         exp_obj = detail.get("experienceLevel") or {}
         raw_level = str(exp_obj.get("id") or exp_obj.get("label") or "")

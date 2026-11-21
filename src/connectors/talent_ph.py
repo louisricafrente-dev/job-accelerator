@@ -16,6 +16,8 @@ class TalentPHConnector(BaseConnector):
     platform = "Talent.com PH"
     tier = 1
     is_feed = True
+    revision = 2
+    min_window_days = 7
     QUERIES = (
         "software developer",
         "web developer",
@@ -27,6 +29,8 @@ class TalentPHConnector(BaseConnector):
         "qa engineer",
         "remote developer",
         "junior developer",
+        "virtual assistant",
+        "entry level virtual assistant",
     )
     MAX_PAGES = 2
 

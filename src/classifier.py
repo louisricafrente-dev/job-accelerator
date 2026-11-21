@@ -364,6 +364,8 @@ VA_PATTERNS = [
     r"\bvirtual assistant\b",
     r"\bvirtual administrative assistant\b",
     r"(?<!,\s)\bva\b(?!\s*[-–/]\s*gov)(?!\s*,\s*(?:usa|us|united states))\b",
+    r"\b(?:gva|eva|reva)\b",
+    r"\b(?:general|admin(?:istrative)?|executive|remote|personal|operations|office|e-?commerce|social media|marketing|real estate|property management|medical|healthcare|dental|hr|recruitment|project|research|client support|customer support|back[- ]?office|lead generation|tech(?:nical)?|ai)\s+(?:virtual\s+)?assistant\b",
     r"\bexecutive assistant\b",
     r"\badmin assistant\b",
     r"\badministrative assistant\b",
@@ -376,14 +378,21 @@ VA_PATTERNS = [
     r"\bemail management\b",
     r"\bcalendar management\b",
     r"\bcustomer support\b",
+    r"\b(?:chat|email)\s+support\b",
     r"\bresearch assistant\b"
 ]
 
 VA_TRAINING_PATTERNS = [
     r"\bwith training\b", r"\bpaid training\b", r"\bwill train\b", r"\btraining provided\b",
     r"\btraining\b", r"\bno experience\b", r"\bno experience required\b", r"\bzero experience\b",
+    r"\bno\s+(?:va|virtual\s+assistant|prior|previous|bpo|work)\s+experience\b",
     r"\bentry[- ]level\b", r"\bjunior\b", r"\btrainee\b", r"\bopen for fresh\b",
-    r"\bopen to fresh\b", r"\bbeginner\b", r"\bbeginners welcome\b", r"(?<!data\s)\bentry\s*(?:level|position|role)?\b",
+    r"\bopen to fresh\b", r"\bfresh[- ]?grad(?:uate)?s?\b", r"\bnew[- ]?grad(?:uate)?s?\b",
+    r"\bcollege[- ]?grad(?:uate)?s?\b", r"\bcareer[- ]?shifters?\b",
+    r"\bwilling\s+to\s+(?:learn|be\s+trained|undergo\s+training)\b", r"\bfast\s+learner\b", r"\beager\s+to\s+learn\b",
+    r"\b0[- ]?[12]\s*(?:yrs?|years?|mos?|months?)\b", r"\b(?:at\s+least\s+)?6\s+months?\b",
+    r"\bpart[- ]?time\b", r"\bflexible\s+(?:hours|schedule)\b", r"\bworking\s+students?\b", r"\bstudent[- ]?friendly\b",
+    r"\bbeginner\b", r"\bbeginners welcome\b", r"(?<!data\s)\bentry\s*(?:level|position|role)?\b",
     r"\bcyberbacker\b", r"\bathena\b", r"\bvirtudesk\b", r"\bpineapple staffing\b",
     r"\bno work experience\b", r"\bcomplete training\b", r"\bfull training\b", r"\bfree training\b"
 ]
@@ -414,7 +423,9 @@ def is_entry_training_va(title: str, description: str = "") -> bool:
         return False
     if re.search(r"\b(?:executive assistant to (?:the )?(?:ceo|president|vp|vice president|director|managing director|board))\b", title_lower):
         return False
-    return any(re.search(pat, text) for pat in VA_TRAINING_PATTERNS)
+    if re.search(r"\b(?:[2-9]|1\d)\+?\s*(?:years?|yrs?)\b", text):
+        return False
+    return any(re.search(pat, text) for pat in VA_TRAINING_PATTERNS) or description_accepts_entry(d_str)
 
 def is_non_tech(title: str, description: str = "") -> bool:
     t_str = str(title or "")
@@ -448,6 +459,11 @@ def is_non_tech(title: str, description: str = "") -> bool:
     if physical_role and not ("site reliability" in title_lower or re.search(r"\bsre\b", title_lower)):
         return True
 
+    if any(re.search(pat, title_lower) for pat in TECH_WHITELIST_OVERRIDE):
+        return False
+    if is_virtual_assistant(t_str, d_str):
+        return False
+
     # Non-software sales, presales, and marketing roles
     sales_role = re.search(
         r"\b(?:sales|presales|pre-sales|telemarketer|telemarketing|cold call(?:er|ing)?|account executive|account developer|business developer|business development|real estate|leasing|property management|broker|bidding)\b",
@@ -456,11 +472,6 @@ def is_non_tech(title: str, description: str = "") -> bool:
     if sales_role and not re.search(r"\b(?:software|web|full[- ]?stack|salesforce developer)\b", title_lower):
         return True
 
-    has_tech_override = any(re.search(pat, title_lower) for pat in TECH_WHITELIST_OVERRIDE)
-    if has_tech_override:
-        return False
-    if is_virtual_assistant(t_str, d_str):
-        return False
     return any(re.search(pat, text) for pat in NON_TECH_BLACKLIST)
 
 def description_accepts_entry(description: str) -> bool:

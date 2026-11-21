@@ -244,10 +244,14 @@ class TestClassifier(unittest.TestCase):
         self.assertFalse(is_relevant_opportunity("Medical Biller"))
         self.assertFalse(is_relevant_opportunity("Cashier"))
 
-        # VA matrix: only entry or training allowed
+        # VA matrix: only entry or training allowed (including specialized VAs)
         self.assertTrue(is_relevant_opportunity("Virtual Assistant (Paid Training)"))
         self.assertTrue(is_relevant_opportunity("Entry Level Virtual Assistant"))
         self.assertTrue(is_relevant_opportunity("Cyberbacker - Virtual Assistant (Training Provided)"))
+        self.assertTrue(is_relevant_opportunity("Entry Level Real Estate Virtual Assistant"))
+        self.assertTrue(is_relevant_opportunity("Junior Social Media Virtual Assistant"))
+        self.assertTrue(is_relevant_opportunity("General Virtual Assistant (Fresh Graduates Welcome)"))
+        self.assertTrue(is_relevant_opportunity("E-Commerce Virtual Assistant (With Training)"))
         self.assertFalse(is_relevant_opportunity("Executive Assistant (5 years exp required)"))
         self.assertFalse(is_relevant_opportunity("Senior Real Estate Virtual Assistant"))
 

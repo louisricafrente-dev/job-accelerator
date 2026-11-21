@@ -41,6 +41,10 @@ class NewPlatformConnectorMixin:
     def window_days(self) -> int:
         if self._window_days_override is not None:
             return self._window_days_override
+        if getattr(self, "initial_backfill_done", False):
+            if self._window_since is not None:
+                return max(DEFAULT_SCRAPE_WINDOW_DAYS, scrape_window_days(since=self._window_since))
+            return DEFAULT_SCRAPE_WINDOW_DAYS
         floor = max(
             default_new_platform_window(),
             int(getattr(self, "min_window_days", DEFAULT_SCRAPE_WINDOW_DAYS) or DEFAULT_SCRAPE_WINDOW_DAYS),
@@ -65,12 +69,17 @@ class BaseConnector(ABC):
     _window_days_override = None
     _window_since = None
     min_window_days: int = DEFAULT_SCRAPE_WINDOW_DAYS
+    initial_backfill_done: bool = False
     video_editor_mode = False
 
     @property
     def window_days(self) -> int:
         if self._window_days_override is not None:
             return self._window_days_override
+        if getattr(self, "initial_backfill_done", False):
+            if self._window_since is not None:
+                return max(DEFAULT_SCRAPE_WINDOW_DAYS, scrape_window_days(since=self._window_since))
+            return DEFAULT_SCRAPE_WINDOW_DAYS
         floor = max(
             DEFAULT_SCRAPE_WINDOW_DAYS,
             int(getattr(self, "min_window_days", DEFAULT_SCRAPE_WINDOW_DAYS) or DEFAULT_SCRAPE_WINDOW_DAYS),
@@ -94,6 +103,8 @@ class BaseConnector(ABC):
     def _effective_since(self):
         if self._window_days_override is not None or not isinstance(getattr(type(self), "window_days", None), property):
             return None
+        if getattr(self, "initial_backfill_done", False):
+            return self._window_since
         if isinstance(self, NewPlatformConnectorMixin):
             default_days = default_new_platform_window()
             if default_days > DEFAULT_SCRAPE_WINDOW_DAYS:

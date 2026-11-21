@@ -197,7 +197,7 @@ class RedditConnector(BaseConnector):
 
                 if not is_work_authorized_location(loc, clean_title, self.platform, selftext):
                     continue
-                if not self.accepts_opportunity(clean_title, selftext, allow_va_training=False):
+                if not self.accepts_opportunity(clean_title, selftext, allow_va_training=True):
                     continue
 
                 permalink = str(post.get("permalink") or "").strip()
@@ -329,7 +329,7 @@ class HackerNewsConnector(BaseConnector):
 
                 if not is_work_authorized_location(loc, title, self.platform, plain_text):
                     continue
-                if not self.accepts_opportunity(title, plain_text, allow_va_training=False):
+                if not self.accepts_opportunity(title, plain_text, allow_va_training=True):
                     continue
 
                 salary = _extract_salary(first_line) or _extract_salary(plain_text[:400])
@@ -398,7 +398,7 @@ class VueJobsConnector(BaseConnector):
                 seen_pairs.add(pair)
                 if not is_work_authorized_location(loc, title, self.platform, text_desc):
                     continue
-                if not self.accepts_opportunity(title, text_desc, allow_va_training=False):
+                if not self.accepts_opportunity(title, text_desc, allow_va_training=True):
                     continue
                 jobs.append(Job(
                     title=title,
@@ -461,7 +461,7 @@ class LaraJobsConnector(BaseConnector):
                     continue
                 if not is_work_authorized_location(loc, title, self.platform, desc):
                     continue
-                if not self.accepts_opportunity(title, desc, allow_va_training=False):
+                if not self.accepts_opportunity(title, desc, allow_va_training=True):
                     continue
                 jobs.append(Job(
                     title=title,

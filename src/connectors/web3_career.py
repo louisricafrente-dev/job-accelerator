@@ -153,7 +153,7 @@ class Web3CareerConnector(BaseConnector):
 
                     if not is_work_authorized_location(loc, title, self.platform, desc):
                         continue
-                    if not self.accepts_opportunity(title, desc, allow_va_training=False, location=loc, platform=self.platform):
+                    if not self.accepts_opportunity(title, desc, allow_va_training=True, location=loc, platform=self.platform):
                         continue
 
                     jobs.append(Job(

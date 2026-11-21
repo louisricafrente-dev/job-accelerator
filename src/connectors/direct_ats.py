@@ -29,7 +29,7 @@ class _DirectATSConnector(BaseConnector):
     def _company_jobs(self, company):
         raise NotImplementedError
 
-    def _build_job(self, title, company, location, url, published, description, *, allow_va_training=False):
+    def _build_job(self, title, company, location, url, published, description, *, allow_va_training=True):
         job = Job(
             title=title,
             company=company,
@@ -103,7 +103,7 @@ class GreenhouseConnector(_DirectATSConnector):
                         title
                         and self.accepts_date(published)
                         and is_work_authorized_location(loc, title, self.platform, "")
-                        and self.accepts_opportunity(title, "", allow_va_training=False)
+                        and self.accepts_opportunity(title, "", allow_va_training=True)
                     ):
                         matches.append((row, published, title, loc))
                 if len(matches) > self.DETAIL_LIMIT:

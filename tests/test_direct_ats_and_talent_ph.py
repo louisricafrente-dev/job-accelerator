@@ -862,6 +862,9 @@ class DirectATSAndTalentPHTests(TestCase):
             board.window_since = recent_since
             self.assertEqual(board.window_days, expected_days, msg=cls.__name__)
             self.assertIsNone(board._effective_since(), msg=cls.__name__)
+            board.initial_backfill_done = True
+            self.assertEqual(board.window_days, 1, msg=cls.__name__)
+            self.assertEqual(board._effective_since(), recent_since, msg=cls.__name__)
 
     def test_vuejobs_and_larajobs_parse_rss_dedup_and_filter_locations(self):
         today_rfc = datetime.now(MANILA).strftime("%a, %d %b %Y 08:00:00 +0800")
