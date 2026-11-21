@@ -93,6 +93,11 @@ class TestLocationFilter(unittest.TestCase):
             ("Remote (Worldwide)", "Software Engineer - RUST (London based)", "Web3.career", "Location: London/Hybrid."),
             ("Remote (Worldwide)", "Software Engineer (Golang) - London", "Web3.career", ""),
             ("Remote (Worldwide)", "Incident Operations Commander - EMEA", "Web3.career", ""),
+            ("Remote Worldwide", "[Remote] [Europe] - Python-based jobs across Europe", "Reddit", ""),
+            ("Remote Worldwide", "[Remote] [US] - AI, full stack, and software engineers", "Reddit", ""),
+            ("Remote", "Cloud Software Engineer (TS/SCI w/ Poly)", "VueJobs", ""),
+            ("Remote", "Profissional Fullstack (.NET+Vue) Sênior - Remoto", "VueJobs", ""),
+            ("Remote Worldwide", "Java 开发工程师", "Bossjob", ""),
         ]:
             with self.subTest(title=title):
                 self.assertFalse(is_work_authorized_location(location, title, platform, description))

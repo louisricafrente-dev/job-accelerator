@@ -2,7 +2,8 @@ import time
 import json
 import logging
 import random
-from typing import List
+import re
+from typing import List, Tuple
 from src.connectors.base import BaseConnector, logger
 from src.models import Job
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
@@ -17,7 +18,7 @@ class _JobSpyErrors(logging.Handler):
 
 
 class JobSpyAdapter(BaseConnector):
-    revision = 6
+    revision = 7
     supports_group_steps = True
     checkpointed_query = True
     MAX_DIRECT_LINKEDIN_OFFSET = 30
@@ -45,6 +46,96 @@ class JobSpyAdapter(BaseConnector):
         self.last_group_incomplete = False
         self.last_fetch_mode = f"tail OR group ({len(queries)})"
         return jobs
+
+    def _fetch_linkedin_job_detail(self, job_id: str) -> Tuple[str, str]:
+        """Fetch full JD and native Seniority level from LinkedIn's guest jobPosting endpoint."""
+        if not job_id or not self.db_path or hasattr(self.get_url, "_mock_name") or hasattr(type(self).get_url, "_mock_name"):
+            return "", ""
+        try:
+            from bs4 import BeautifulSoup
+            resp = self.get_url(
+                f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}",
+                impersonate="chrome120",
+                timeout=8,
+            )
+            if resp.status_code != 200 or not resp.text:
+                return "", ""
+            soup = BeautifulSoup(resp.text, "html.parser")
+            desc_el = soup.select_one(".show-more-less-html__markup, .description__text")
+            desc = desc_el.get_text("\n", strip=True) if desc_el else ""
+            raw_level = ""
+            for item in soup.select(".description__job-criteria-item"):
+                header = item.select_one(".description__job-criteria-subheader")
+                val = item.select_one(".description__job-criteria-text")
+                if header and val and "seniority" in header.get_text(strip=True).lower():
+                    raw_level = val.get_text(" ", strip=True)
+                    break
+            return desc, raw_level
+        except Exception:
+            return "", ""
+
+    def _enrich_glassdoor_descriptions(self, records: List[dict]) -> None:
+        """Batch-fetch Glassdoor JobDetails via curl_cffi GraphQL when JobSpy returns blank JDs."""
+        if not self.db_path or self.site_name != "glassdoor" or hasattr(self.get_url, "_mock_name") or hasattr(type(self).get_url, "_mock_name"):
+            return
+        targets = []
+        for rec in records:
+            raw_desc = rec.get("description")
+            has_desc = raw_desc is not None and str(raw_desc).strip().lower() not in ("", "nan", "none", "null")
+            if has_desc:
+                continue
+            m = re.search(r"[?&]jl=(\d+)", str(rec.get("job_url") or ""))
+            if m:
+                targets.append((m.group(1), rec))
+        if not targets:
+            return
+        try:
+            from bs4 import BeautifulSoup
+            from curl_cffi import requests as cffi_requests
+            sess = cffi_requests.Session(impersonate="chrome120")
+            req_headers = {
+                "origin": "https://www.glassdoor.com",
+                "referer": "https://www.glassdoor.com/",
+                "content-type": "application/json",
+                "gd-csrf-token": "Ft6oHEWlRZrxDww95Cpazw:0pGUrkb2y3TyOpAIqF2vbPmUXoXVkD3oEGDVkvfeCerceQ5-n8mBg3BovySUIjmCPHCaW0H2nQVdqzbtsYqf4Q:wcqRqeegRUa9MVLJGyujVXB7vWFPjdaS1CtrrzJq-ok",
+            }
+            try:
+                r0 = sess.get("https://www.glassdoor.com/Job/index.htm", timeout=8)
+                m_tok = re.search(r'"token"\s*:\s*"([^"]+)"', r0.text or "")
+                if m_tok:
+                    req_headers["gd-csrf-token"] = m_tok.group(1)
+            except Exception:
+                pass
+            details_tpl = (
+                ' j%s: jobView(listingId: %s, contextHolder: {queryString: "q", pageTypeEnum: SERP})'
+                ' { job { description } }'
+            )
+            for start in range(0, len(targets), 25):
+                batch = targets[start:start + 25]
+                aliases = "".join(details_tpl % (jid, jid) for jid, _ in batch)
+                resp = sess.post(
+                    "https://www.glassdoor.com/graph",
+                    headers=req_headers,
+                    json=[{"operationName": "JobDetails", "variables": {}, "query": f"query JobDetails {{{aliases}}}"}],
+                    timeout=12,
+                )
+                if resp.status_code != 200:
+                    continue
+                payload = resp.json()
+                data = (payload[0].get("data") if isinstance(payload, list) and payload else None) or {}
+                by_id = dict(batch)
+                for alias, view in data.items():
+                    if not isinstance(view, dict):
+                        continue
+                    raw_html = ((view.get("job") or {}).get("description") or "").strip()
+                    if not raw_html:
+                        continue
+                    clean_text = BeautifulSoup(raw_html, "html.parser").get_text("\n", strip=True)
+                    jid = alias[1:] if alias.startswith("j") else alias
+                    if jid in by_id and clean_text:
+                        by_id[jid]["description"] = clean_text
+        except Exception:
+            pass
 
     def _fetch_linkedin_guest_fallback(self, query: str, location: str, offset: int, wanted: int, state: dict):
         from bs4 import BeautifulSoup
@@ -90,6 +181,16 @@ class JobSpyAdapter(BaseConnector):
                 continue
             if not self.accepts_date(date_str):
                 continue
+            detail_id = job_id
+            if not detail_id:
+                m_li = re.search(r"/(\d+)(?:\?|$)", job_url)
+                detail_id = m_li.group(1) if m_li else ""
+            li_desc, li_raw_level = self._fetch_linkedin_job_detail(detail_id)
+            if li_desc:
+                if not is_work_authorized_location(loc, title, self.platform, li_desc):
+                    continue
+                if not self.accepts_opportunity(title, li_desc, allow_va_training=True, location=loc, platform=self.platform):
+                    continue
             jobs.append(Job(
                 title=title,
                 company=company,
@@ -98,10 +199,10 @@ class JobSpyAdapter(BaseConnector):
                 tier=self.tier,
                 job_url=job_url,
                 salary="",
-                role_category=self.job_role(title),
-                experience_level=classify_experience_level(title, ""),
+                role_category=self.job_role(title, li_desc),
+                experience_level=classify_experience_level(title, li_desc, raw_level=li_raw_level, platform=self.platform),
                 date_posted=date_str,
-                description="",
+                description=li_desc,
             ))
         norm_dates = [normalize_date(d) for d in raw_dates]
         all_old = bool(raw_dates) and all(d and d < state["window_start"] for d in norm_dates)
@@ -132,7 +233,7 @@ class JobSpyAdapter(BaseConnector):
             jobspy = importlib.import_module("jobspy")
             scrape_jobs = getattr(jobspy, "scrape_jobs")
             query = query.strip() or "software developer"
-            search_loc = "Remote" if self.site_name == "glassdoor" and location.lower() == "philippines" else location
+            search_loc = location
             country = "philippines" if self.site_name == "indeed" else ("usa" if self.site_name == "glassdoor" else None)
             wanted = 10 if self.site_name == "linkedin" else 35
             if group_size > 1:
@@ -201,7 +302,10 @@ class JobSpyAdapter(BaseConnector):
                     self.last_error = str(li_exc) or self.last_error
             import pandas as pd
             rows = df.to_dict("records")
-            for _, row in df.iterrows():
+            is_live_jobspy = bool(getattr(jobspy, "__file__", None)) and not hasattr(scrape_jobs, "_mock_name")
+            if is_live_jobspy and self.site_name == "glassdoor":
+                self._enrich_glassdoor_descriptions(rows)
+            for row in rows:
                 title = str(row.get("title", "")).strip()
                 company = str(row.get("company", "")).strip()
                 url = str(row.get("job_url", "")).strip()
@@ -211,6 +315,16 @@ class JobSpyAdapter(BaseConnector):
                     continue
                 raw_description = row.get("description")
                 description = "" if pd.isna(raw_description) else str(raw_description).strip()
+                raw_lvl = row.get("job_level")
+                raw_level = "" if pd.isna(raw_lvl) or str(raw_lvl).lower() in ("nan", "none", "") else str(raw_lvl).strip()
+                if is_live_jobspy and self.site_name == "linkedin" and not description:
+                    m_li = re.search(r"/(\d+)(?:\?|$)", url)
+                    if m_li:
+                        li_desc, li_raw = self._fetch_linkedin_job_detail(m_li.group(1))
+                        if li_desc:
+                            description = li_desc
+                        if li_raw and not raw_level:
+                            raw_level = li_raw
                 raw_loc = row.get("location")
                 loc = search_loc if pd.isna(raw_loc) or str(raw_loc).lower() in ("nan", "none", "") else str(raw_loc).strip()
                 if not is_work_authorized_location(loc, title, self.platform, description):
@@ -221,6 +335,11 @@ class JobSpyAdapter(BaseConnector):
                     company = "Direct Employer"
                 raw_sal = row.get("min_amount")
                 salary = "" if pd.isna(raw_sal) or str(raw_sal).lower() in ("nan", "none", "") else str(raw_sal).strip()
+                raw_curr = row.get("currency")
+                curr = "" if pd.isna(raw_curr) or str(raw_curr).lower() in ("nan", "none", "") else str(raw_curr).strip()
+                raw_int = row.get("interval")
+                interval = "" if pd.isna(raw_int) or str(raw_int).lower() in ("nan", "none", "") else str(raw_int).strip()
+                sal_hint = f"{curr} {salary}/{interval}".strip(" /") if (salary and (curr or interval)) else salary
                 raw_date = row.get("date_posted")
                 date_str = "" if pd.isna(raw_date) or str(raw_date).lower() in ("nan", "none", "") else str(raw_date).strip()
                 if not self.accepts_date(date_str):
@@ -233,8 +352,8 @@ class JobSpyAdapter(BaseConnector):
                     tier=self.tier,
                     job_url=url,
                     salary=salary,
-                    role_category=self.job_role(title),
-                    experience_level=classify_experience_level(title, description),
+                    role_category=self.job_role(title, description),
+                    experience_level=classify_experience_level(title, description, salary=sal_hint, raw_level=raw_level, platform=self.platform),
                     date_posted=date_str,
                     description=description
                 ))

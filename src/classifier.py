@@ -97,6 +97,10 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
         r"\bspain\b", r"\bitaly\b", r"\bportugal\b", r"\bbrazil\b", r"\bmexico\b",
     ]
     # Remote work can still require residence or work authorization abroad.
+    if re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff\u0e00-\u0e7f]", t):
+        return False
+    if re.search(r"\b(?:profissional|desenvolvedor|engenheiro|programador|sênior|pleno|vaga|analista\s+de\s+sistemas)\b", t):
+        return False
     foreign_name = "(?:" + "|".join(foreign) + ")"
     restrictions = [
         rf"{foreign_name}[- ]only\b",
@@ -105,6 +109,14 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
         rf"\b(?:residency|residence|work authorization|work permit|citizenship)\b[^.\n]{{0,60}}{foreign_name}",
         rf"{foreign_name}[^.\n]{{0,50}}\b(?:residents? only|citizens? only|work authorization required)\b",
         rf"\bremote\s+(?:within|in)\s+(?:the\s+)?{foreign_name}",
+        rf"\b(?:across|within)\s+(?:the\s+)?{foreign_name}\b",
+        rf"\b(?:jobs?|roles?|positions?|openings?|hiring)\s+in\s+(?:the\s+)?{foreign_name}\b",
+        r"\bts/sci\b",
+        r"\bpolygraph\b",
+        r"\bfull[- ]scope\s+poly\b",
+        r"\b(?:active\s+|current\s+)?(?:secret|top\s+secret|dod|public\s+trust)\s+clearance\b",
+        r"\bu\.?s\.?\s+citizens?\s+only\b",
+        r"\bus\s+persons?\s+only\b",
     ]
     if any(re.search(pattern, f"{loc}\n{t}\n{desc}") for pattern in restrictions):
         return False
@@ -131,7 +143,7 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
                 r"\b(?:client|clients|shift|hours|timezone|time\s*zone|account|accounts|market|entity|gateway|gateways|payment|payments|store|currency)\b",
                 grp,
             )
-            for grp in re.findall(r"\([^)]*\)", t)
+            for grp in re.findall(r"(?:\([^)]*\)|\[[^\]]*\])", t)
         )
         if not title_allows_ph and (
             paren_foreign
@@ -216,6 +228,7 @@ JUNIOR_PATTERNS = [
     r"\bengineer[- ]?i\b",
     r"\bprogrammer[- ]?i\b",
     r"\bqa[- ]?engineer[- ]?i\b",
+    r"\b(?:tester|analyst|specialist)[- ]?(?:i|1)\b",
     r"\bsoftware developer 1\b",
     r"\bsoftware engineer 1\b",
     r"\bsde[- ]?i\b",
@@ -235,22 +248,32 @@ JUNIOR_PATTERNS = [
     r"\bzero[- ]experience\b",
     r"\bwithout[- ]experience\b",
     r"\bno experience required\b",
-    r"\bopen for fresh\b"
+    r"\bopen for fresh\b",
+    r"\blevel[- ]?(?:i|1)\b",
+    r"\bl1\b",
+    r"\b(?:tester|analyst|specialist|consultant|administrator|assessor|auditor|technician|coordinator|operator|support)[- ]?i\b",
 ]
 
 SENIOR_PATTERNS = [
     r"\bsenior\b", r"\bsr\.?\b", r"\blead\b", r"\bprincipal\b",
     r"\barchitect\b", r"\bstaff\b", r"\bhead of\b", r"\bdirector\b",
-    r"\bmanager\b", r"\b5\+ years\b", r"\b7\+ years\b"
+    r"\bmanager\b", r"\b5\+ years\b", r"\b7\+ years\b",
+    r"\b(?:team|tech|technical|engineering|qa|test|project|product|delivery|platform|practice)\s+leader\b",
+    r"\b(?:executive\s+|senior\s+|assistant\s+)?vice\s+president\b",
+    r"\b(?:svp|evp|avp)\b",
+    r"\blevel[- ]?(?:iv|v|4|5)\b",
+    r"\bl[45]\b",
 ]
 
 MID_PATTERNS = [
     r"\bmid[- ]level\b", r"\bintermediate\b", r"\b2-4 years\b", r"\b3-5 years\b",
+    r"(?:\(|\b[-–/]\s*)\bmid\b(?:\)|\b)",
     r"\bdeveloper[- ]?ii\b", r"\bengineer[- ]?ii\b", r"\bprogrammer[- ]?ii\b", r"\bqa[- ]?engineer[- ]?ii\b", r"\bsde[- ]?ii\b",
     r"\bdeveloper[- ]?iii\b", r"\bengineer[- ]?iii\b", r"\bprogrammer[- ]?iii\b", r"\bsde[- ]?iii\b",
+    r"\b(?:tester|analyst|specialist|consultant|administrator|assessor|auditor|technician|coordinator|operator|support)[- ]?(?:ii|iii|2|3)\b",
     r"\bdeveloper[- ]?2\b", r"\bengineer[- ]?2\b", r"\bprogrammer[- ]?2\b", r"\bsde[- ]?2\b",
     r"\bdeveloper[- ]?3\b", r"\bengineer[- ]?3\b", r"\bprogrammer[- ]?3\b", r"\bsde[- ]?3\b",
-    r"\blevel[- ]?2\b", r"\bl2\b", r"\blevel[- ]?3\b", r"\bl3\b"
+    r"\blevel[- ]?(?:ii|iii|2|3)\b", r"\bl2\b", r"\bl3\b"
 ]
 
 WEB_PATTERNS = [
@@ -399,6 +422,14 @@ def is_non_tech(title: str, description: str = "") -> bool:
     title_lower = t_str.lower()
     text = f"{t_str} {d_str}".lower()
 
+    if re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff\u0e00-\u0e7f]", t_str):
+        return True
+    if re.search(
+        r"\b(?:japanese|mandarin|chinese|cantonese|korean|russian|finnish|thai|spanish|portuguese|german|french|arabic|vietnamese|indonesian|malay|hindi|dutch|italian|polish|turkish|hebrew)[-\s]+(?:language|speaking|speaker|bilingual|information\s+security|developer|engineer|analyst|support)\b|\bjlpt\b",
+        title_lower,
+    ):
+        return True
+
     # Explicit software / IT engineering roles that should NEVER be flagged as non-tech
     explicit_software_role = re.search(
         r"\b(?:software|web|mobile|android|ios|frontend|front[- ]?end|backend|back[- ]?end|full[- ]?stack|firmware|embedded|devops|sre|site reliability|cloud engineer|sdet|qa automation|data engineer|machine learning|ai engineer|salesforce developer|marketing cloud developer)\b",
@@ -476,16 +507,282 @@ def description_accepts_entry(description: str) -> bool:
     return any(re.search(pattern, text) for pattern in positive)
 
 
-def classify_experience_level(title: str, description: str = "") -> str:
+ENTRY_JD_SIGNALS = (
+    r"\b(?:under\s+(?:the\s+)?(?:guidance|supervision|direction|mentorship)|work\s+closely\s+with\s+senior|assist\s+(?:in|with)\s+(?:developing|building|testing|maintaining|troubleshooting)|support\s+the\s+(?:development|engineering|qa|it)\s+team)\b",
+    r"\b(?:willingness\s+to\s+learn|eager(?:ness)?\s+to\s+learn|fast\s+learner|quick\s+learner|passion\s+for\s+(?:learning|coding|technology|software)|learn\s+and\s+grow|mentorship\s+from|shadow(?:ing)?\s+senior|undergo\s+(?:assisted\s+)?training|automation\s+learning)\b",
+    r"\b(?:basic\s+(?:understanding|knowledge)|foundational\s+knowledge|fundamental\s+understanding|good\s+grasp\s+of\s+(?:fundamentals|basics|oop)|strong\s+fundamentals)\b",
+    r"\b(?:school\s+projects?|capstone|coursework|academic\s+background|github\s+portfolio|personal\s+projects?)\b",
+    r"\b(?:entry\s+level|junior\s+level|starter\s+role|training\s+program|onboarding\s+training|graduate\s+of\s+any\s+(?:it|computer|engineering|related)\s+(?:course|degree))\b",
+    r"\b(?:at\s+least\s+a\s+high\s+school\s+graduate|high\s+school\s+diploma\s+or\s+equivalent|vocational\s+diploma|short\s+course\s+certificate|fresh\s+graduates?\s+or\s+entry\s+level)\b",
+    r"\b(?:willing\s+to\s+be\s+trained|training\s+will\s+be\s+provided|we\s+will\s+train|no\s+prior\s+experience)\b",
+)
+
+MID_JD_SIGNALS = (
+    r"\b(?:proven\s+(?:experience|track\s+record|ability|background)|demonstrated\s+(?:experience|ability|track\s+record)|solid\s+(?:experience|background|track\s+record)|strong\s+(?:technical\s+expertise|hands[- ]on\s+experience|production\s+experience|background\s+in)|in[- ]depth\s+(?:knowledge|experience)|extensive\s+(?:experience|background)|seeking\s+an?\s+experienced|experienced\s+(?:software|web|mobile|android|ios|backend|frontend|full[- ]?stack|qa|data|cloud|devops|security|systems?)\s+(?:developer|engineer|programmer|tester|analyst))\b",
+    r"\b(?:independently\s+(?:design|develop|build|deliver|manage)|minimal\s+supervision|work\s+autonomously|self[- ]directed|hit\s+the\s+ground\s+running|take\s+ownership\s+of|end[- ]to[- ]end\s+(?:development|delivery|ownership|implementation))\b",
+    r"\b(?:production[- ]grade|enterprise[- ]grade|mission[- ]critical|scalable\s+applications|optimize\s+(?:performance|scalability|queries)|code\s+reviews?|sprint\s+planning|ci/cd\s+pipelines?|microservices\s+architecture|third[- ]party\s+(?:apis?|integrations?)|designing,\s+developing,\s+and\s+(?:supporting|maintaining|deploying)|build\s+and\s+maintain\s+production|troubleshoot\s+complex)\b",
+    r"\b(?:provide\s+training\s+to|mentor(?:ing)?)\s+(?:junior|graduate)\s+(?:developers?|engineers?)\b",
+    r"\b(?:build\s+the\s+\w+\s+practice\s+from\s+the\s+ground\s+up|from\s+the\s+ground\s+up|defining\s+test\s+strategies|you['’]ll\s+own\s+the|own\s+the\s+technical|skilled\s+and\s+detail[- ]oriented|highly\s+skilled|seasoned\s+(?:developer|engineer|specialist|professional)|prior\s+experience\s+(?:in|as|with)|previous\s+experience\s+(?:in|as|with)|relevant\s+work\s+experience)\b",
+)
+
+SENIOR_JD_SIGNALS = (
+    r"\b(?:mentor(?:ing)?\s+(?:and\s+coach(?:ing)?\s+)?(?:junior(?:\s*(?:and|or|,|/)\s*mid[- ]level)?|mid[- ]level|other)\s+(?:engineers?|developers?)|guide\s+and\s+mentor|coach\s+junior)\b",
+    r"\b(?:lead\s+(?:architectural|technical\s+direction|system\s+design)|architectural\s+decisions|architect\s+and\s+scale)\b",
+    r"\b(?:define\s+(?:technical\s+roadmap|architecture|engineering\s+standards)|set\s+engineering\s+standards|technical\s+leadership)\b",
+    r"\blead\s+a\s+team\s+of\s+(?:\w+\s+){0,2}(?:engineers?|developers?)\b",
+)
+
+
+def classify_raw_level(raw_level: str, *, allow_mid_senior: bool = False) -> str:
+    raw = re.sub(r"[*_\s]+", " ", str(raw_level or "").strip().lower())
+    if not raw or raw in ("unspecified", "not specified", "n/a", "none", "all"):
+        return ""
+    if raw in ("100", "200"):
+        return "Junior / Entry"
+    if raw in ("300", "400"):
+        return "Mid-Level"
+    if raw in ("500", "600"):
+        return "Senior / Lead"
+    has_mid_senior = bool(re.search(r"\bmid[- /]?senior\b", raw))
+    if any(re.search(p, raw) for p in (
+        r"\b(?:entry[- ]?level|entry|junior|jr\.?|intern(?:ship)?|associate|trainee|fresh(?:\s*grad(?:uate)?)?|graduate|apprentice|student|ojt)\b",
+        r"\b0[- ]?[12]\s*(?:yrs?|years?)\b",
+        r"\b1[- ]?2\s*(?:yrs?|years?)\b",
+    )):
+        return "Junior / Entry"
+    if not has_mid_senior and any(re.search(p, raw) for p in (
+        r"\b(?:senior|sr\.?|lead|principal|staff|director|executive|head|vp|architect)\b",
+        r"\b(?:[5-9]|1\d)\+\s*(?:yrs?|years?)\b",
+    )):
+        return "Senior / Lead"
+    if any(re.search(p, raw) for p in (
+        r"\b(?:mid[- ]?level|mid[- ]?weight|intermediate|regular|experienced|professional)\b",
+        r"\b[234][- ]?[345]\s*(?:yrs?|years?)\b",
+    )):
+        return "Mid-Level"
+    if allow_mid_senior and has_mid_senior:
+        return "Mid-Level"
+    return ""
+
+
+def classify_description_years(description: str) -> str:
+    text = re.sub(r"[*_\u200b\ufeff]", "", str(description or "").lower())
+    if not text:
+        return ""
+    years = r"(?:years?|yrs?)"
+    no_range_prefix = r"(?<!\d[-–/])(?<!\d\s[-–/]\s)(?<!\d[-–/]\s)(?<!\d\s[-–/])(?<!to\s)"
+    # Structured/parenthetical level+years badges (e.g., Jobgether "Junior (1-2 years)", "Senior (5-10 years)")
+    if re.search(rf"\b(?:junior|entry[- ]?level)\s*\(\s*\d+\s*[-–to]+\s*\d+\s*{years}\s*\)", text):
+        return "Junior / Entry"
+    if re.search(rf"\bsenior\s*\(\s*(?:[5-9]|1\d)\s*(?:\+|\s*[-–to]+\s*\d+)?\s*{years}\s*\)", text):
+        return "Senior / Lead"
+    if re.search(rf"\b(?:mid[- ]?level|intermediate)\s*\(\s*\d+\s*[-–to]+\s*\d+\s*{years}\s*\)", text):
+        return "Mid-Level"
+    senior_years = (
+        rf"{no_range_prefix}\b(?:[5-9]|1\d)\s*\+\s*{years}\b",
+        rf"\b(?:at least|minimum(?: of)?|requires?|requiring|with|have)\s+(?:[5-9]|1\d)\+?\s*{years}\b",
+        rf"\b(?:experience\s*(?:required|level)?|years?\s+of\s+experience)\s*[:\-–]\s*(?:at\s+least\s+)?(?:[5-9]|1\d)\+?\s*{years}\b",
+        rf"{no_range_prefix}\b(?:[5-9]|1\d)\s*[-–to]+\s*(?:[6-9]|1\d)\s*{years}\s+(?:of\s+)?(?:\w+\s+){{0,4}}(?:experience|relevant|professional|related|work|working|hands[- ]on|industry|practical)\b",
+        r"\bsenior[- ]level\s+(?:engineer|developer|programmer|qa|role|position)\b",
+    )
+    if any(re.search(pat, text) for pat in senior_years):
+        return "Senior / Lead"
+    mid_years = (
+        rf"{no_range_prefix}\b[234]\s*\+\s*{years}\b",
+        rf"\b(?:at least|minimum(?: of)?|requires?|requiring|with|have)\s+[234]\+?\s*{years}\b",
+        rf"\b(?:experience\s*(?:required|level)?|years?\s+of\s+experience)\s*[:\-–]\s*(?:at\s+least\s+)?[234]\+?\s*{years}\b",
+        rf"{no_range_prefix}\b[234]\s*[-–to]+\s*[3456]\s*{years}\b",
+        rf"{no_range_prefix}\b(?:2|3|4|two|three|four)\s*{years}[’']?\s+(?:of\s+)?(?:\w+\s+){{0,4}}(?:experience|relevant|professional|related|work|working|hands[- ]on|industry|practical)\b",
+        rf"\b1\s*[-–to]+\s*[345]\s*{years}\s+(?:of\s+)?(?:\w+\s+){{0,4}}experience\b",
+    )
+    if any(re.search(pat, text) for pat in mid_years):
+        return "Mid-Level"
+    if re.search(
+        r"\b(?:fresh|new|recent)\s*[- ]?grad(?:uate)?s?\b[^.\n]{0,80}\b(?:not welcome|not accepted|not eligible|do not apply|should not apply)\b",
+        text,
+    ) or re.search(
+        r"\bfreshers?\b[^.\n]{0,80}\b(?:not welcome|not accepted|not eligible|do not apply|should not apply)\b",
+        text,
+    ):
+        return "Mid-Level"
+    return ""
+
+
+def classify_description_semantics(description: str) -> str:
+    text = re.sub(r"[*_\u200b\ufeff]", "", str(description or "").lower())
+    if not text:
+        return ""
+    entry_score = sum(1 for pat in ENTRY_JD_SIGNALS if re.search(pat, text))
+    mid_score = sum(1 for pat in MID_JD_SIGNALS if re.search(pat, text))
+    senior_score = sum(1 for pat in SENIOR_JD_SIGNALS if re.search(pat, text))
+    if entry_score > 0 and entry_score >= mid_score and senior_score == 0:
+        return "Junior / Entry"
+    if senior_score >= 2 and senior_score > mid_score and entry_score == 0:
+        return "Senior / Lead"
+    if mid_score > 0 or senior_score == 1:
+        return "Mid-Level"
+    return ""
+
+
+def _parse_salary_numbers(text: str) -> list:
+    nums = []
+    for raw_num, suffix in re.findall(r"(\d[\d,]*(?:\.\d+)?)\s*(k)?\b", text):
+        try:
+            val = float(raw_num.replace(",", ""))
+        except ValueError:
+            continue
+        if suffix:
+            val *= 1000.0
+        if val > 0:
+            nums.append(val)
+    return nums
+
+
+_PH_SALARY_PLATFORMS = {
+    "indeed",
+    "jobstreet",
+    "kalibrr",
+    "bossjob",
+    "foundit.ph",
+    "philjobnet",
+    "onlinejobs.ph",
+    "talent.com ph",
+}
+
+
+def _extract_embedded_salary(description: str) -> str:
+    text = re.sub(r"[*_\u200b\ufeff]", "", str(description or ""))
+    if not text:
+        return ""
+    patterns = (
+        r"(?:pay|salary|compensation|rate|offer)\s*[:\-–]?\s*(?:php|₱)\s*[\d,]+(?:\.\d+)?(?:\s*(?:to|[-–])\s*(?:php|₱)?\s*[\d,]+(?:\.\d+)?)?(?:\s*(?:/\s*(?:mo|month)|per\s+month|monthly))?",
+        r"\b[\d,]{5,6}(?:\s*(?:to|[-–])\s*[\d,]{5,6})?\s*(?:\+)?\s*php\s*(?:base\s*salary|/\s*(?:mo|month)|per\s+month|monthly)\b",
+        r"(?:pay|salary|compensation|rate|offer)\s*[:\-–]?\s*(?:usd|\$)\s*\d+(?:\.\d+)?(?:\s*(?:to|[-–])\s*(?:usd|\$)?\s*\d+(?:\.\d+)?)?\s*(?:/\s*(?:hr|hour|mo|month)|per\s+(?:hour|month)|hourly|monthly)",
+    )
+    for pat in patterns:
+        m = re.search(pat, text, re.I)
+        if m:
+            return m.group(0)
+    return ""
+
+
+def classify_salary_level(salary: str, *, description: str = "", platform: str = "") -> str:
+    s = str(salary or "").strip().lower().replace("＄", "$")
+    if s in ("tbd", "negotiable", "by agreement, based on experience", "nan", "none"):
+        s = ""
+    if not s and description:
+        s = _extract_embedded_salary(description).lower().replace("＄", "$")
+    if not s or "fixed" in s:
+        return ""
+    is_hourly = bool(re.search(r"(?:/\s*(?:hr|hour)\b|\bper\s+hour\b|\bhourly\b)", s))
+    is_monthly = bool(re.search(r"(?:/\s*(?:mo|month)\b|\bper\s+month\b|\bmonthly\b|\bbase\s*salary\b)", s))
+    is_annual = bool(re.search(r"(?:/\s*(?:yr|year)\b|\bper\s+year\b|\bannual(?:ly)?\b|\bp\.?a\.?\b)", s))
+    is_daily = bool(re.search(r"(?:/\s*day\b|\bper\s+day\b|\bdaily\b)", s))
+    if is_daily:
+        return ""
+
+    has_php = "php" in s or "₱" in s
+    has_usd = "$" in s or "usd" in s
+    vals = _parse_salary_numbers(s)
+    if not vals:
+        return ""
+    min_val = min(vals)
+    ceiling = max(vals)
+    if ceiling <= 0 or (min_val > 0 and ceiling / min_val > 4.0):
+        return ""
+
+    platform_lower = (platform or "").strip().lower()
+
+    # Platform-specific bare numbers when currency is omitted
+    if not has_php and not has_usd:
+        if platform_lower == "glassdoor":
+            if 10 <= ceiling <= 250:
+                has_usd = True
+                is_hourly = True
+            elif 15000 <= ceiling <= 500000:
+                has_usd = True
+                is_annual = True
+        elif platform_lower == "onlinejobs.ph":
+            if 8000 <= ceiling <= 300000:
+                has_php = True
+                is_monthly = True
+            elif 2 <= ceiling <= 60 and not is_monthly and not is_annual:
+                has_usd = True
+                is_hourly = True
+            elif 200 <= ceiling <= 6000 and not is_hourly and not is_annual:
+                has_usd = True
+                is_monthly = True
+        elif platform_lower in _PH_SALARY_PLATFORMS and not is_hourly and not is_annual and 8000 <= ceiling <= 300000:
+            has_php = True
+            is_monthly = True
+
+    if has_php and not has_usd and is_hourly and 50 <= ceiling <= 2500:
+        if ceiling <= 220:
+            return "Junior / Entry"
+        if ceiling <= 520:
+            return "Mid-Level"
+        return "Senior / Lead"
+
+    if has_php and not has_usd and not is_annual and not is_hourly:
+        # Handle bare PHP monthly ranges like "PHP 45,000 - PHP 55,000" when monthly/annual unspecified.
+        if (is_monthly and 8000 <= ceiling <= 500000) or (not is_monthly and 10000 <= ceiling <= 300000):
+            if ceiling <= 35000:
+                return "Junior / Entry"
+            if ceiling <= 90000:
+                return "Mid-Level"
+            return "Senior / Lead"
+        return ""
+
+    if has_usd and not is_hourly and not is_monthly and not is_annual and platform_lower != "freelancer":
+        if 2 <= ceiling <= 150:
+            is_hourly = True
+        elif 200 <= ceiling <= 12000:
+            is_monthly = True
+        elif 15000 <= ceiling <= 500000:
+            is_annual = True
+
+    if is_hourly and (has_usd or not has_php) and 2 <= ceiling <= 300:
+        if ceiling <= 10:
+            return "Junior / Entry"
+        if ceiling <= 40:
+            return "Mid-Level"
+        return "Senior / Lead"
+
+    if has_usd and is_monthly and 100 <= ceiling <= 25000:
+        if ceiling <= 1000:
+            return "Junior / Entry"
+        if ceiling <= 3200:
+            return "Mid-Level"
+        return "Senior / Lead"
+
+    if has_usd and is_annual and 10000 <= ceiling <= 500000:
+        if ceiling <= 55000:
+            return "Junior / Entry"
+        if ceiling < 120000:
+            return "Mid-Level"
+        return "Senior / Lead"
+
+    return ""
+
+
+def classify_experience_level(
+    title: str,
+    description: str = "",
+    *,
+    salary: str = "",
+    raw_level: str = "",
+    platform: str = "",
+) -> str:
     t_str = str(title or "")
     d_str = str(description or "")
     title_lower = t_str.lower()
+    title_norm = re.sub(r"[_/|]+", " ", title_lower)
     desc_lower = d_str.lower()
     if is_entry_training_va(t_str, d_str):
         return "Junior / Entry"
-    is_junior = any(re.search(pat, title_lower) for pat in JUNIOR_PATTERNS)
-    is_senior = any(re.search(pat, title_lower) for pat in SENIOR_PATTERNS)
-    is_mid = any(re.search(pat, title_lower) for pat in MID_PATTERNS)
+    is_junior = any(re.search(pat, title_norm) for pat in JUNIOR_PATTERNS)
+    is_senior = any(re.search(pat, title_norm) for pat in SENIOR_PATTERNS)
+    is_mid = any(re.search(pat, title_norm) for pat in MID_PATTERNS)
 
     if is_senior and not re.search(r"\bjunior\s*(?:to|or|/|-)\s*senior\b", title_lower):
         return "Senior / Lead"
@@ -501,8 +798,28 @@ def classify_experience_level(title: str, description: str = "") -> str:
         return "Senior / Lead"
     if is_mid:
         return "Mid-Level"
-    matches_tech = any(re.search(pat, title_lower) for pat in WEB_PATTERNS + DATA_AI_PATTERNS + TECH_WHITELIST_OVERRIDE)
-    return "Mid-Level" if matches_tech else "Unspecified"
+
+    api_level = classify_raw_level(raw_level, allow_mid_senior=False)
+    if api_level:
+        return api_level
+
+    years_level = classify_description_years(desc_lower)
+    if years_level:
+        return years_level
+
+    semantic_level = classify_description_semantics(desc_lower)
+    if semantic_level:
+        return semantic_level
+
+    salary_level = classify_salary_level(salary, description=d_str, platform=platform)
+    if salary_level:
+        return salary_level
+
+    soft_api_level = classify_raw_level(raw_level, allow_mid_senior=True)
+    if soft_api_level:
+        return soft_api_level
+
+    return "Unspecified"
 
 def is_relevant_opportunity(title: str, description: str = "", allow_va_training: bool = True, matrix: list = None, location: str = "", platform: str = "") -> bool:
     t_str = str(title or "")

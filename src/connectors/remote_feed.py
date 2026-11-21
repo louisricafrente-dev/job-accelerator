@@ -35,7 +35,10 @@ class RemoteOKConnector(BaseConnector):
                     if not isinstance(item, dict) or "position" not in item:
                         continue
                     title = item.get("position", "")
-                    if not title or not is_relevant_opportunity(title, ""):
+                    tags = ", ".join(str(t) for t in (item.get("tags") or []) if t)
+                    raw_desc = str(item.get("description") or "").strip()
+                    full_desc = "\n".join(part for part in (tags, raw_desc) if part)
+                    if not title or not is_relevant_opportunity(title, full_desc):
                         continue
                     raw_date = item.get("date", "")
                     pub_date = normalize_date(raw_date)
@@ -43,19 +46,23 @@ class RemoteOKConnector(BaseConnector):
                         continue
                     company = item.get("company", "")
                     link = item.get("url", "")
+                    loc = item.get("location") or "Remote (location unverified)"
+                    if not is_work_authorized_location(loc, title, self.platform, full_desc):
+                        continue
                     salary = ""
                     if item.get("salary_min") and item.get("salary_max"):
-                        salary = f"${item['salary_min']:,} - ${item['salary_max']:,}"
+                        salary = f"${item['salary_min']:,} - ${item['salary_max']:,}/year"
                     jobs.append(Job(
                         title=title,
                         company=company,
-                        location=item.get("location") or "Remote (location unverified)",
+                        location=loc,
                         platform=self.platform,
                         tier=self.tier,
                         job_url=link,
-                        salary=salary,
-                        role_category=classify_role(title),
-                        experience_level=classify_experience_level(title),
+                        salary=f"${item['salary_min']:,} - ${item['salary_max']:,}" if item.get("salary_min") and item.get("salary_max") else "",
+                        role_category=classify_role(title, full_desc),
+                        experience_level=classify_experience_level(title, full_desc, salary=salary),
+                        description=full_desc,
                         date_posted=raw_date or pub_date
                     ))
         except Exception as e:
@@ -109,11 +116,14 @@ class WeWorkRemotelyConnector(BaseConnector):
 
                         desc_elem = item.find("description")
                         desc_text = desc_elem.text.strip() if desc_elem is not None and desc_elem.text else ""
+                        loc = item.findtext("region") or "Remote (location unverified)"
+                        if not is_work_authorized_location(loc, title, self.platform, desc_text):
+                            continue
 
                         jobs.append(Job(
                             title=title,
                             company=company,
-                            location=item.findtext("region") or "Remote (location unverified)",
+                            location=loc,
                             platform=self.platform,
                             tier=self.tier,
                             job_url=link,
@@ -166,16 +176,22 @@ class ArcConnector(BaseConnector):
                         slug = item.get("slug") or item.get("urlString") or item.get("randomKey") or ""
                         link = f"https://arc.dev/remote-jobs/j/{slug}" if item.get("urlString") else (f"https://arc.dev/remote-jobs/{slug}" if slug else (item.get("url") or "https://arc.dev/remote-jobs"))
                         salary = str(item.get("salaryRange") or "")
+                        desc = str(item.get("description") or item.get("overview") or "")
+                        raw_level = str(item.get("experienceLevel") or item.get("seniority") or "")
+                        loc = item.get("location") if isinstance(item.get("location"), str) else "Remote (location unverified)"
+                        if not is_work_authorized_location(loc, title, self.platform, desc):
+                            continue
                         jobs.append(Job(
                             title=title,
                             company=comp_name,
-                            location=item.get("location") if isinstance(item.get("location"), str) else "Remote (location unverified)",
+                            location=loc,
                             platform=self.platform,
                             tier=self.tier,
                             job_url=link,
                             salary=salary,
-                            role_category=classify_role(title),
-                            experience_level=classify_experience_level(title),
+                            role_category=classify_role(title, desc),
+                            experience_level=classify_experience_level(title, desc, salary=salary, raw_level=raw_level),
+                            description=desc,
                             date_posted=raw_date or pub_date
                         ))
         except Exception as e:
@@ -219,6 +235,8 @@ class RemotiveConnector(BaseConnector):
                         company = item.get("company_name", "Remote Tech")
                         sal = str(item.get("salary") or "")
                         loc = item.get("candidate_required_location") or "Remote Worldwide"
+                        if not is_work_authorized_location(loc, title, self.platform, desc):
+                            continue
                         jobs.append(Job(
                             title=title,
                             company=company,
@@ -228,7 +246,7 @@ class RemotiveConnector(BaseConnector):
                             job_url=link,
                             salary=sal,
                             role_category=classify_role(title, desc),
-                            experience_level=classify_experience_level(title, desc),
+                            experience_level=classify_experience_level(title, desc, salary=sal),
                             description=desc,
                             date_posted=raw_pub or pub
                         ))
@@ -280,7 +298,7 @@ class HimalayasConnector(BaseConnector):
                 state.update(cursor=cursor if self.has_more else None, total=data.get("totalCount", 0))
                 for item in items:
                     title = item.get("title", "")
-                    desc = item.get("excerpt", "") or item.get("description", "")
+                    desc = item.get("description") or item.get("excerpt") or ""
                     if not title or not is_relevant_opportunity(title, desc):
                         continue
                     raw_pub = item.get("pubDate", "")
@@ -292,17 +310,21 @@ class HimalayasConnector(BaseConnector):
                     sal_min = item.get("minSalary")
                     sal_max = item.get("maxSalary")
                     sal = f"${sal_min:,} - ${sal_max:,}" if sal_min and sal_max else ""
+                    seniority_raw = ", ".join(str(s) for s in (item.get("seniority") or []) if s)
+                    loc = ", ".join(str(loc.get("name") or loc.get("country") or "") if isinstance(loc, dict) else str(loc)
+                                    for loc in (item.get("locationRestrictions") or [])) or "Remote (location unverified)"
+                    if not is_work_authorized_location(loc, title, self.platform, desc):
+                        continue
                     jobs.append(Job(
                         title=title,
                         company=company,
-                        location=", ".join(str(loc.get("name") or loc.get("country") or "") if isinstance(loc, dict) else str(loc)
-                                           for loc in (item.get("locationRestrictions") or [])) or "Remote (location unverified)",
+                        location=loc,
                         platform=self.platform,
                         tier=self.tier,
                         job_url=link,
                         salary=sal,
                         role_category=classify_role(title, desc),
-                        experience_level=classify_experience_level(title, desc),
+                        experience_level=classify_experience_level(title, desc, salary=sal, raw_level=seniority_raw),
                         description=desc,
                         date_posted=raw_pub if raw_pub not in (None, "") else pub
                     ))
@@ -361,17 +383,20 @@ class JobicyConnector(BaseConnector):
                 sal = f"{sal} {item.get('salaryCurrency') or ''}".strip()
                 if item.get("salaryPeriod"):
                     sal += f"/{item['salaryPeriod']}"
+            loc = item.get("jobGeo", "Remote Worldwide")
+            if not is_work_authorized_location(loc, title, self.platform, description):
+                continue
             jobs.append(Job(
                 title=title,
                 company=company,
-                location=item.get("jobGeo", "Remote Worldwide"),
+                location=loc,
                 platform=self.platform,
                 tier=self.tier,
                 job_url=link,
                 salary=sal,
                 description=description,
                 role_category=classify_role(title),
-                experience_level=classify_experience_level(title, description),
+                experience_level=classify_experience_level(title, description, salary=sal, raw_level=str(item.get("jobLevel") or "")),
                 date_posted=pub_date
             ))
         return jobs
@@ -426,7 +451,7 @@ class FreelancerConnector(BaseConnector):
                         job_url=link,
                         salary=sal,
                         role_category=self.job_role(title, desc),
-                        experience_level=classify_experience_level(title, desc),
+                        experience_level=classify_experience_level(title, desc, salary=sal),
                         description=desc,
                         date_posted=raw_pub or pub_date
                     ))
@@ -627,7 +652,7 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
                             job_url=link,
                             salary=salary,
                             role_category=classify_role(title, desc),
-                            experience_level=classify_experience_level(title, desc),
+                            experience_level=classify_experience_level(title, desc, salary=salary),
                             description=desc,
                             date_posted=raw_ts or pub_date
                         ))
@@ -790,7 +815,7 @@ class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):
                                 job_url=link,
                                 salary=sal,
                                 role_category=self.job_role(title, desc),
-                                experience_level=classify_experience_level(title, desc),
+                                experience_level=classify_experience_level(title, desc, salary=sal),
                                 description=desc,
                                 date_posted=raw_es_pub or pub_date,
                             ))
@@ -910,7 +935,7 @@ class DailyRemoteConnector(NewPlatformConnectorMixin, BaseConnector):
                             job_url=link,
                             salary=salary,
                             role_category=self.job_role(title, desc),
-                            experience_level=classify_experience_level(title, desc),
+                            experience_level=classify_experience_level(title, desc, salary=salary),
                             description=desc,
                             date_posted=raw_date or pub_date,
                         ))
@@ -1012,7 +1037,7 @@ class RealWorkFromAnywhereConnector(NewPlatformConnectorMixin, BaseConnector):
                             job_url=link,
                             salary=salary,
                             role_category=self.job_role(title, desc),
-                            experience_level=classify_experience_level(title, desc),
+                            experience_level=classify_experience_level(title, desc, salary=salary),
                             description=desc,
                             date_posted=raw_badge or badge_date,
                         ))
@@ -1145,7 +1170,7 @@ class YCombinatorConnector(NewPlatformConnectorMixin, BaseConnector):
                             job_url=link,
                             salary=salary,
                             role_category=self.job_role(title, full_text),
-                            experience_level=classify_experience_level(title, full_text),
+                            experience_level=classify_experience_level(title, full_text, salary=salary),
                             description=full_text,
                             date_posted=raw_pub or pub_date,
                         ))

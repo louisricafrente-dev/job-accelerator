@@ -77,10 +77,12 @@ class KalibrrConnector(BaseConnector):
                     if item.get("maximum_salary"):
                         salary += f" - {item['maximum_salary']}"
                     salary += f" / {item.get('salary_interval', '')}"
+                raw_level = str(item.get("work_experience") or item.get("experience_level") or "")
                 jobs.append(Job(title=title, company=item.get("company_name") or company.get("name", ""),
                                 location=loc, platform=self.platform, tier=self.tier,
                                 job_url=f"https://www.kalibrr.com/c/{code}/jobs/{ident}", salary=salary,
-                                role_category=classify_role(title, desc), experience_level=classify_experience_level(title, desc),
+                                role_category=classify_role(title, desc),
+                                experience_level=classify_experience_level(title, desc, salary=salary, raw_level=raw_level),
                                 description=desc, date_posted=raw_date or date))
             state.update(offset=offset + len(items) if self.has_more else 0,
                          previous_page=fingerprint if self.has_more else "", total=total,
@@ -99,7 +101,7 @@ class KalibrrConnector(BaseConnector):
 class BossjobConnector(BaseConnector):
     platform = "Bossjob"
     tier = 2
-    revision = 6
+    revision = 7
     checkpointed_query = True
     MAX_ACTIVE_RECRUITMENT_AGE_DAYS = 180
 
@@ -151,7 +153,12 @@ class BossjobConnector(BaseConnector):
                     if (status_key and status_key != "active") or item.get("company_is_onhold"):
                         continue
                     title = item.get("job_title", "")
-                    if not is_relevant_opportunity(title, ""):
+                    raw_desc = " ".join(
+                        str(part).strip()
+                        for part in (item.get("job_description"), item.get("job_requirements"), item.get("description"))
+                        if str(part or "").strip()
+                    )
+                    if not is_relevant_opportunity(title, raw_desc):
                         continue
                     raw_pub = item.get("published_at")
                     pub_date = normalize_date(raw_pub)
@@ -160,20 +167,29 @@ class BossjobConnector(BaseConnector):
                     if not (fresh_pub or active_recruiting):
                         continue
                     company = item.get("company_name", "")
+                    job_country = str(item.get("job_country") or "").strip()
+                    comp_country = str(item.get("company_country") or "").strip()
+                    if job_country.lower() not in ("", "philippines", "international"):
+                        continue
+                    if comp_country.lower() in ("china", "hong kong", "taiwan") and job_country.lower() != "philippines":
+                        continue
+                    if re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]", f"{title} {company}"):
+                        continue
                     link = urllib.parse.urljoin("https://bossjob.ph", ("/en" + item["job_url"]) if item.get("job_url", "").startswith("/job/") else item.get("job_url", ""))
                     if not item.get("job_url"):
                         continue
                     salary = "" if item.get("is_salary_hidden") else item.get("salary_range_value", "")
-                    job_location = ", ".join(filter(None, [item.get("job_location"), item.get("job_country")]))
-                    if item.get("is_remote_worldwide"):
-                        job_location = "Remote Worldwide"
-                    if not is_work_authorized_location(job_location, title, self.platform, ""):
+                    job_location = ", ".join(filter(None, [item.get("job_location"), job_country])) or "Philippines"
+                    if item.get("is_remote_worldwide") and "remote" not in job_location.lower():
+                        job_location = f"{job_location} (Remote)" if job_country.lower() == "philippines" else "Remote Worldwide"
+                    if not is_work_authorized_location(job_location, title, self.platform, raw_desc):
                         continue
                     effective_date = (
                         (item.get("recruiter_last_active_at") or raw_pub or pub_date)
                         if active_recruiting
                         else (raw_pub or pub_date)
                     )
+                    raw_level = str(item.get("xp_lvl") or item.get("work_experience") or item.get("experience_level") or "")
                     jobs.append(Job(
                         title=title,
                         company=company,
@@ -182,8 +198,9 @@ class BossjobConnector(BaseConnector):
                         tier=self.tier,
                         job_url=link,
                         salary=salary,
-                        role_category=classify_role(title),
-                        experience_level=classify_experience_level(title),
+                        role_category=classify_role(title, raw_desc),
+                        experience_level=classify_experience_level(title, raw_desc, salary=salary, raw_level=raw_level),
+                        description=raw_desc,
                         date_posted=effective_date
                     ))
                 # Refreshed ranking mixes old and new publication dates across the first 10 pages;
@@ -222,6 +239,12 @@ class JobStreetConnector(BaseConnector):
 
     def _parse_items(self, items):
         jobs = []
+        detail_fetches = 0
+        can_fetch_details = bool(
+            self.db_path
+            and not hasattr(self.get_url, "_mock_name")
+            and not hasattr(type(self).get_url, "_mock_name")
+        )
         for item in items:
             job_id = str(item.get("id", "")).strip()
             if not job_id:
@@ -243,6 +266,23 @@ class JobStreetConnector(BaseConnector):
             if arr and arr.lower() not in loc.lower():
                 loc = f"{loc} ({arr})"
             sal = (item.get("salaryLabel") or "").strip()
+            exp_lvl = classify_experience_level(title, desc, salary=sal, platform=self.platform)
+            if exp_lvl == "Unspecified" and len(desc) < 300 and can_fetch_details and detail_fetches < 15:
+                detail_fetches += 1
+                try:
+                    from bs4 import BeautifulSoup
+                    d_resp = self.get_url(href, impersonate="chrome120", timeout=8)
+                    if d_resp.status_code == 200 and d_resp.text:
+                        ad = BeautifulSoup(d_resp.text, "html.parser").select_one("[data-automation='jobAdDetails']")
+                        if ad:
+                            full_ad = ad.get_text("\n", strip=True)
+                            if len(full_ad) > len(desc):
+                                desc = full_ad
+                                if not self.accepts_opportunity(title, desc):
+                                    continue
+                                exp_lvl = classify_experience_level(title, desc, salary=sal, platform=self.platform)
+                except Exception:
+                    pass
             jobs.append(Job(
                 title=title,
                 company=comp,
@@ -252,7 +292,7 @@ class JobStreetConnector(BaseConnector):
                 job_url=href,
                 salary=sal,
                 role_category=self.job_role(title, desc),
-                experience_level=classify_experience_level(title, desc),
+                experience_level=exp_lvl,
                 description=desc,
                 date_posted=raw_date or date_val
             ))
@@ -426,10 +466,12 @@ class OnlineJobsConnector(BaseConnector):
                             company = value
                             break
                 salary = card.select_one("dd.col")
+                sal_text = salary.get_text(strip=True) if salary else ""
                 jobs.append(Job(title=title, company=company, location="Philippines (Remote / Direct Client)",
                                 platform=self.platform, tier=self.tier, job_url=link,
-                                salary=salary.get_text(strip=True) if salary else "",
-                                role_category=self.job_role(title), experience_level=classify_experience_level(title, description),
+                                salary=sal_text,
+                                role_category=self.job_role(title),
+                                experience_level=classify_experience_level(title, description, salary=sal_text),
                                 description=description, date_posted=raw_date))
         except Exception as exc:
             self.last_error = str(exc) or type(exc).__name__
@@ -527,8 +569,8 @@ class FounditPHConnector(NewPlatformConnectorMixin, BaseConnector):
                 exp_tag = ""
                 if exp_str:
                     exp_tag = f"{exp_str} experience"
-                elif min_exp is not None and isinstance(min_exp, int) and 0 <= min_exp <= 2:
-                    exp_tag = f"0-{max(1, min_exp)} years experience"
+                elif min_exp is not None and isinstance(min_exp, int):
+                    exp_tag = f"0-{max(1, min_exp)} years experience" if min_exp <= 2 else f"{min_exp}+ years experience"
                 raw_desc = str(item.get("description") or item.get("skills") or "")
                 desc = f"{exp_tag} | {raw_desc}".strip(" |") if exp_tag else raw_desc
                 if not title or not self.accepts_opportunity(title, desc):
@@ -556,7 +598,7 @@ class FounditPHConnector(NewPlatformConnectorMixin, BaseConnector):
                     job_url=link,
                     salary="",
                     role_category=self.job_role(title, desc),
-                    experience_level=classify_experience_level(title, desc),
+                    experience_level=classify_experience_level(title, desc, raw_level=exp_str),
                     description=desc,
                     date_posted=raw_pub or pub_date,
                 ))
@@ -660,7 +702,7 @@ class VirtualStaffPHConnector(NewPlatformConnectorMixin, BaseConnector):
                         job_url=link,
                         salary=salary,
                         role_category=self.job_role(title, desc),
-                        experience_level=classify_experience_level(title, desc),
+                        experience_level=classify_experience_level(title, desc, salary=salary, raw_level=exp_raw),
                         description=desc,
                         date_posted=raw_dt or pub_date,
                     ))

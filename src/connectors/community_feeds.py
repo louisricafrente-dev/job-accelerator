@@ -33,6 +33,9 @@ SCAM_PATTERNS = (
     r"\b(?:adult\s+chat|of\s+chatter|chatter\s+for\s+of)\b",
     # Aggregator Link-Farm Spam & Anonymous Off-Platform Traps
     r"\b\d+\s+remote\s+[a-z]+\s+jobs\b",
+    r"\bhighest\s+paying\s+remote\s+jobs\b",
+    r"\b\d+\s+(?:full\s+)?remote\s+jobs\s+at\b",
+    r"\b(?:python|javascript|react|tech|remote|developer)[-\s]+(?:based\s+)?jobs\s+(?:across|in)\b",
     r"\bquick\s+roundup\s+of\b",
     r"\b(?:whatsapp|telegram)\s+only\b",
     r"\bt\.me/[a-z0-9_]+",
@@ -61,9 +64,9 @@ class RedditConnector(BaseConnector):
     platform = "Reddit"
     tier = 2
     is_feed = True
-    revision = 2
+    revision = 4
     min_window_days = 7
-    SUBREDDITS = ("forhire", "jobbit", "remotejs", "DeveloperJobs", "TechJobs", "RemoteJobs", "buhaydigital", "pinoyprogrammer")
+    SUBREDDITS = ("forhire", "jobbit", "remotejs", "DeveloperJobs", "buhaydigital", "pinoyprogrammer")
     PH_SUBREDDITS = {"buhaydigital", "pinoyprogrammer"}
     MAX_PAGES_PER_SUB = {"forhire": 3}
     SEARCH_URL = "https://arctic-shift.photon-reddit.com/api/posts/search"
@@ -154,12 +157,18 @@ class RedditConnector(BaseConnector):
                     continue
                 if not (
                     re.search(r"\[\s*hiring\b", raw_title, re.I)
-                    or flair in ("hiring", "job opening", "job posting", "job posts", "job")
+                    or (sub in self.PH_SUBREDDITS and flair in ("hiring", "job opening", "job posting"))
                 ):
                     continue
 
                 selftext = str(post.get("selftext") or "").strip()
                 if selftext.lower() in ("[removed]", "[deleted]", "") or len(selftext) < self.MIN_BODY_CHARS:
+                    continue
+                if re.search(
+                    r"\b(?:looking\s+for\s+(?:a\s+)?(?:job|work|gig|client|opportunity|part[- ]time|full[- ]time)|hire\s+me|seeking\s+(?:work|job|employment))\b",
+                    f"{raw_title} {selftext[:250]}",
+                    re.I,
+                ):
                     continue
                 if "title goes here" in raw_title.lower() or "put a job description, location in the title" in selftext.lower():
                     continue
@@ -177,12 +186,12 @@ class RedditConnector(BaseConnector):
                     flags=re.I,
                 ).strip() or raw_title
 
-                if sub in self.PH_SUBREDDITS:
+                if sub in self.PH_SUBREDDITS or re.search(r"\b(?:philippines|manila|makati|bgc|cebu|davao)\b", f"{raw_title} {selftext}", re.I):
                     loc = "Philippines (Remote)"
-                elif re.search(r"\b(?:philippines|manila|makati|bgc|cebu|davao)\b", f"{raw_title} {selftext}", re.I):
-                    loc = "Philippines (Remote)"
-                elif re.search(r"\b(?:remote|online|anywhere|worldwide|global)\b", f"{raw_title} {selftext}", re.I):
+                elif re.search(r"\b(?:worldwide|global|anywhere|work\s+from\s+anywhere|apac|southeast\s+asia)\b", f"{raw_title} {selftext}", re.I):
                     loc = "Remote Worldwide"
+                elif re.search(r"\b(?:remote|online|wfh|work\s+from\s+home)\b", f"{raw_title} {selftext}", re.I):
+                    loc = "Remote"
                 else:
                     loc = ""
 
@@ -348,7 +357,7 @@ class VueJobsConnector(BaseConnector):
     platform = "VueJobs"
     tier = 2
     is_feed = True
-    revision = 1
+    revision = 2
     min_window_days = 7
     FEED_URL = "https://vuejobs.com/feed"
     MAX_ITEMS = 100
