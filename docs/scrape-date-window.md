@@ -31,6 +31,8 @@ Date-boundary stopping is used only on verified publication-ordered routes. Unkn
 | We Work Remotely | All five configured category RSS feeds | Feed snapshots can include years-old rows and do not establish the entire jobsite window; explicit limited coverage. |
 | Arc | Public initial listing data | No verified date-ordered continuation from this integration; explicit limited coverage. |
 | Web3.career | Remote job rows paired with JSON-LD `JobPosting` metadata across pages 1–2 | Strict `Anywhere`/`Worldwide` remote tech filtering rejects US/EMEA-restricted roles. |
+| Reddit | Arctic Shift search (`forhire`, `jobbit`, `remotejs`, `DeveloperJobs`, `buhaydigital`, `pinoyprogrammer`) with `after=` window filter and strict `[Hiring]` + anti-scam/removal checks | Only keeps unremoved explicit `[Hiring]` posts (`>= 80` chars, non-negative score) passing anti-scam and PH/Worldwide location checks. |
+| Hacker News | Official Algolia HN API on the latest `Ask HN: Who is hiring?` thread (`parent_id == story_id`, `query=remote`) | Monthly founder/CTO thread slice (`hitsPerPage=100`); filters out seeking-work, rev-share-only, and country-restricted roles. |
 | Wellfound | PH location/role pages and remote tech role landing pages via `curl_cffi` | Ranking/pagination not verified; cloud datacenter challenges surface as retryable errors instead of silent empty success; explicit limited coverage. |
 | Upwork | Existing once/day flconsole request, last30min, limit30 | Provider cannot backfill two days through this interface. One request per day unchanged;30 matches flconsole schema maximum and leaves headroom under100/hour provider quota, now explicitly limited. |
 

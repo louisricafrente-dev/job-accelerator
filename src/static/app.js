@@ -3927,7 +3927,9 @@ const MONITORED_BOARDS = [
   { key: 'DailyRemote', label: 'DailyRemote', domain: 'dailyremote.com', type: 'Worldwide Remote' },
   { key: 'Real Work From Anywhere', label: 'Real Work From Anywhere', domain: 'realworkfromanywhere.com', type: '100% Worldwide' },
   { key: 'Y Combinator', label: 'Y Combinator', domain: 'workatastartup.com', type: 'YC Startup Remote' },
-  { key: 'Web3.career', label: 'Web3.career', domain: 'web3.career', type: 'Global Remote Tech' }
+  { key: 'Web3.career', label: 'Web3.career', domain: 'web3.career', type: 'Global Remote Tech' },
+  { key: 'Reddit', label: 'Reddit Direct [Hiring]', domain: 'reddit.com', type: 'Direct Client Feed' },
+  { key: 'Hacker News', label: 'HN Who is Hiring', domain: 'news.ycombinator.com', type: 'Direct Founder Feed' }
 ];
 
 let telemetryTimer = null;

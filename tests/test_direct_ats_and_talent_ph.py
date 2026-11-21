@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import src.aggregator as aggregator_mod
 from src import execution_inbox as inbox
+from src.connectors.community_feeds import HackerNewsConnector, RedditConnector
 from src.connectors.direct_ats import AshbyConnector, GreenhouseConnector, WorkableConnector
 from src.connectors.ph_jobs import BossjobConnector
 from src.connectors.remote_feed import HimalayasConnector
@@ -314,6 +315,8 @@ class DirectATSAndTalentPHTests(TestCase):
         self.assertIn("WorkableConnector", call_names)
         self.assertIn("TalentPHConnector", call_names)
         self.assertIn("Web3CareerConnector", call_names)
+        self.assertIn("RedditConnector", call_names)
+        self.assertIn("HackerNewsConnector", call_names)
         self.assertIn("SmartRecruitersConnector", call_names)
         self.assertIn("WellfoundConnector", call_names)
         self.assertNotIn("ContraConnector", call_names)
@@ -322,7 +325,7 @@ class DirectATSAndTalentPHTests(TestCase):
 
         if not getattr(aggregator_mod.get_default_connectors, "_mock_name", None):
             platforms = {c.platform for c in aggregator_mod.get_default_connectors()}
-            self.assertTrue({"Greenhouse", "Ashby", "Workable", "Talent.com PH", "Web3.career", "SmartRecruiters", "Wellfound"}.issubset(platforms))
+            self.assertTrue({"Greenhouse", "Ashby", "Workable", "Talent.com PH", "Web3.career", "Reddit", "Hacker News", "SmartRecruiters", "Wellfound"}.issubset(platforms))
             self.assertTrue({"ZipRecruiter", "Contra", "FlexJobs"}.isdisjoint(platforms))
 
     def test_workable_parses_widget_and_handles_partial_failure(self):
@@ -661,3 +664,180 @@ class DirectATSAndTalentPHTests(TestCase):
             self.assertTrue(claimed_runs[0]["resume"])
             self.assertFalse(claimed_runs[0]["restart"])
             self.assertEqual(inbox.read(db_ready)["status"], "complete")
+
+    def test_reddit_connector_filters_removed_for_hire_negative_and_scam_posts(self):
+        now_ts = int(time.time())
+        long_valid_body = (
+            "We are an early-stage product team looking for a React and Node.js full stack developer "
+            "to build dashboard features. Paid $30/hr, fully remote worldwide, send GitHub links via Reddit DM."
+        )
+        posts = [
+            {
+                "id": "good1",
+                "title": "[Hiring] [Remote] Junior Full Stack Developer (React + Node.js) $30/hr",
+                "author": "founder_real",
+                "score": 5,
+                "link_flair_text": "Hiring",
+                "selftext": long_valid_body,
+                "permalink": "/r/forhire/comments/good1/hiring_junior_dev/",
+                "created_utc": now_ts,
+                "removed_by_category": None,
+                "removed_by": None,
+            },
+            {
+                "id": "rem1",
+                "title": "[Hiring] React Developer",
+                "author": "spam_mod",
+                "score": 1,
+                "selftext": long_valid_body,
+                "permalink": "/r/forhire/comments/rem1/x/",
+                "created_utc": now_ts,
+                "removed_by_category": "reddit",
+            },
+            {
+                "id": "fh1",
+                "title": "[For Hire] React & Kotlin Developer",
+                "author": "dev_applicant",
+                "score": 3,
+                "link_flair_text": "For Hire",
+                "selftext": long_valid_body,
+                "permalink": "/r/forhire/comments/fh1/x/",
+                "created_utc": now_ts,
+            },
+            {
+                "id": "neg1",
+                "title": "[Hiring] [Remote] Backend Developer",
+                "author": "downvoted_op",
+                "score": -2,
+                "selftext": long_valid_body,
+                "permalink": "/r/forhire/comments/neg1/x/",
+                "created_utc": now_ts,
+            },
+            {
+                "id": "scam_proxy",
+                "title": "[Hiring] Proxy interviewer needed for React job",
+                "author": "scammer1",
+                "score": 1,
+                "selftext": long_valid_body,
+                "permalink": "/r/forhire/comments/scam_proxy/x/",
+                "created_utc": now_ts,
+            },
+            {
+                "id": "scam_rent",
+                "title": "[Hiring] Remote Developer",
+                "author": "scammer2",
+                "score": 1,
+                "selftext": "We want to rent your Upwork account and share profits weekly with zero coding needed.",
+                "permalink": "/r/forhire/comments/scam_rent/x/",
+                "created_utc": now_ts,
+            },
+            {
+                "id": "scam_comm",
+                "title": "[Hiring] Web Developer (1099 commission only)",
+                "author": "scammer3",
+                "score": 1,
+                "selftext": "Build client sites on 1099 commission only basis, no base pay until clients close.",
+                "permalink": "/r/forhire/comments/scam_comm/x/",
+                "created_utc": now_ts,
+            },
+            {
+                "id": "scam_rev",
+                "title": "[Hiring] Mobile App Engineer (50% rev share)",
+                "author": "scammer4",
+                "score": 1,
+                "selftext": "Looking for Kotlin developer for 50% rev share only on future launch.",
+                "permalink": "/r/forhire/comments/scam_rev/x/",
+                "created_utc": now_ts,
+            },
+            {
+                "id": "spam_roundup",
+                "title": "[HIRING] 30 Remote Javascript jobs",
+                "author": "linkfarm",
+                "score": 1,
+                "selftext": "Just put together a quick roundup of Javascript jobs that are still open on my blog.",
+                "permalink": "/r/remotejs/comments/spam_roundup/x/",
+                "created_utc": now_ts,
+            },
+            {
+                "id": "scam_tg",
+                "title": "[Hiring] Node.js Backend Developer",
+                "author": "scammer5",
+                "score": 1,
+                "selftext": "Apply via telegram only at t.me/fastcashjobs for instant developer onboarding.",
+                "permalink": "/r/forhire/comments/scam_tg/x/",
+                "created_utc": now_ts,
+            },
+        ]
+
+        def fake_get(url, **kwargs):
+            if "subreddit=jobbit" in url:
+                return MagicMock(status_code=422, text='{"error":"Timeout"}')
+            if "subreddit=forhire" in url:
+                return MagicMock(status_code=200, json=lambda: {"data": posts})
+            return MagicMock(status_code=200, json=lambda: {"data": []})
+
+        board = RedditConnector()
+        with patch.object(board, "SUBREDDITS", ("forhire", "jobbit")), \
+                patch.object(board, "get_url", side_effect=fake_get):
+            jobs = board.fetch()
+
+        self.assertEqual([j.job_url for j in jobs], ["https://www.reddit.com/r/forhire/comments/good1/hiring_junior_dev"])
+        self.assertEqual(jobs[0].platform, "Reddit")
+        self.assertEqual(jobs[0].company, "Direct Client (Reddit r/forhire - u/founder_real)")
+        self.assertEqual(jobs[0].salary, "$30/hr")
+        self.assertEqual(board.last_error, "")
+        self.assertIn("r/jobbit", board.coverage_warning)
+
+    def test_hacker_news_connector_filters_non_top_level_seeking_us_only_and_rev_share(self):
+        today_iso = f"{datetime.now(MANILA).date().isoformat()}T10:00:00Z"
+        story_payload = {"hits": [{"objectID": "50338728", "title": "Ask HN: Who is hiring? (November 2026)"}]}
+        comments_payload = {
+            "hits": [
+                {
+                    "objectID": "9001",
+                    "parent_id": 50338728,
+                    "created_at": today_iso,
+                    "comment_text": "<p>Acme AI | Full Stack Software Engineer | Remote Worldwide | $90k-$120k</p><p>Build React, TypeScript, and Node.js workflows. Email founders@acme.example.</p>",
+                },
+                {
+                    "objectID": "9002",
+                    "parent_id": 9001,
+                    "created_at": today_iso,
+                    "comment_text": "<p>Reply comment: Do you sponsor visas? Software Engineer Remote Worldwide</p>",
+                },
+                {
+                    "objectID": "9003",
+                    "parent_id": 50338728,
+                    "created_at": today_iso,
+                    "comment_text": "<p>SEEKING FREELANCE - Full Stack Engineer - Remote Worldwide</p><p>Available for contract React and Python work.</p>",
+                },
+                {
+                    "objectID": "9004",
+                    "parent_id": 50338728,
+                    "created_at": today_iso,
+                    "comment_text": "<p>US Corp | Backend Engineer | REMOTE (US Citizens Only) | $140k</p><p>Build Go and Python APIs.</p>",
+                },
+                {
+                    "objectID": "9005",
+                    "parent_id": 50338728,
+                    "created_at": today_iso,
+                    "comment_text": "<p>Indie Idea | Mobile Developer | Remote Worldwide | 50% rev share</p><p>Build our Android app for 50% rev share.</p>",
+                },
+            ]
+        }
+
+        def fake_get(url, **kwargs):
+            if "tags=story" in url:
+                return MagicMock(status_code=200, json=lambda: story_payload)
+            return MagicMock(status_code=200, json=lambda: comments_payload)
+
+        board = HackerNewsConnector()
+        with patch.object(board, "get_url", side_effect=fake_get):
+            jobs = board.fetch()
+
+        self.assertEqual([j.job_url for j in jobs], ["https://news.ycombinator.com/item?id=9001"])
+        self.assertEqual(jobs[0].company, "Acme AI")
+        self.assertEqual(jobs[0].title, "Full Stack Software Engineer")
+        self.assertEqual(jobs[0].platform, "Hacker News")
+        self.assertEqual(jobs[0].salary, "$90k-$120k")
+        self.assertEqual(board.last_error, "")
