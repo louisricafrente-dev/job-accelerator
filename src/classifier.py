@@ -157,8 +157,8 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
     if plat in FOREIGN_BOARDS:
         return False
 
-    # 3b. Explicit Philippine location (including regional multi-country listings like "Singapore; Philippines")
-    if ph_location:
+    # 3b. Explicit Philippine or worldwide/APAC location (including regional multi-country listings like "Singapore; Philippines")
+    if ph_location or worldwide:
         return True
 
     # 4. Foreign location check

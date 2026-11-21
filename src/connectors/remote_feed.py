@@ -239,9 +239,10 @@ class HimalayasConnector(BaseConnector):
     platform = "Himalayas"
     tier = 3
     is_feed = True
-    revision = 3
+    revision = 4
     checkpointed_feed = True
     query_delay_seconds = (2.0, 3.5)
+    MAX_PAGES = 30
 
     def fetch(self, query: str = "developer", location: str = "remote") -> List[Job]:
         self.last_error = ""
@@ -261,11 +262,20 @@ class HimalayasConnector(BaseConnector):
                 cursor = data.get("nextCursor")
                 if cursor and cursor == state.get("cursor"):
                     raise RuntimeError("Himalayas repeated its cursor; progress retained")
-                self.finish_page(state, [item.get("guid") or item.get("applicationLink") or "" for item in items],
-                                 [item.get("pubDate") for item in items], bool(cursor), ordered=True)
-                if not cursor and data.get("totalCount", 0) > data.get("offset", 0) + len(items):
+                pages_fetched = state.get("pages_saved", 0) + 1
+                hit_page_cap = bool(cursor) and pages_fetched >= self.MAX_PAGES
+                self.finish_page(
+                    state,
+                    [item.get("guid") or item.get("applicationLink") or "" for item in items],
+                    [item.get("pubDate") for item in items],
+                    bool(cursor) and not hit_page_cap,
+                    ordered=True,
+                )
+                if hit_page_cap and not self.has_more:
+                    self.coverage_warning = f"Coverage limited: Himalayas capped at {self.MAX_PAGES} pages per sync cycle"
+                elif not cursor and data.get("totalCount", 0) > data.get("offset", 0) + len(items):
                     self.coverage_warning = "Coverage limited: Himalayas omitted its continuation cursor before the feed ended"
-                state.update(cursor=cursor, total=data.get("totalCount", 0))
+                state.update(cursor=cursor if self.has_more else None, total=data.get("totalCount", 0))
                 for item in items:
                     title = item.get("title", "")
                     desc = item.get("excerpt", "") or item.get("description", "")

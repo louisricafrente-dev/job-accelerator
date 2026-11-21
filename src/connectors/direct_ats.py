@@ -72,6 +72,7 @@ class GreenhouseConnector(_DirectATSConnector):
     COMPANIES = (
         "canonical", "binance", "okx", "bybit", "xendit", "coinbase", "agoda",
         "planetscale", "mozilla", "wikimedia", "netlify", "consensys", "gitlab", "invisible",
+        "freshprints", "netskope", "rzr", "testlio", "cockroachlabs", "brave", "stripe", "cloudflare",
     )
     LIST_URL = "https://boards-api.greenhouse.io/v1/boards/{company}/jobs?content=false"
     DETAIL_URL = "https://boards-api.greenhouse.io/v1/boards/{company}/jobs/{job_id}"
@@ -138,6 +139,7 @@ class AshbyConnector(_DirectATSConnector):
     platform = "Ashby"
     COMPANIES = (
         "supabase", "elevenlabs", "phantom", "kit", "turnkey", "posthog", "oyster", "zapier",
+        "multiplymii", "clickup", "railway", "baseten", "roboflow", "neon",
     )
     DISPLAY_NAMES = {
         "supabase": "Supabase",
@@ -148,6 +150,12 @@ class AshbyConnector(_DirectATSConnector):
         "posthog": "PostHog",
         "oyster": "Oyster",
         "zapier": "Zapier",
+        "multiplymii": "MultiplyMii",
+        "clickup": "ClickUp",
+        "railway": "Railway",
+        "baseten": "Baseten",
+        "roboflow": "Roboflow",
+        "neon": "Neon",
     }
     BOARD_URL = "https://api.ashbyhq.com/posting-api/job-board/{company}"
 

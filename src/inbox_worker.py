@@ -132,26 +132,42 @@ def run_local(db_path, aggregator, stop=None, key=inbox.KEY):
     presence_key = key + ":local"
     presence_saved = False
     recovered_cycles = set()
+    local_resume_counts = {}
+    max_local_self_resumes = 3
     try:
         while not stop.is_set():
             try:
                 if not presence_saved:
                     set_user_setting(db_path, presence_key, json.dumps({"worker_id": worker_id, "last_seen_at": time.time()}))
                     presence_saved = True
+                now = time.time()
                 command = inbox.read(db_path, key)
-                if command.get("status") == "queued" and time.time() < command.get("local_deadline", 0):
+                if command.get("status") == "queued" and now < command.get("local_deadline", 0):
                     claimed = inbox.claim(db_path, "local", worker_id, key=key)
                     if claimed:
                         run_claimed(db_path, claimed, aggregator, key)
-                elif (
-                    command.get("status") == "partial"
-                    and command.get("executor") == "cloud"
-                    and (command.get("updated_at") or 0) >= time.time() - 6 * 3600
-                    and bool(((command.get("result") or {}).get("progress") or {}).get("deferred_boards"))
-                ):
+                elif command.get("status") == "partial" and (command.get("updated_at") or 0) >= now - 6 * 3600:
+                    progress = (command.get("result") or {}).get("progress") or {}
+                    deferred_boards = progress.get("deferred_boards") or []
                     cycle_key = command.get("cycle_id") or command.get("id")
-                    if cycle_key and cycle_key not in recovered_cycles:
-                        recovered_cycles.add(cycle_key)
+                    recovery_token = None
+                    is_local_self_resume = False
+                    if command.get("executor") == "cloud" and bool(deferred_boards) and cycle_key:
+                        recovery_token = (cycle_key, "cloud")
+                    elif command.get("executor") == "local" and cycle_key and local_resume_counts.get(cycle_key, 0) < max_local_self_resumes:
+                        ready_deferred = tuple(sorted(
+                            str(b.get("platform") or "")
+                            for b in deferred_boards
+                            if isinstance(b, dict) and (b.get("retry_at") or 0) > 0 and (b.get("retry_at") or 0) <= now
+                        ))
+                        budget_continue = bool(progress.get("has_more")) and bool(progress.get("can_continue", True))
+                        if ready_deferred or budget_continue:
+                            recovery_token = (command.get("id") or cycle_key, "local", ready_deferred, budget_continue)
+                            is_local_self_resume = True
+                    if recovery_token and recovery_token not in recovered_cycles:
+                        recovered_cycles.add(recovery_token)
+                        if is_local_self_resume:
+                            local_resume_counts[cycle_key] = local_resume_counts.get(cycle_key, 0) + 1
                         inbox.enqueue(
                             db_path,
                             queries=command.get("queries"),

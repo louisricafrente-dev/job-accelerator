@@ -181,7 +181,7 @@ def run_batch(aggregator, queries, budget_seconds=150, workers=12, cycle_id=None
             revision = getattr(connector, "revision", 1)
             if state.get("revision", 1) != revision:
                 state.update(cursor=0, retry=[], completed_queries={}, individual_queries=[], feed_state={}, query_states={}, coverage_warning="", next_at=state.get("blocked_until", 0))
-                if "404" in state.get("last_error", ""):
+                if any(code in state.get("last_error", "") for code in ("404", "429")):
                     state.update(blocked_until=0, next_at=0, last_error="", deferred=False)
                 state["revision"] = revision
                 state.pop("yield_counts", None)

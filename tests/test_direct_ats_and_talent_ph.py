@@ -1,5 +1,6 @@
 import ast
 from datetime import datetime, timedelta
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -12,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 import src.aggregator as aggregator_mod
 from src import execution_inbox as inbox
 from src.connectors.direct_ats import AshbyConnector, GreenhouseConnector, WorkableConnector
+from src.connectors.ph_jobs import BossjobConnector
 from src.connectors.remote_feed import HimalayasConnector
 from src.connectors.smartrecruiters import COMPANIES as SR_COMPANIES
 from src.connectors.talent_ph import TalentPHConnector
@@ -508,3 +510,154 @@ class DirectATSAndTalentPHTests(TestCase):
             self.assertFalse(claimed_runs[0]["restart"])
             self.assertEqual(claimed_runs[0]["executor"], "local")
             self.assertEqual(inbox.read(db)["status"], "complete")
+
+    def test_bossjob_accepts_only_verified_active_recruitment_when_published_older(self):
+        today = datetime.now(MANILA).date()
+        today_str = today.isoformat()
+        old_valid_pub = (today - timedelta(days=45)).isoformat()
+        ancient_pub = (today - timedelta(days=240)).isoformat()
+        future_exp = (today + timedelta(days=30)).isoformat()
+        past_exp = (today - timedelta(days=1)).isoformat()
+
+        base_item = {
+            "job_title": "Junior Web Developer",
+            "company_name": "Active PH Co",
+            "job_country": "Philippines",
+            "job_location": "Manila",
+            "status_key": "active",
+            "recruiter_status_key": "active",
+            "company_is_onhold": False,
+            "published_at": old_valid_pub,
+            "expired_at": future_exp,
+            "recruiter_last_active_at": f"{today_str} 14:00:00",
+            "recruiter_reply_label": "Reply today 3 times",
+            "activity_score": 25,
+        }
+
+        items = [
+            {**base_item, "id": 1, "job_url": "/job/valid-active-1"},
+            {**base_item, "id": 2, "job_url": "/job/zero-reply-2", "recruiter_reply_label": "Reply today 0 times"},
+            {**base_item, "id": 3, "job_url": "/job/low-score-3", "activity_score": 10},
+            {**base_item, "id": 4, "job_url": "/job/inactive-rec-4", "recruiter_status_key": "inactive"},
+            {**base_item, "id": 5, "job_url": "/job/expired-5", "expired_at": past_exp},
+            {**base_item, "id": 6, "job_url": "/job/ancient-6", "published_at": ancient_pub},
+            {**base_item, "id": 7, "job_url": "/job/stale-rec-7", "recruiter_last_active_at": (today - timedelta(days=10)).isoformat()},
+            {**base_item, "id": 8, "job_url": "/job/onhold-fresh-8", "published_at": today_str, "company_is_onhold": True},
+        ]
+
+        board = BossjobConnector()
+        payload = json.dumps({"code": 0, "data": {"jobs": items, "total_pages": 1}}).encode()
+        with patch.object(board, "open_url", return_value=io.BytesIO(payload)):
+            jobs = board.fetch("Web Developer")
+
+        self.assertEqual([j.job_url for j in jobs], ["https://bossjob.ph/en/job/valid-active-1"])
+        self.assertIn(today_str, jobs[0].date_posted)
+
+    def test_himalayas_stops_at_max_pages_and_clears_cursor(self):
+        self.assertEqual(HimalayasConnector.revision, 4)
+        self.assertEqual(HimalayasConnector.MAX_PAGES, 30)
+        board = HimalayasConnector()
+        now = int(datetime.now(MANILA).timestamp())
+        start, _ = board.date_window()
+        board.feed_state = {
+            "window_start": start.date().isoformat(),
+            "query": "",
+            "pages_saved": HimalayasConnector.MAX_PAGES - 1,
+            "cursor": "cursor-29",
+            "seen_pages": [],
+        }
+        data = {
+            "jobs": [{"guid": "h-30", "title": "Software Engineer", "applicationLink": "https://example.com/h30", "pubDate": now}],
+            "nextCursor": "cursor-30",
+            "totalCount": 5000,
+        }
+        with patch.object(board, "open_url", return_value=io.BytesIO(json.dumps(data).encode())):
+            jobs = board.fetch()
+
+        self.assertEqual(len(jobs), 1)
+        self.assertFalse(board.has_more)
+        self.assertIsNone(board.next_feed_state["cursor"])
+        self.assertIn("capped at 30 pages", board.coverage_warning)
+
+    def test_run_local_resumes_local_partial_only_after_cooldown_expires(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db = str(Path(temp) / "local_resume.db")
+            init_db(db)
+            inbox.enqueue(db, ["developer"], automatic=True, now=time.time() - 10)
+            claimed_future = inbox.claim(db, "local", "pc")
+            self.assertIsNotNone(claimed_future)
+            inbox.update_owned(
+                db,
+                claimed_future,
+                result={
+                    "status": "partial",
+                    "added": 1,
+                    "skipped": 0,
+                    "total_fetched": 1,
+                    "platforms": {"LinkedIn": 1},
+                    "progress": {
+                        "has_more": False,
+                        "can_continue": False,
+                        "unfinished": True,
+                        "deferred_boards": [{"platform": "LinkedIn", "error": "HTTP Error 429", "retry_at": time.time() + 600}],
+                    },
+                },
+            )
+
+            stop_wait = threading.Event()
+            stop_wait.is_set = MagicMock(side_effect=[False, True])
+            with patch("src.inbox_worker.run_claimed") as mock_run_future, \
+                    patch("src.inbox_worker.inbox.POLL_SECONDS", 0):
+                run_local(db, MagicMock(), stop=stop_wait)
+            mock_run_future.assert_not_called()
+
+            db_ready = str(Path(temp) / "local_resume_ready.db")
+            init_db(db_ready)
+            inbox.enqueue(db_ready, ["developer"], automatic=True, now=time.time() - 10)
+            claimed_ready = inbox.claim(db_ready, "local", "pc")
+            self.assertIsNotNone(claimed_ready)
+            inbox.update_owned(
+                db_ready,
+                claimed_ready,
+                result={
+                    "status": "partial",
+                    "added": 1,
+                    "skipped": 0,
+                    "total_fetched": 1,
+                    "platforms": {"LinkedIn": 1},
+                    "progress": {
+                        "has_more": False,
+                        "can_continue": False,
+                        "unfinished": True,
+                        "deferred_boards": [{"platform": "LinkedIn", "error": "HTTP Error 429", "retry_at": time.time() - 10}],
+                    },
+                },
+            )
+
+            stop_ready = threading.Event()
+            claimed_runs = []
+
+            def fake_run_claimed(db_arg, claimed_arg, agg_arg, key=inbox.KEY):
+                claimed_runs.append(claimed_arg)
+                inbox.update_owned(
+                    db_arg,
+                    claimed_arg,
+                    result={
+                        "status": "ok",
+                        "added": 4,
+                        "skipped": 0,
+                        "total_fetched": 4,
+                        "platforms": {"LinkedIn": 4},
+                        "progress": {"has_more": False, "can_continue": False, "unfinished": False, "deferred_boards": []},
+                    },
+                )
+                stop_ready.set()
+
+            with patch("src.inbox_worker.run_claimed", side_effect=fake_run_claimed), \
+                    patch("src.inbox_worker.inbox.POLL_SECONDS", 0):
+                run_local(db_ready, MagicMock(), stop=stop_ready)
+
+            self.assertEqual(len(claimed_runs), 1)
+            self.assertTrue(claimed_runs[0]["resume"])
+            self.assertFalse(claimed_runs[0]["restart"])
+            self.assertEqual(inbox.read(db_ready)["status"], "complete")

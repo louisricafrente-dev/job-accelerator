@@ -14,6 +14,8 @@ from src.models import Job
 COMPANIES = (
     "SGS", "Sutherland", "Canva", "IQEQ", "BoschGroup", "WesternDigital",
     "TurnerTownsend", "EgisGroup", "Continental", "NielsenIQ", "DeliveryHero", "Grab",
+    "iScaleSolutions", "LiftedanUpworkCompany", "Cooee", "TORCHSolutions",
+    "HomeCredit", "GratitudePhilippines", "Penbrothers",
 )
 POSTINGS = "https://api.smartrecruiters.com/v1/companies/{company}/postings"
 PAGE_SIZE = 100

@@ -113,6 +113,8 @@ class TestLocationFilter(unittest.TestCase):
             ("Singapore; Philippines", "LinkedIn"),
             ("Remote, Global", "Ashby"),
             ("APAC - Remote", "Greenhouse"),
+            ("Global", "Greenhouse"),
+            ("APAC", "Ashby"),
         ]:
             with self.subTest(allowed_location=location):
                 self.assertTrue(is_work_authorized_location(location, "Developer", platform))

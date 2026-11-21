@@ -2,9 +2,10 @@ import re
 import json
 import urllib.request
 import urllib.parse
+from datetime import datetime, timedelta
 from typing import List
 from src.connectors.base import BaseConnector, NewPlatformConnectorMixin, logger
-from src.models import Job, normalize_date
+from src.models import Job, MANILA, normalize_date
 from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
 
 import time
@@ -98,8 +99,36 @@ class KalibrrConnector(BaseConnector):
 class BossjobConnector(BaseConnector):
     platform = "Bossjob"
     tier = 2
-    revision = 5
+    revision = 6
     checkpointed_query = True
+    MAX_ACTIVE_RECRUITMENT_AGE_DAYS = 180
+
+    def _is_actively_recruiting(self, item: dict) -> bool:
+        """Accept older Bossjob listings only when verified active recruitment signals hold."""
+        if str(item.get("status_key") or "").strip().lower() != "active":
+            return False
+        if str(item.get("recruiter_status_key") or "").strip().lower() != "active":
+            return False
+        if item.get("company_is_onhold"):
+            return False
+        today = datetime.now(MANILA).date()
+        min_pub_iso = (today - timedelta(days=self.MAX_ACTIVE_RECRUITMENT_AGE_DAYS)).isoformat()
+        pub_date = normalize_date(item.get("published_at"))
+        if not pub_date or pub_date < min_pub_iso:
+            return False
+        exp_date = normalize_date(item.get("expired_at"))
+        if not exp_date or exp_date <= today.isoformat():
+            return False
+        if not self.accepts_date(item.get("recruiter_last_active_at")):
+            return False
+        reply_label = str(item.get("recruiter_reply_label") or item.get("reply_label") or "").strip().lower()
+        if not reply_label or "0 times" in reply_label or not any(tok in reply_label for tok in ("reply", "replied")):
+            return False
+        try:
+            score = int(item.get("activity_score") or 0)
+        except (ValueError, TypeError):
+            score = 0
+        return score >= 15
 
     def fetch(self, query: str = "developer", location: str = "Philippines") -> List[Job]:
         self.last_error = ""
@@ -118,12 +147,17 @@ class BossjobConnector(BaseConnector):
                 payload = data.get("data", {})
                 items = payload.get("jobs", [])
                 for item in items:
+                    status_key = str(item.get("status_key") or "active").strip().lower()
+                    if (status_key and status_key != "active") or item.get("company_is_onhold"):
+                        continue
                     title = item.get("job_title", "")
                     if not is_relevant_opportunity(title, ""):
                         continue
                     raw_pub = item.get("published_at")
                     pub_date = normalize_date(raw_pub)
-                    if not self.accepts_date(raw_pub):
+                    fresh_pub = self.accepts_date(raw_pub)
+                    active_recruiting = False if fresh_pub else self._is_actively_recruiting(item)
+                    if not (fresh_pub or active_recruiting):
                         continue
                     company = item.get("company_name", "")
                     link = urllib.parse.urljoin("https://bossjob.ph", ("/en" + item["job_url"]) if item.get("job_url", "").startswith("/job/") else item.get("job_url", ""))
@@ -135,6 +169,11 @@ class BossjobConnector(BaseConnector):
                         job_location = "Remote Worldwide"
                     if not is_work_authorized_location(job_location, title, self.platform, ""):
                         continue
+                    effective_date = (
+                        (item.get("recruiter_last_active_at") or raw_pub or pub_date)
+                        if active_recruiting
+                        else (raw_pub or pub_date)
+                    )
                     jobs.append(Job(
                         title=title,
                         company=company,
@@ -145,11 +184,16 @@ class BossjobConnector(BaseConnector):
                         salary=salary,
                         role_category=classify_role(title),
                         experience_level=classify_experience_level(title),
-                        date_posted=raw_pub or pub_date
+                        date_posted=effective_date
                     ))
                 # Refreshed ranking mixes old and new publication dates across the first 10 pages;
                 # stop at page >= 10 once consecutive pages are entirely older than window_start.
-                raw_dates = [item.get("published_at") for item in items]
+                raw_dates = [
+                    (item.get("recruiter_last_active_at") or item.get("published_at"))
+                    if (not self.accepts_date(item.get("published_at")) and self._is_actively_recruiting(item))
+                    else item.get("published_at")
+                    for item in items
+                ]
                 norm_dates = [normalize_date(d) for d in raw_dates]
                 page_all_old = bool(items) and all(d and d < state["window_start"] for d in norm_dates)
                 old_streak = (state.get("old_streak", 0) + 1) if page_all_old else 0
