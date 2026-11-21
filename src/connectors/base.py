@@ -41,10 +41,13 @@ class NewPlatformConnectorMixin:
     def window_days(self) -> int:
         if self._window_days_override is not None:
             return self._window_days_override
-        default_days = default_new_platform_window()
+        floor = max(
+            default_new_platform_window(),
+            int(getattr(self, "min_window_days", DEFAULT_SCRAPE_WINDOW_DAYS) or DEFAULT_SCRAPE_WINDOW_DAYS),
+        )
         if self._window_since is not None:
-            return max(default_days, scrape_window_days(since=self._window_since))
-        return default_days
+            return max(floor, scrape_window_days(since=self._window_since))
+        return floor
 
     @window_days.setter
     def window_days(self, value: int):

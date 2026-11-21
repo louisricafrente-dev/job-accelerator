@@ -616,7 +616,8 @@ class VirtualStaffPHConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "VirtualStaff.ph"
     tier = 1
     is_feed = True
-    revision = 2
+    revision = 3
+    min_window_days = 7
     PAGE_SIZE = 60
     _cached_jobs = None
     _last_fetch = 0
@@ -731,7 +732,8 @@ class PhilJobNetConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "PhilJobNet"
     tier = 2
     is_feed = True
-    revision = 1
+    revision = 2
+    min_window_days = 7
     SEARCH_TERMS = ["developer", "software", "programmer", "quality assurance", "virtual assistant", "information technology", "web", "system", "network", "data", "technical support", "computer"]
     _cached_jobs = None
     _last_fetch = 0
@@ -757,7 +759,9 @@ class PhilJobNetConnector(NewPlatformConnectorMixin, BaseConnector):
                 sess = cffi_requests.Session(impersonate="chrome120")
                 base_url = "https://philjobnet.gov.ph/job-vacancies/"
                 r0 = sess.get(base_url, timeout=15)
-                pages_html = [r0.text] if r0.status_code == 200 else []
+                if r0.status_code != 200:
+                    raise RuntimeError(f"PhilJobNet HTTP {r0.status_code}")
+                pages_html = [r0.text]
                 if r0.status_code == 200:
                     soup0 = BeautifulSoup(r0.text, "html.parser")
                     hidden = {
@@ -825,7 +829,7 @@ class PhilJobNetConnector(NewPlatformConnectorMixin, BaseConnector):
                             date_posted=pub_date,
                         ))
                 PhilJobNetConnector._cached_jobs = all_jobs
-                PhilJobNetConnector._last_fetch = now
+                PhilJobNetConnector._last_fetch = now if (all_jobs or not self.last_error) else 0
                 PhilJobNetConnector._cached_window = window_key
             except Exception as exc:
                 self.last_error = str(exc) or type(exc).__name__
@@ -845,7 +849,8 @@ class JobgetherPHConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Jobgether"
     tier = 1
     is_feed = True
-    revision = 1
+    revision = 2
+    min_window_days = 3
     URLS = [
         "https://jobgether.com/remote-jobs/philippines",
         "https://jobgether.com/remote-jobs/philippines?page=2",

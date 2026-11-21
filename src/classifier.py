@@ -110,7 +110,7 @@ def is_work_authorized_location(location: str, title: str = "", platform: str = 
         rf"{foreign_name}[^.\n]{{0,50}}\b(?:residents? only|citizens? only|work authorization required)\b",
         rf"\bremote\s+(?:within|in)\s+(?:the\s+)?{foreign_name}",
         rf"\b(?:across|within)\s+(?:the\s+)?{foreign_name}\b",
-        rf"\b(?:jobs?|roles?|positions?|openings?|hiring)\s+in\s+(?:the\s+)?{foreign_name}\b",
+        rf"\b(?:jobs?|roles?|positions?|openings?|hiring|speakers?|residents?|candidates?|applicants?|contractors?|freelancers?|employees?|workers?|talent|based|located|living|residing)\s+in\s+(?:the\s+)?{foreign_name}\b",
         r"\bts/sci\b",
         r"\bpolygraph\b",
         r"\bfull[- ]scope\s+poly\b",
@@ -425,7 +425,7 @@ def is_non_tech(title: str, description: str = "") -> bool:
     if re.search(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff\u0e00-\u0e7f]", t_str):
         return True
     if re.search(
-        r"\b(?:japanese|mandarin|chinese|cantonese|korean|russian|finnish|thai|spanish|portuguese|german|french|arabic|vietnamese|indonesian|malay|hindi|dutch|italian|polish|turkish|hebrew)[-\s]+(?:language|speaking|speaker|bilingual|information\s+security|developer|engineer|analyst|support)\b|\bjlpt\b",
+        r"\b(?:japanese|mandarin|chinese|cantonese|korean|russian|finnish|thai|spanish|portuguese|german|french|arabic|vietnamese|indonesian|malay|hindi|dutch|italian|polish|turkish|hebrew)[-\s]+(?:language|speaking|speakers?|bilingual|information\s+security|developer|engineer|analyst|support|rater|evaluator|annotator|reviewer|moderator)\b|\bjlpt\b",
         title_lower,
     ):
         return True

@@ -98,6 +98,8 @@ class TestLocationFilter(unittest.TestCase):
             ("Remote", "Cloud Software Engineer (TS/SCI w/ Poly)", "VueJobs", ""),
             ("Remote", "Profissional Fullstack (.NET+Vue) Sênior - Remoto", "VueJobs", ""),
             ("Remote Worldwide", "Java 开发工程师", "Bossjob", ""),
+            ("Remote (Global)", "Quality Assurance Rater - Spanish speakers in Spain", "Working Nomads", ""),
+            ("Remote (Global)", "Quality Assurance Rater - German speakers in Germany", "Working Nomads", ""),
         ]:
             with self.subTest(title=title):
                 self.assertFalse(is_work_authorized_location(location, title, platform, description))

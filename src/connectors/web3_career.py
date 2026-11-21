@@ -64,6 +64,8 @@ class Web3CareerConnector(BaseConnector):
     platform = "Web3.career"
     tier = 2
     is_feed = True
+    revision = 2
+    min_window_days = 7
     MAX_PAGES = 2
     BASE_URL = "https://web3.career/remote-jobs"
 

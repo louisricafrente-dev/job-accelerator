@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 from typing import List
 from src.connectors.base import BaseConnector, NewPlatformConnectorMixin, logger
 from src.models import Job, is_today_or_yesterday, normalize_date
-from src.classifier import classify_experience_level, classify_role, is_relevant_opportunity, is_work_authorized_location
+from src.classifier import classify_experience_level, classify_role, is_non_tech, is_relevant_opportunity, is_work_authorized_location
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
@@ -74,7 +74,8 @@ class WeWorkRemotelyConnector(BaseConnector):
     platform = "We Work Remotely"
     tier = 3
     is_feed = True
-    revision = 2
+    revision = 3
+    min_window_days = 3
     coverage_limit = "Coverage limited: category RSS snapshots do not establish complete jobsite date coverage"
 
     def fetch(self, query: str = "", location: str = "") -> List[Job]:
@@ -116,6 +117,8 @@ class WeWorkRemotelyConnector(BaseConnector):
 
                         desc_elem = item.find("description")
                         desc_text = desc_elem.text.strip() if desc_elem is not None and desc_elem.text else ""
+                        if is_non_tech(title, desc_text) or re.search(r"don['’]t\s+see\s+what\s+you['’]re\s+looking\s+for", title, re.I):
+                            continue
                         loc = item.findtext("region") or "Remote (location unverified)"
                         if not is_work_authorized_location(loc, title, self.platform, desc_text):
                             continue
@@ -142,7 +145,8 @@ class ArcConnector(BaseConnector):
     platform = "Arc"
     tier = 3
     is_feed = True
-    revision = 2
+    revision = 3
+    min_window_days = 7
     coverage_limit = "Coverage limited: Arc public landing-page results have no verified date-ordered continuation"
 
     def fetch(self, query: str = "", location: str = "remote") -> List[Job]:
@@ -538,7 +542,8 @@ class WellfoundConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Wellfound"
     tier = 2
     is_feed = True
-    revision = 4
+    revision = 5
+    min_window_days = 7
     coverage_limit = "Coverage limited: Wellfound role landing pages do not expose verified publication-date pagination; authenticated access may be required"
     _cached_jobs = None
     _last_fetch = 0
@@ -684,7 +689,8 @@ class WorkingNomadsConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Working Nomads"
     tier = 2
     is_feed = True
-    revision = 2
+    revision = 3
+    min_window_days = 7
     _cached_jobs = None
     _last_fetch = 0
     _cached_window = None
@@ -843,7 +849,8 @@ class DailyRemoteConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "DailyRemote"
     tier = 2
     is_feed = True
-    revision = 1
+    revision = 2
+    min_window_days = 7
     CATEGORY_URLS = [
         "https://dailyremote.com/remote-software-development-jobs?sort_by=time&location=worldwide",
         "https://dailyremote.com/remote-software-development-jobs?sort_by=time",
@@ -961,7 +968,8 @@ class RealWorkFromAnywhereConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Real Work From Anywhere"
     tier = 2
     is_feed = True
-    revision = 1
+    revision = 2
+    min_window_days = 7
     _cached_jobs = None
     _last_fetch = 0
     _cached_window = None
@@ -1065,7 +1073,8 @@ class YCombinatorConnector(NewPlatformConnectorMixin, BaseConnector):
     platform = "Y Combinator"
     tier = 2
     is_feed = True
-    revision = 2
+    revision = 3
+    min_window_days = 7
     _cached_jobs = None
     _last_fetch = 0
     _cached_window = None
