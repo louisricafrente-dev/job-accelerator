@@ -287,37 +287,71 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = True)
         platform = bottle.request.query.get("platform", "All")
         tier = int(tier_str) if tier_str.isdigit() else None
         pipeline_stage = bottle.request.query.get("pipeline_stage", "")
+        tag_filter = bottle.request.query.get("tag_filter", "")
+        application_handling = bottle.request.query.get("application_handling", "")
 
         query_status = status
         try:
-            limit = max(1, min(500, int(bottle.request.query.get("limit", "200"))))
+            limit = max(1, min(500, int(bottle.request.query.get("limit", "20"))))
             offset = max(0, int(bottle.request.query.get("offset", "0")))
         except ValueError:
             bottle.abort(400, "Invalid pagination")
 
-        jobs = get_jobs(
-            db_path=target_db,
-            status=query_status if status != "all" else None,
-            role_category=role,
-            experience_level=level,
-            tier=tier,
-            search=search,
-            date_filter=date_filter,
-            has_salary=has_salary,
-            remote_only=remote_only,
-            hide_senior=hide_senior,
-            include_va=include_va,
-            platform=platform,
-            limit=limit,
-            offset=offset,
-            with_total=True,
-            pipeline_stage=pipeline_stage,
-        )
+        include_total = bottle.request.query.get("include_total", "1" if offset == 0 else "0") not in ("0", "false", "False")
+
+        if include_total:
+            jobs = get_jobs(
+                db_path=target_db,
+                status=query_status if status != "all" else None,
+                role_category=role,
+                experience_level=level,
+                tier=tier,
+                search=search,
+                date_filter=date_filter,
+                has_salary=has_salary,
+                remote_only=remote_only,
+                hide_senior=hide_senior,
+                include_va=include_va,
+                platform=platform,
+                limit=limit,
+                offset=offset,
+                with_total=True,
+                pipeline_stage=pipeline_stage,
+                tag_filter=tag_filter,
+                application_handling=application_handling,
+            )
+            total = jobs[0]["matching_total"] if jobs else 0
+            for job in jobs:
+                job.pop("matching_total", None)
+            has_more = (offset + len(jobs)) < total
+        else:
+            jobs = get_jobs(
+                db_path=target_db,
+                status=query_status if status != "all" else None,
+                role_category=role,
+                experience_level=level,
+                tier=tier,
+                search=search,
+                date_filter=date_filter,
+                has_salary=has_salary,
+                remote_only=remote_only,
+                hide_senior=hide_senior,
+                include_va=include_va,
+                platform=platform,
+                limit=limit + 1,
+                offset=offset,
+                with_total=False,
+                pipeline_stage=pipeline_stage,
+                tag_filter=tag_filter,
+                application_handling=application_handling,
+            )
+            has_more = len(jobs) > limit
+            if has_more:
+                jobs = jobs[:limit]
+            total = offset + len(jobs) + (1 if has_more else 0)
+
         bottle.response.content_type = "application/json"
-        total = jobs[0]["matching_total"] if jobs else 0
-        for job in jobs:
-            job.pop("matching_total", None)
-        return json.dumps({"jobs": jobs, "count": len(jobs), "total": total, "has_more": offset + len(jobs) < total})
+        return json.dumps({"jobs": jobs, "count": len(jobs), "total": total, "has_more": has_more})
 
     @app.route("/api/jobs/<job_id:int>/status", method=["POST", "PUT"])
     def api_update_status(job_id: int):
@@ -1115,7 +1149,9 @@ def create_app(db_path: str = "data/jobs.db", guest_access_enabled: bool = True)
     @app.route("/")
     def index():
         static_dir = os.path.join(os.path.dirname(__file__), "static")
-        return bottle.static_file("index.html", root=static_dir)
+        res = bottle.static_file("index.html", root=static_dir)
+        res.set_header("Cache-Control", "no-cache, must-revalidate")
+        return res
 
     @app.route("/favicon.ico")
     def favicon_ico():

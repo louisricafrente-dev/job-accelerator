@@ -26,6 +26,26 @@ vm.runInContext(code.slice(code.indexOf('let loadJobsSequence ='), code.indexOf(
 vm.runInContext(code.slice(code.indexOf('function filterByTag('), code.indexOf('function handleTagFilterChange(')), context);
 
 async function main() {
+  const retryStart = code.indexOf('async function resilientFetchWithRetry(');
+  const retryEnd = code.indexOf('// LOCAL-FIRST PERSISTENCE ENGINE', retryStart);
+  vm.runInContext(code.slice(retryStart, retryEnd), context);
+  const originalFetch = context.window.fetch;
+  let retryCalls = 0;
+  context.window.fetch = async () => {
+    retryCalls++;
+    return retryCalls <= 3 ? { ok: false, status: 503 } : new Promise(() => {});
+  };
+  try {
+    const outcome = await Promise.race([
+      context.resilientFetchWithRetry('/api/jobs', {}, 3, 0),
+      new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), 100))
+    ]);
+    assert.equal(retryCalls, 3, 'fetch retries must not issue an unbounded fourth request');
+    assert.equal(outcome.status, 503, 'retry exhaustion must return the final HTTP response');
+  } finally {
+    context.window.fetch = originalFetch;
+  }
+
   context.userStack = 'React';
   assert.equal(context.getSkillsMatch({title: 'Software Developer', description: 'Build applications using React.'}).count, 1);
   assert.equal(context.getSkillsMatch({title: 'Software Developer', description: 'Build applications using PHP.'}).count, 0);
@@ -107,12 +127,18 @@ async function main() {
 
   const jobs = Array.from({ length: 207 }, (_, i) => ({ id: i + 1, status: 'new', title: 'Developer' }));
   context.resilientFetchWithRetry = async url => {
-    const offset = Number(new URL(url, 'http://localhost').searchParams.get('offset'));
-    const page = jobs.slice(offset, offset + 200);
-    return { ok: true, json: async () => ({ jobs: page, has_more: offset + page.length < jobs.length }) };
+    const params = new URL(url, 'http://localhost').searchParams;
+    const offset = Number(params.get('offset'));
+    const limit = Number(params.get('limit')) || 20;
+    const page = jobs.slice(offset, offset + limit);
+    return { ok: true, json: async () => ({ jobs: page, total: jobs.length, has_more: offset + page.length < jobs.length }) };
   };
   await context.loadJobs();
-  assert.equal(context.jobsList.length, 207, 'feed must load every page');
+  assert.equal(context.jobsList.length, 20, 'initial load must fetch only the first 20-job batch');
+  while (vm.runInContext('feedHasMore', context)) {
+    await context.fetchNextJobsPage();
+  }
+  assert.equal(context.jobsList.length, 207, 'infinite scroll must fetch remaining 20-job batches until complete');
 
   let release;
   context.resilientFetchWithRetry = () => new Promise(resolve => { release = resolve; });
@@ -212,6 +238,154 @@ async function main() {
   await context.triggerSync();
   assert.ok(toasts.at(-1).includes('2/295'));
   assert.ok(toasts.at(-1).includes('Continuing available searches'));
+
+  const originalPrefetchFetch = context.resilientFetchWithRetry;
+  const originalSetTimeout = context.setTimeout;
+  const originalRequestAnimationFrame = context.window.requestAnimationFrame;
+  const prefetchRequests = [];
+  let prefetchTask;
+  vm.runInContext('serverQueryCache.clear()', context);
+  context.currentStatus = 'new';
+  context.window.requestAnimationFrame = () => {};
+  context.resilientFetchWithRetry = async url => {
+    const params = new URL(url, 'http://localhost').searchParams;
+    const status = params.get('status');
+    const offset = Number(params.get('offset'));
+    prefetchRequests.push({ status, offset });
+    const jobs = offset === 0
+      ? Array.from({ length: 20 }, (_, index) => ({ id: index + 1, status }))
+      : [{ id: `${status}-next`, status }];
+    return { ok: true, json: async () => ({ jobs, total: 21, has_more: offset === 0 }) };
+  };
+  context.setTimeout = callback => { prefetchTask = callback(); return 0; };
+  try {
+    context.prefetchSiblingStatusTabs(context.currentSessionToken);
+    await prefetchTask;
+    assert.deepEqual(prefetchRequests, [
+      { status: 'saved', offset: 0 },
+      { status: 'applied', offset: 0 }
+    ], 'background tab warming must fetch one preview page per sibling tab');
+  } finally {
+    context.resilientFetchWithRetry = originalPrefetchFetch;
+    context.setTimeout = originalSetTimeout;
+    context.window.requestAnimationFrame = originalRequestAnimationFrame;
+  }
+
+  const originalLoadFetch = context.resilientFetchWithRetry;
+  const refreshedOffsets = [];
+  context.currentStatus = 'saved';
+  context.currentRole = 'All';
+  context.currentLevel = 'All';
+  context.currentDateFilter = 'all';
+  context.currentPlatform = 'All';
+  context.searchQuery = '';
+  context.resilientFetchWithRetry = async url => {
+    const offset = Number(new URL(url, 'http://localhost').searchParams.get('offset'));
+    refreshedOffsets.push(offset);
+    const jobs = offset === 0
+      ? Array.from({ length: 20 }, (_, index) => ({ id: index + 1, status: 'saved', title: 'Developer' }))
+      : Array.from({ length: 5 }, (_, index) => ({ id: 21 + index, status: 'saved', title: 'Developer' }));
+    return { ok: true, json: async () => ({ jobs, total: 25, has_more: offset === 0 }) };
+  };
+  try {
+    await context.loadJobs();
+    assert.deepEqual(refreshedOffsets, [0], 'initial tab open must fetch only the first 20-item page');
+    assert.equal(context.jobsList.length, 20);
+    await context.fetchNextJobsPage();
+    assert.deepEqual(refreshedOffsets, [0, 20], 'scrolling must fetch the next 20-item page');
+    assert.equal(context.jobsList.length, 25);
+    const params = new URLSearchParams({ status: 'saved', role: 'All', experience_level: 'All', search: '', date_filter: 'all' });
+    params.set('include_va', '1');
+    const savedCacheKey = `${context.currentSessionToken}::${params.toString()}`;
+    assert.equal(vm.runInContext(`serverQueryCacheComplete.has(${JSON.stringify(savedCacheKey)})`, context), true,
+      'the full refresh must mark the cache complete');
+  } finally {
+    context.resilientFetchWithRetry = originalLoadFetch;
+  }
+
+  // 1. Abort without retry in resilientFetchWithRetry
+  const prevResilientFetch = context.resilientFetchWithRetry;
+  vm.runInContext(code.slice(retryStart, retryEnd), context);
+  const originalAbortWindowFetch = context.window.fetch;
+  let abortedFetchCalls = 0;
+  context.window.fetch = (url, opts) => {
+    abortedFetchCalls++;
+    return new Promise((_, reject) => {
+      const onAbort = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+      if (opts?.signal?.aborted) onAbort();
+      else opts?.signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  };
+  try {
+    const ctrl = new AbortController();
+    const pending = context.resilientFetchWithRetry('/api/jobs?abort_test=1', { signal: ctrl.signal }, 3, 0);
+    ctrl.abort();
+    let caught = null;
+    try {
+      await pending;
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, 'aborted fetch must reject');
+    assert.equal(caught.name, 'AbortError');
+    assert.equal(abortedFetchCalls, 1, 'aborted fetch must not retry');
+  } finally {
+    context.window.fetch = originalAbortWindowFetch;
+    context.resilientFetchWithRetry = prevResilientFetch;
+  }
+
+  // 2. Superseded loadJobs cancels the previous in-flight request
+  const originalSupersededFetch = context.resilientFetchWithRetry;
+  let firstSignal = null;
+  let callIndex = 0;
+  vm.runInContext('serverQueryCache.clear(); serverQueryCacheComplete.clear();', context);
+  context.currentStatus = 'new';
+  context.currentRole = 'All';
+  context.currentLevel = 'All';
+  context.currentDateFilter = '7days';
+  context.currentPlatform = 'All';
+  context.searchQuery = '';
+  context.resilientFetchWithRetry = (url, opts) => {
+    callIndex++;
+    if (callIndex === 1) {
+      firstSignal = opts?.signal || null;
+      return new Promise((_, reject) => {
+        const onAbort = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+        if (firstSignal?.aborted) onAbort();
+        else firstSignal?.addEventListener('abort', onAbort, { once: true });
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      json: async () => ({ jobs: [{ id: 999, status: 'new', title: 'Frontend Engineer' }], total: 1, has_more: false })
+    });
+  };
+  try {
+    const firstLoad = context.loadJobs();
+    context.currentRole = 'Frontend';
+    await context.loadJobs();
+    await firstLoad;
+    assert.equal(firstSignal?.aborted, true, 'superseded loadJobs must abort the previous request');
+    assert.deepEqual(Array.from(context.jobsList, j => j.id), [999]);
+    assert.doesNotMatch(elements.get('job-feed').innerHTML, /Error retrieving/);
+  } finally {
+    context.resilientFetchWithRetry = originalSupersededFetch;
+  }
+
+  // 3. Row-budget LRU cache eviction and zero-clone storage
+  vm.runInContext('serverQueryCache.clear(); serverQueryCacheComplete.clear();', context);
+  const rows5kA = Array.from({ length: 5000 }, (_, i) => ({ id: i + 1 }));
+  const rows5kB = Array.from({ length: 5000 }, (_, i) => ({ id: i + 5001 }));
+  const rows9kBig = Array.from({ length: 9000 }, (_, i) => ({ id: i + 10001 }));
+  context.cacheServerQuery('a', rows5kA, true);
+  context.cacheServerQuery('b', rows5kB, true);
+  assert.equal(vm.runInContext(`serverQueryCache.has('a')`, context), false, 'oldest entry must evict when row budget exceeded');
+  assert.equal(vm.runInContext(`serverQueryCache.has('b')`, context), true);
+  assert.equal(vm.runInContext(`serverQueryCache.get('b')`, context), rows5kB, 'cacheServerQuery must store array directly without cloning');
+  context.cacheServerQuery('big', rows9kBig, true);
+  assert.equal(vm.runInContext(`serverQueryCache.size`, context), 1, 'latest entry must remain even if it exceeds row budget alone');
+  assert.equal(vm.runInContext(`serverQueryCache.has('big')`, context), true);
+
   console.log('Frontend regressions passed: seniority, account isolation, replay, pagination, response ordering, full-matrix sync, API errors');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

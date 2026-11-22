@@ -1937,8 +1937,17 @@ a {
   transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast), opacity 0.16s ease;
   position: relative;
   box-shadow: var(--shadow-sm);
+}
+
+.job-card:nth-of-type(n+7) {
   content-visibility: auto;
-  contain-intrinsic-size: auto 116px;
+  contain-intrinsic-size: auto none auto 116px;
+}
+
+@supports not (content-visibility: auto) {
+  .job-card:nth-of-type(n+7) {
+    contain: layout style paint;
+  }
 }
 
 .job-card:hover {

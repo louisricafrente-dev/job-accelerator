@@ -369,31 +369,38 @@ window.fetch = function(url, options = {}) {
 
 // Resilient fetch with exponential backoff and timeout guard for serverless cold starts & wake-from-sleep
 async function resilientFetchWithRetry(url, options = {}, retries = 3, backoff = 500) {
-  let attempt = 0;
-  while (attempt < retries) {
+  const maxAttempts = Math.max(1, retries);
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (options.signal?.aborted) {
+      throw Object.assign(new Error('Request cancelled'), { name: 'AbortError' });
+    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
+    const cancel = () => controller.abort();
+    options.signal?.addEventListener?.('abort', cancel, { once: true });
+    let res;
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
       const fetchOpts = { ...options, signal: controller.signal };
-      const res = await window.fetch(url, fetchOpts);
-      clearTimeout(timeoutId);
-      if (res.ok || res.status === 401 || res.status === 404) {
-        return res;
-      }
-      attempt++;
-      if (attempt < retries) {
-        await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt - 1)));
-      }
+      res = await window.fetch(url, fetchOpts);
     } catch (err) {
-      attempt++;
-      if (attempt >= retries) {
+      clearTimeout(timeoutId);
+      options.signal?.removeEventListener?.('abort', cancel);
+      if (options.signal?.aborted) throw err;
+      if (attempt + 1 >= maxAttempts) {
         console.warn(`Resilient fetch warning for ${url}:`, err);
         throw err;
       }
-      await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt - 1)));
+      await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt)));
+      continue;
     }
+
+    clearTimeout(timeoutId);
+    options.signal?.removeEventListener?.('abort', cancel);
+    if (res.ok || res.status === 401 || res.status === 404) return res;
+    if (attempt + 1 >= maxAttempts) return res;
+    await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt)));
   }
-  return window.fetch(url, options);
+  throw new Error('Fetch retry count must be positive');
 }
 
 // --------------------------------------------------------------------------
@@ -1318,11 +1325,55 @@ function updateActiveSkillsBadge() {
 
 // Load jobs with current filters
 let loadJobsSequence = 0;
+let activeJobsController = null;
+const FEED_BATCH_SIZE = 20;
 const serverQueryCache = new Map();
+const serverQueryCacheComplete = new Set();
+const serverQueryCacheMeta = new Map();
 const MAX_QUERY_CACHE_ENTRIES = 25;
+const MAX_QUERY_CACHE_ROWS = 8000;
 let loadingIndicatorTimer = null;
 let tabPrefetchTimer = null;
 const inflightPrefetchKeys = new Set();
+let feedQueryParamsString = '';
+let feedQueryKey = '';
+let feedRawJobs = [];
+let feedNextOffset = 0;
+let feedHasMore = false;
+let feedTotalMatches = 0;
+let feedLoadingMore = false;
+
+function cacheServerQuery(queryKey, jobs, complete, meta = null) {
+  serverQueryCache.delete(queryKey);
+  serverQueryCacheComplete.delete(queryKey);
+  serverQueryCacheMeta.delete(queryKey);
+  serverQueryCache.set(queryKey, jobs);
+  if (complete) serverQueryCacheComplete.add(queryKey);
+  if (meta && typeof meta === 'object') {
+    serverQueryCacheMeta.set(queryKey, { ...meta });
+  } else {
+    serverQueryCacheMeta.set(queryKey, {
+      nextOffset: Array.isArray(jobs) ? jobs.length : 0,
+      hasMore: !complete,
+      total: Array.isArray(jobs) ? jobs.length : 0
+    });
+  }
+
+  let totalRows = 0;
+  for (const rawList of serverQueryCache.values()) {
+    totalRows += Array.isArray(rawList) ? rawList.length : 0;
+  }
+
+  while (serverQueryCache.size > 1 && (serverQueryCache.size > MAX_QUERY_CACHE_ENTRIES || totalRows > MAX_QUERY_CACHE_ROWS)) {
+    const oldestKey = serverQueryCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    const oldestList = serverQueryCache.get(oldestKey);
+    totalRows -= Array.isArray(oldestList) ? oldestList.length : 0;
+    serverQueryCache.delete(oldestKey);
+    serverQueryCacheComplete.delete(oldestKey);
+    serverQueryCacheMeta.delete(oldestKey);
+  }
+}
 
 function renderFeedSkeletonHtml(statusKey) {
   const labelMap = {
@@ -1452,25 +1503,17 @@ function prefetchSiblingStatusTabs(token) {
       if (serverQueryCache.has(qKey) || inflightPrefetchKeys.has(qKey)) continue;
       inflightPrefetchKeys.add(qKey);
       try {
-        p.set('limit', '500');
-        let raw = [];
-        let hasMore = true;
-        while (hasMore) {
-          if (token !== currentSessionToken) return;
-          p.set('offset', String(raw.length));
-          const res = await resilientFetchWithRetry(`/api/jobs?${p.toString()}`, {}, 2);
-          if (!res.ok) break;
-          const data = await res.json();
-          const page = data.jobs || [];
-          raw.push(...page);
-          hasMore = Boolean(data.has_more) && page.length > 0;
-        }
-        if (token === currentSessionToken && raw.length >= 0) {
-          if (serverQueryCache.size >= MAX_QUERY_CACHE_ENTRIES) {
-            const oldestKey = serverQueryCache.keys().next().value;
-            if (oldestKey !== undefined) serverQueryCache.delete(oldestKey);
-          }
-          serverQueryCache.set(qKey, raw.map(j => ({ ...j })));
+        p.set('limit', String(FEED_BATCH_SIZE));
+        p.set('offset', '0');
+        const res = await resilientFetchWithRetry(`/api/jobs?${p.toString()}`, {}, 2);
+        if (!res.ok || token !== currentSessionToken) continue;
+        const data = await res.json();
+        if (token === currentSessionToken && Array.isArray(data.jobs)) {
+          cacheServerQuery(qKey, data.jobs, !data.has_more, {
+            nextOffset: data.jobs.length,
+            hasMore: Boolean(data.has_more) && data.jobs.length > 0,
+            total: typeof data.total === 'number' ? data.total : data.jobs.length
+          });
         }
       } catch (_) {
         // Silent background prefetch failure is harmless
@@ -1582,6 +1625,9 @@ function buildFilteredJobsFromRaw(rawServerJobs, { isVA, isSavedView, isAppliedV
 
 async function loadJobs() {
   const sequence = ++loadJobsSequence;
+  if (activeJobsController) activeJobsController.abort();
+  const requestController = new AbortController();
+  activeJobsController = requestController;
   const token = currentSessionToken;
   const feed = document.getElementById('job-feed');
   const loadingIndicator = document.getElementById('feed-loading-indicator');
@@ -1626,13 +1672,32 @@ async function loadJobs() {
     if (isAppliedView && currentPipelineStage && currentPipelineStage !== 'All') {
       params.set('pipeline_stage', currentPipelineStage);
     }
+    if (isSavedView) {
+      const tagFilterVal = document.getElementById('tag-filter')?.value || 'all';
+      if (tagFilterVal && tagFilterVal !== 'all') params.set('tag_filter', tagFilterVal);
+    }
+    const appFilterVal = document.getElementById('application-filter')?.value || 'all';
+    if (appFilterVal && appFilterVal !== 'all') params.set('application_handling', appFilterVal);
 
-    const queryKey = `${token || ''}::${params.toString()}`;
+    const baseParamsString = params.toString();
+    const queryKey = `${token || ''}::${baseParamsString}`;
+    feedQueryParamsString = baseParamsString;
+    feedQueryKey = queryKey;
+    feedLoadingMore = false;
     const hasCached = serverQueryCache.has(queryKey);
+    const cachedIsComplete = serverQueryCacheComplete.has(queryKey);
     let renderedFromPreview = false;
 
     if (hasCached) {
-      const cachedFiltered = buildFilteredJobsFromRaw(serverQueryCache.get(queryKey), { isVA, isSavedView, isAppliedView });
+      const cachedRaw = serverQueryCache.get(queryKey);
+      const cachedMeta = serverQueryCacheMeta.get(queryKey);
+      serverQueryCache.delete(queryKey);
+      serverQueryCache.set(queryKey, cachedRaw);
+      feedRawJobs = Array.isArray(cachedRaw) ? cachedRaw.slice() : [];
+      feedNextOffset = cachedMeta ? cachedMeta.nextOffset : feedRawJobs.length;
+      feedHasMore = cachedMeta ? Boolean(cachedMeta.hasMore) : !cachedIsComplete;
+      feedTotalMatches = cachedMeta && typeof cachedMeta.total === 'number' ? cachedMeta.total : feedRawJobs.length;
+      const cachedFiltered = buildFilteredJobsFromRaw(feedRawJobs, { isVA, isSavedView, isAppliedView });
       jobsList = cachedFiltered;
       selectedIndex = 0;
       if (typeof selectedJobIds !== 'undefined') {
@@ -1641,9 +1706,17 @@ async function loadJobs() {
       }
       renderJobs();
       if (typeof updateCategoryChipCounts === 'function') updateCategoryChipCounts(cachedFiltered);
-      updateSummaryText(cachedFiltered.length);
+      updateSummaryText(feedHasMore ? Math.max(feedTotalMatches, cachedFiltered.length) : cachedFiltered.length);
       if (loadingIndicator) loadingIndicator.hidden = true;
       if (feed?.classList) feed.classList.remove('is-filtering');
+      if (!cachedIsComplete) {
+        if (feed?.setAttribute) feed.setAttribute('aria-busy', 'true');
+        loadingIndicatorTimer = setTimeout(() => {
+          if (sequence === loadJobsSequence && token === currentSessionToken && loadingIndicator) {
+            loadingIndicator.hidden = false;
+          }
+        }, 180);
+      }
       renderedFromPreview = true;
     } else {
       const supersetPreview = findSupersetPreviewJobs(token, currentStatus, { isVA, isSavedView, isAppliedView });
@@ -1667,57 +1740,49 @@ async function loadJobs() {
       }
     }
 
-    params.set('limit', '500');
-    let rawJobs = [];
-    let hasMore = true;
-    let progressivePage1Rendered = false;
-    while (hasMore) {
-      if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
-      params.set('offset', String(rawJobs.length));
-      const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, {}, 3);
-      if (!res.ok) throw new Error(`Unable to load jobs (${res.status})`);
-      const data = await res.json();
-      const page = data.jobs || [];
-      rawJobs.push(...page);
-      hasMore = Boolean(data.has_more) && page.length > 0;
-
-      if (hasMore && !renderedFromPreview && !progressivePage1Rendered && rawJobs.length > 0) {
-        if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
-        const page1Jobs = buildFilteredJobsFromRaw(rawJobs, { isVA, isSavedView, isAppliedView });
-        jobsList = page1Jobs;
-        selectedIndex = 0;
-        renderJobs();
-        updateSummaryText(data.total || page1Jobs.length);
-        progressivePage1Rendered = true;
-      }
-    }
+    params.set('limit', String(FEED_BATCH_SIZE));
+    params.set('offset', '0');
+    const res = await resilientFetchWithRetry(`/api/jobs?${params.toString()}`, { signal: requestController.signal }, 3);
+    if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
+    if (!res.ok) throw new Error(`Unable to load jobs (${res.status})`);
+    const data = await res.json();
     if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
 
-    if (serverQueryCache.size >= MAX_QUERY_CACHE_ENTRIES) {
-      const oldestKey = serverQueryCache.keys().next().value;
-      if (oldestKey !== undefined) serverQueryCache.delete(oldestKey);
-    }
-    serverQueryCache.set(queryKey, rawJobs.map(j => ({ ...j })));
+    const page = Array.isArray(data.jobs) ? data.jobs : [];
+    const pageHasMore = Boolean(data.has_more) && page.length > 0;
+    const serverTotal = typeof data.total === 'number' ? data.total : page.length;
+    feedRawJobs = page.slice();
+    feedNextOffset = page.length;
+    feedHasMore = pageHasMore;
+    feedTotalMatches = serverTotal;
 
-    const jobs = buildFilteredJobsFromRaw(rawJobs, { isVA, isSavedView, isAppliedView });
+    cacheServerQuery(queryKey, feedRawJobs, !pageHasMore, {
+      nextOffset: feedNextOffset,
+      hasMore: feedHasMore,
+      total: feedTotalMatches
+    });
+
+    const jobs = buildFilteredJobsFromRaw(feedRawJobs, { isVA, isSavedView, isAppliedView });
     jobsList = jobs;
     selectedIndex = 0;
     if (typeof selectedJobIds !== 'undefined') {
       const visibleIds = new Set(jobs.map(j => j.id));
       selectedJobIds = new Set([...selectedJobIds].filter(id => visibleIds.has(id)));
     }
-    renderJobs(progressivePage1Rendered ? { preserveWindow: true } : undefined);
+    renderJobs();
     if (typeof updateCategoryChipCounts === 'function') updateCategoryChipCounts(jobs);
-    updateSummaryText(jobs.length);
+    updateSummaryText(pageHasMore ? Math.max(feedTotalMatches, jobs.length) : jobs.length);
     prefetchSiblingStatusTabs(token);
   } catch (err) {
     if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
+    if (err?.name === 'AbortError' && requestController.signal.aborted) return;
     feed.innerHTML = `
       <div class="state-empty">
         <p>Error retrieving opportunities: ${escapeHtml(err.message)}</p>
         <span class="sub-text">Check server connectivity on localhost:8000</span>
       </div>`;
   } finally {
+    if (activeJobsController === requestController) activeJobsController = null;
     clearTimeout(loadingIndicatorTimer);
     if (sequence === loadJobsSequence && token === currentSessionToken) {
       if (feed?.classList) feed.classList.remove('is-filtering');
@@ -1726,6 +1791,74 @@ async function loadJobs() {
         if (sequence === loadJobsSequence) loadingIndicator.hidden = true;
       }, 150);
     }
+  }
+}
+
+async function fetchNextJobsPage(targetCount) {
+  if (!feedHasMore || feedLoadingMore || !feedQueryParamsString) return false;
+  const sequence = loadJobsSequence;
+  const token = currentSessionToken;
+  const requestController = activeJobsController;
+  const queryKey = feedQueryKey;
+  const activeView = typeof currentViewMode !== 'undefined' ? currentViewMode : 'tech';
+  const isVA = activeView === 'va';
+  const isSavedView = activeView === 'tech' && currentStatus === 'saved';
+  const isAppliedView = activeView === 'tech' && currentStatus === 'applied';
+
+  feedLoadingMore = true;
+  try {
+    const desiredCount = Math.max(targetCount || (jobsList.length + FEED_BATCH_SIZE), jobsList.length + 1);
+    let pagesFetched = 0;
+    while (feedHasMore && jobsList.length < desiredCount && pagesFetched < 5) {
+      if (sequence !== loadJobsSequence || token !== currentSessionToken) return false;
+      const pageParams = new URLSearchParams(feedQueryParamsString);
+      pageParams.set('limit', String(FEED_BATCH_SIZE));
+      pageParams.set('offset', String(feedNextOffset));
+      pageParams.set('include_total', '0');
+      const fetchOpts = requestController ? { signal: requestController.signal } : {};
+      const res = await resilientFetchWithRetry(`/api/jobs?${pageParams.toString()}`, fetchOpts, 3);
+      if (sequence !== loadJobsSequence || token !== currentSessionToken) return false;
+      if (!res.ok) break;
+      const data = await res.json();
+      if (sequence !== loadJobsSequence || token !== currentSessionToken) return false;
+      const page = Array.isArray(data.jobs) ? data.jobs : [];
+      pagesFetched++;
+      if (page.length === 0) {
+        feedHasMore = false;
+        break;
+      }
+      const seenIds = new Set(feedRawJobs.map(j => j.id));
+      for (const item of page) {
+        if (!seenIds.has(item.id)) {
+          feedRawJobs.push(item);
+          seenIds.add(item.id);
+        }
+      }
+      feedNextOffset += page.length;
+      feedHasMore = Boolean(data.has_more) && page.length > 0;
+      if (typeof data.total === 'number' && data.total > feedTotalMatches) {
+        feedTotalMatches = data.total;
+      }
+      jobsList = buildFilteredJobsFromRaw(feedRawJobs, { isVA, isSavedView, isAppliedView });
+    }
+    if (sequence !== loadJobsSequence || token !== currentSessionToken) return false;
+    if (!feedHasMore) feedTotalMatches = jobsList.length;
+    cacheServerQuery(queryKey, feedRawJobs, !feedHasMore, {
+      nextOffset: feedNextOffset,
+      hasMore: feedHasMore,
+      total: feedTotalMatches
+    });
+    if (typeof appendRenderedJobsToDom === 'function') {
+      appendRenderedJobsToDom(targetCount);
+    }
+    if (typeof updateCategoryChipCounts === 'function') updateCategoryChipCounts(jobsList);
+    updateSummaryText(feedHasMore ? Math.max(feedTotalMatches, jobsList.length) : jobsList.length);
+    return true;
+  } catch (err) {
+    if (err?.name === 'AbortError') return false;
+    return false;
+  } finally {
+    if (sequence === loadJobsSequence) feedLoadingMore = false;
   }
 }
 
@@ -2207,7 +2340,6 @@ function showToast(message, actionText = null, onAction = null) {
 }
 
 // Render cards
-const FEED_BATCH_SIZE = 40;
 let renderedJobsCount = 0;
 let feedScrollObserver = null;
 let feedScrollListenerAttached = false;
@@ -2399,11 +2531,12 @@ function renderJobCardHtml(job, idx, overrides, isBulkOn, isAppliedView) {
 }
 
 function renderFeedSentinelHtml() {
-  if (renderedJobsCount < jobsList.length) {
+  if (renderedJobsCount < jobsList.length || feedHasMore) {
+    const totalDisplay = feedHasMore ? Math.max(feedTotalMatches || 0, jobsList.length) : jobsList.length;
     return `
       <div id="feed-infinite-sentinel" class="feed-infinite-sentinel" aria-live="polite">
         <span class="sentinel-spinner" aria-hidden="true"></span>
-        <span>Showing <strong>${renderedJobsCount}</strong> of <strong>${jobsList.length}</strong> opportunities &middot; Automatic scroll loading active</span>
+        <span>Showing <strong>${renderedJobsCount}</strong> of <strong>${totalDisplay}</strong> opportunities &middot; Automatic scroll loading active</span>
       </div>
     `;
   }
@@ -2417,8 +2550,17 @@ function renderFeedSentinelHtml() {
   return '';
 }
 
-function appendNextJobsBatch(targetCount) {
-  if (renderedJobsCount >= jobsList.length) return;
+function appendRenderedJobsToDom(targetCount) {
+  if (renderedJobsCount >= jobsList.length) {
+    const sentinel = document.getElementById('feed-infinite-sentinel');
+    if (sentinel) {
+      const nextSentinelHtml = renderFeedSentinelHtml();
+      if (nextSentinelHtml) sentinel.outerHTML = nextSentinelHtml;
+      else sentinel.remove();
+      setupFeedInfiniteScroll();
+    }
+    return;
+  }
   const nextCount = Math.min(
     jobsList.length,
     Math.max(targetCount || (renderedJobsCount + FEED_BATCH_SIZE), renderedJobsCount + FEED_BATCH_SIZE)
@@ -2426,7 +2568,10 @@ function appendNextJobsBatch(targetCount) {
   if (nextCount <= renderedJobsCount) return;
 
   const sentinel = document.getElementById('feed-infinite-sentinel');
-  if (!sentinel) return;
+  if (!sentinel) {
+    renderedJobsCount = nextCount;
+    return;
+  }
 
   const overrides = getLocalStatusOverrides();
   const isBulkOn = typeof bulkSelectMode !== 'undefined' && bulkSelectMode;
@@ -2448,12 +2593,24 @@ function appendNextJobsBatch(targetCount) {
   setupFeedInfiniteScroll();
 }
 
+function appendNextJobsBatch(targetCount) {
+  if (renderedJobsCount < jobsList.length) {
+    appendRenderedJobsToDom(targetCount);
+  }
+  const needsMoreFromServer = targetCount
+    ? renderedJobsCount < targetCount
+    : renderedJobsCount >= jobsList.length;
+  if (needsMoreFromServer && feedHasMore && !feedLoadingMore) {
+    fetchNextJobsPage(targetCount);
+  }
+}
+
 function setupFeedInfiniteScroll() {
   if (feedScrollObserver) {
     feedScrollObserver.disconnect();
     feedScrollObserver = null;
   }
-  if (renderedJobsCount >= jobsList.length) return;
+  if (renderedJobsCount >= jobsList.length && !feedHasMore) return;
 
   const sentinel = document.getElementById('feed-infinite-sentinel');
   if (!sentinel) return;
@@ -2470,7 +2627,7 @@ function setupFeedInfiniteScroll() {
   if (!feedScrollListenerAttached && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     feedScrollListenerAttached = true;
     window.addEventListener('scroll', () => {
-      if (feedScrollRafPending || renderedJobsCount >= jobsList.length) return;
+      if (feedScrollRafPending || (renderedJobsCount >= jobsList.length && !feedHasMore)) return;
       feedScrollRafPending = true;
       const schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn => setTimeout(fn, 16));
       schedule(() => {
@@ -2563,6 +2720,11 @@ function selectCard(idx) {
 }
 
 async function archiveExpiredSavedJobs() {
+  while (feedHasMore) {
+    const prev = feedNextOffset;
+    await fetchNextJobsPage(jobsList.length + FEED_BATCH_SIZE);
+    if (feedNextOffset <= prev) break;
+  }
   const expired = jobsList.filter(job =>
     job.status === 'saved' && job.date_posted && getDaysSince(job.date_posted) > 7
   );
@@ -4139,15 +4301,16 @@ function updateCategoryChipCounts(jobs) {
   const chips = document.querySelectorAll('#role-group .filter-chip');
   if (!chips || !chips.length) return;
   const counts = {};
+  const totalCount = feedHasMore ? Math.max(feedTotalMatches || 0, jobs.length) : jobs.length;
   if (currentRole === 'All' && currentViewMode !== 'va') {
-    counts['All'] = jobs.length;
+    counts['All'] = totalCount;
     for (const job of jobs) {
       const cat = inferJobCategoryForChip(job);
       counts[cat] = (counts[cat] || 0) + 1;
     }
   } else {
     const activeFamily = roleFamily(currentViewMode === 'va' ? 'Virtual Assistant' : currentRole);
-    counts[activeFamily] = jobs.length;
+    counts[activeFamily] = totalCount;
   }
   chips.forEach(chip => {
     const val = chip.dataset.val;

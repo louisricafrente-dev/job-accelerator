@@ -734,6 +734,39 @@ class TestDatabase(unittest.TestCase):
         jobs = get_jobs(self.db_path, search="CloudTech", date_filter="15days")
         self.assertEqual(len(jobs), 0)
 
+    def test_index_ordered_date_pagination_without_temp_btree(self):
+        import sqlite3
+        jobs = [
+            Job(title=f"Junior Dev {i}", company="Co", location="Remote", platform="LinkedIn",
+                tier=1, job_url=f"https://example.com/p/{i}", date_posted=f"2026-11-{(i % 20) + 1:02d}")
+            for i in range(25)
+        ]
+        insert_jobs(self.db_path, jobs)
+        page1 = get_jobs(self.db_path, status="new", limit=20, offset=0, with_total=True)
+        self.assertEqual(len(page1), 20)
+        self.assertEqual(page1[0]["matching_total"], 25)
+        dates = [row["date_posted"] for row in page1]
+        self.assertEqual(dates, sorted(dates, reverse=True))
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            plan = conn.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM jobs WHERE status = 'new' "
+                "ORDER BY date_posted DESC, updated_at DESC, id DESC LIMIT 20 OFFSET 0"
+            ).fetchall()
+        finally:
+            conn.close()
+        plan_text = " ".join(str(row) for row in plan)
+        self.assertIn("idx_jobs_status_date", plan_text)
+        self.assertNotIn("TEMP B-TREE", plan_text)
+
+        first_id = page1[0]["id"]
+        second_id = page1[1]["id"]
+        update_job_status(self.db_path, first_id, status="saved", notes="[TAG: CLOUDFLARE_CHALLENGE]", application_handling="needs_human")
+        update_job_status(self.db_path, second_id, status="saved", notes="[TAG: SCREENING_QUESTION]", application_handling="in_progress")
+        self.assertEqual([j["id"] for j in get_jobs(self.db_path, status="saved", tag_filter="CAPTCHA")], [first_id])
+        self.assertEqual([j["id"] for j in get_jobs(self.db_path, status="saved", application_handling="needs_human")], [first_id])
+
 if __name__ == "__main__":
     unittest.main()
 

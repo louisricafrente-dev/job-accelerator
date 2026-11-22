@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     description TEXT DEFAULT '',
     role_category TEXT NOT NULL,
     experience_level TEXT NOT NULL,
-    date_posted TEXT,
+    date_posted TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'new',
     pipeline_stage TEXT DEFAULT 'applied',
     follow_up_date TEXT,
@@ -117,6 +117,8 @@ CREATE INDEX IF NOT EXISTS idx_jobs_category ON jobs(role_category);
 CREATE INDEX IF NOT EXISTS idx_jobs_tier ON jobs(tier);
 CREATE INDEX IF NOT EXISTS idx_jobs_url ON jobs(job_url);
 CREATE INDEX IF NOT EXISTS idx_jobs_status_date ON jobs(status, date_posted DESC, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_date_order ON jobs(date_posted DESC, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_applied_date ON jobs(status, applied_at DESC, updated_at DESC, id DESC);
 """
 
 try:
@@ -372,6 +374,10 @@ def init_db(db_path: str = "data/jobs.db") -> None:
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_stage ON jobs(pipeline_stage);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_url ON jobs(job_url);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status_date ON jobs(status, date_posted DESC, updated_at DESC, id DESC);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_date_order ON jobs(date_posted DESC, updated_at DESC, id DESC);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_applied_date ON jobs(status, applied_at DESC, updated_at DESC, id DESC);")
+        conn.execute("UPDATE jobs SET date_posted = '' WHERE date_posted IS NULL;")
 
         # Safe backfill for legacy unclassified junior/entry opportunities
         try:
@@ -702,6 +708,8 @@ def get_jobs(
     offset: int = 0,
     with_total: bool = False,
     pipeline_stage: Optional[str] = None,
+    tag_filter: Optional[str] = None,
+    application_handling: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     conn = get_db_connection(db_path)
     conn.row_factory = sqlite3.Row
@@ -827,16 +835,54 @@ def get_jobs(
                 clauses.append("pipeline_stage = ?")
                 params.append(p_stage)
 
-        where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        order_by = "COALESCE(applied_at, updated_at) DESC, id DESC" if (status == "applied" or (status and "applied" in status)) else "COALESCE(date_posted, '') DESC, updated_at DESC, id DESC"
-        projection = "*, COUNT(*) OVER () AS matching_total" if with_total else "*"
-        query = f"SELECT {projection} FROM jobs {where_sql} ORDER BY {order_by} LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
+        if application_handling and application_handling.strip().lower() != "all":
+            ah_val = application_handling.strip()
+            eff_ah = "CASE WHEN COALESCE(application_handling, '') != '' THEN application_handling WHEN status = 'applied' THEN 'applied_human' ELSE '' END"
+            if ah_val.lower() == "unlabeled":
+                clauses.append(f"({eff_ah}) = ''")
+            else:
+                clauses.append(f"({eff_ah}) = ?")
+                params.append(ah_val)
 
-        cursor = conn.execute(query, params)
+        if tag_filter and tag_filter.strip().lower() != "all":
+            tf_val = tag_filter.strip()
+            if tf_val.lower() == "untagged":
+                clauses.append("(notes IS NULL OR upper(notes) NOT LIKE '%[TAG:%]%')")
+            else:
+                tag_map = {
+                    "CAPTCHA": ("CAPTCHA", "CLOUDFLARE", "TURNSTILE"),
+                    "LOGIN_OTP": ("OTP", "LOGIN", "WORKDAY"),
+                    "SCREENING": ("SCREENING",),
+                    "VIDEO_REQ": ("VIDEO", "AUDIO", "VOICE"),
+                    "FILE_UPLOAD": ("FILE", "UPLOAD", "SPEED"),
+                    "PAYWALL_BID": ("PAYWALL", "BID", "CONNECT"),
+                    "INELIGIBLE": ("INELIGIBLE", "OUT_OF_SCOPE", "CHECKED_SKIP"),
+                    "ALREADY_APPLIED": ("APPLIED", "RECEIPT"),
+                    "REVIEW_REQUIRED": ("REVIEW",),
+                    "EXPIRED_OR_REDIRECTED": ("EXPIRED", "REDIRECT"),
+                }
+                kws = tag_map.get(tf_val.upper(), (tf_val.upper(),))
+                clauses.append("(" + " OR ".join(["upper(notes) LIKE ?" for _ in kws]) + ")")
+                params.extend([f"%[TAG:%{kw}%]%" for kw in kws])
+
+        where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        is_applied_query = status == "applied" or (status and "applied" in status)
+        order_by = "applied_at DESC, updated_at DESC, id DESC" if is_applied_query else "date_posted DESC, updated_at DESC, id DESC"
+        query = f"SELECT * FROM jobs {where_sql} ORDER BY {order_by} LIMIT ? OFFSET ?"
+        cursor = conn.execute(query, params + [limit, offset])
+        raw_rows = cursor.fetchall()
+        matching_total = None
+        if with_total and raw_rows:
+            if offset == 0 and len(raw_rows) < limit:
+                matching_total = len(raw_rows)
+            else:
+                count_row = conn.execute(f"SELECT COUNT(*) FROM jobs {where_sql}", params).fetchone()
+                matching_total = int(count_row[0]) if count_row else len(raw_rows)
         rows = []
-        for row in cursor.fetchall():
+        for row in raw_rows:
             d = dict(row)
+            if with_total and matching_total is not None:
+                d["matching_total"] = matching_total
             raw_sources = d.get("sources")
             if raw_sources:
                 try:
