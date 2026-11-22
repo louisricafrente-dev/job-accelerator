@@ -880,7 +880,7 @@ function clearPrivateWorkspaceUI() {
 }
 
 async function bootstrapDashboard() {
-  await loadAllUserSettings();
+  await Promise.all([loadAllUserSettings(), hydrateMemoryCacheFromIDB()]);
   flushPendingSettings();
   if (currentUserRole === 'admin') startTelemetryPolling();
   if (isDashboardBootstrapped) {
@@ -1343,20 +1343,155 @@ let feedHasMore = false;
 let feedTotalMatches = 0;
 let feedLoadingMore = false;
 
-function cacheServerQuery(queryKey, jobs, complete, meta = null) {
+// --------------------------------------------------------------------------
+// INDEXEDDB LOCAL QUERY CACHE & PERSISTENCE ENGINE
+// Instant local view (<50ms) + Stale-While-Revalidate + Rolling Window Pruning
+// --------------------------------------------------------------------------
+const IDB_CACHE_NAME = 'job_accel_cache_v1';
+const IDB_CACHE_STORE = 'query_cache';
+const IDB_CACHE_VERSION = 1;
+const IDB_MAX_AGE_DAYS = 14;
+const IDB_MAX_ENTRIES = 40;
+
+let idbCachePromise = null;
+
+function getIDBCache() {
+  if (idbCachePromise) return idbCachePromise;
+  if (typeof window === 'undefined' || !window.indexedDB) {
+    return Promise.resolve(null);
+  }
+  idbCachePromise = new Promise((resolve) => {
+    try {
+      const req = window.indexedDB.open(IDB_CACHE_NAME, IDB_CACHE_VERSION);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(IDB_CACHE_STORE)) {
+          const store = db.createObjectStore(IDB_CACHE_STORE, { keyPath: 'queryKey' });
+          store.createIndex('updated_at', 'updated_at', { unique: false });
+        }
+      };
+      req.onsuccess = (e) => resolve(e.target.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+  return idbCachePromise;
+}
+
+async function getCachedQueryFromIDB(queryKey) {
+  const db = await getIDBCache();
+  if (!db || !queryKey) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_CACHE_STORE, 'readonly');
+      const store = tx.objectStore(IDB_CACHE_STORE);
+      const req = store.get(queryKey);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function persistQueryToIDB(queryKey, jobs, complete, meta) {
+  const db = await getIDBCache();
+  if (!db || !Array.isArray(jobs) || !queryKey) return;
+  try {
+    const tx = db.transaction(IDB_CACHE_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_CACHE_STORE);
+    store.put({
+      queryKey,
+      jobs,
+      complete: Boolean(complete),
+      meta: meta ? { ...meta } : null,
+      updated_at: Date.now()
+    });
+    tx.oncomplete = () => {
+      pruneOldIDBQueries();
+    };
+  } catch {}
+}
+
+async function pruneOldIDBQueries() {
+  const db = await getIDBCache();
+  if (!db) return;
+  try {
+    const tx = db.transaction(IDB_CACHE_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_CACHE_STORE);
+    const index = store.index('updated_at');
+    const cutoff = Date.now() - (IDB_MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
+    const req = index.openCursor();
+    const nonProtected = [];
+
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (cursor) {
+        const item = cursor.value;
+        const isProtected = item.queryKey && (item.queryKey.includes('status=saved') || item.queryKey.includes('status=applied'));
+        if (!isProtected) {
+          if (item.updated_at < cutoff) {
+            cursor.delete();
+          } else {
+            nonProtected.push({ key: item.queryKey, updated_at: item.updated_at });
+          }
+        }
+        cursor.continue();
+      } else {
+        if (nonProtected.length > IDB_MAX_ENTRIES) {
+          nonProtected.sort((a, b) => a.updated_at - b.updated_at);
+          const toDelete = nonProtected.slice(0, nonProtected.length - IDB_MAX_ENTRIES);
+          for (const entry of toDelete) {
+            store.delete(entry.key);
+          }
+        }
+      }
+    };
+  } catch {}
+}
+
+async function hydrateMemoryCacheFromIDB() {
+  const db = await getIDBCache();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_CACHE_STORE, 'readonly');
+      const store = tx.objectStore(IDB_CACHE_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const records = req.result;
+        if (Array.isArray(records)) {
+          for (const r of records) {
+            if (r && r.queryKey && Array.isArray(r.jobs)) {
+              cacheServerQuery(r.queryKey, r.jobs, r.complete, r.meta, false);
+            }
+          }
+        }
+        resolve();
+      };
+      req.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+function cacheServerQuery(queryKey, jobs, complete, meta = null, syncToIDB = true) {
   serverQueryCache.delete(queryKey);
   serverQueryCacheComplete.delete(queryKey);
   serverQueryCacheMeta.delete(queryKey);
   serverQueryCache.set(queryKey, jobs);
   if (complete) serverQueryCacheComplete.add(queryKey);
-  if (meta && typeof meta === 'object') {
-    serverQueryCacheMeta.set(queryKey, { ...meta });
-  } else {
-    serverQueryCacheMeta.set(queryKey, {
-      nextOffset: Array.isArray(jobs) ? jobs.length : 0,
-      hasMore: !complete,
-      total: Array.isArray(jobs) ? jobs.length : 0
-    });
+  const normalizedMeta = (meta && typeof meta === 'object') ? { ...meta } : {
+    nextOffset: Array.isArray(jobs) ? jobs.length : 0,
+    hasMore: !complete,
+    total: Array.isArray(jobs) ? jobs.length : 0
+  };
+  serverQueryCacheMeta.set(queryKey, normalizedMeta);
+
+  if (syncToIDB) {
+    persistQueryToIDB(queryKey, jobs, complete, normalizedMeta);
   }
 
   let totalRows = 0;
@@ -1412,8 +1547,10 @@ function syncJobMutationInQueryCache(jobId, updates, fallbackJob) {
     const idx = rawList.findIndex(j => j.id === jobId);
     if (idx !== -1) {
       rawList[idx] = { ...rawList[idx], ...updates };
+      persistQueryToIDB(key, rawList, serverQueryCacheComplete.has(key), serverQueryCacheMeta.get(key));
     } else if (updates.status && key.includes(`status=${updates.status}&`) && fallbackJob) {
       rawList.unshift({ ...fallbackJob, ...updates });
+      persistQueryToIDB(key, rawList, serverQueryCacheComplete.has(key), serverQueryCacheMeta.get(key));
     }
   }
 }
@@ -1684,9 +1821,18 @@ async function loadJobs() {
     feedQueryParamsString = baseParamsString;
     feedQueryKey = queryKey;
     feedLoadingMore = false;
-    const hasCached = serverQueryCache.has(queryKey);
-    const cachedIsComplete = serverQueryCacheComplete.has(queryKey);
+    let hasCached = serverQueryCache.has(queryKey);
+    let cachedIsComplete = serverQueryCacheComplete.has(queryKey);
     let renderedFromPreview = false;
+
+    if (!hasCached) {
+      const idbData = await getCachedQueryFromIDB(queryKey);
+      if (idbData && Array.isArray(idbData.jobs) && idbData.jobs.length > 0) {
+        cacheServerQuery(queryKey, idbData.jobs, idbData.complete, idbData.meta, false);
+        hasCached = true;
+        cachedIsComplete = Boolean(idbData.complete);
+      }
+    }
 
     if (hasCached) {
       const cachedRaw = serverQueryCache.get(queryKey);
