@@ -375,8 +375,8 @@ async function resilientFetchWithRetry(url, options = {}, retries = 3, backoff =
       throw Object.assign(new Error('Request cancelled'), { name: 'AbortError' });
     }
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
-    const cancel = () => controller.abort();
+    const timeoutId = setTimeout(() => controller.abort(new Error('Server request timed out')), 20000); // 20s timeout
+    const cancel = () => controller.abort(options.signal?.reason || new Error('Request cancelled'));
     options.signal?.addEventListener?.('abort', cancel, { once: true });
     let res;
     try {
@@ -386,9 +386,12 @@ async function resilientFetchWithRetry(url, options = {}, retries = 3, backoff =
       clearTimeout(timeoutId);
       options.signal?.removeEventListener?.('abort', cancel);
       if (options.signal?.aborted) throw err;
+      const normalizedErr = (controller.signal.aborted && err?.name === 'AbortError')
+        ? new Error('Request timed out while loading opportunities. Please try again.')
+        : err;
       if (attempt + 1 >= maxAttempts) {
-        console.warn(`Resilient fetch warning for ${url}:`, err);
-        throw err;
+        console.warn(`Resilient fetch warning for ${url}:`, normalizedErr);
+        throw normalizedErr;
       }
       await new Promise(r => setTimeout(r, backoff * Math.pow(2, attempt)));
       continue;
@@ -1922,10 +1925,17 @@ async function loadJobs() {
   } catch (err) {
     if (sequence !== loadJobsSequence || token !== currentSessionToken) return;
     if (err?.name === 'AbortError' && requestController.signal.aborted) return;
+    if (renderedFromPreview) {
+      console.warn('Background revalidation failed; keeping cached opportunities visible:', err);
+      return;
+    }
+    const hostHint = (typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1)$/i.test(location.hostname || ''))
+      ? 'Check server connectivity on localhost:8000'
+      : 'The server took too long to respond. Click Refresh or switch filters to retry.';
     feed.innerHTML = `
       <div class="state-empty">
         <p>Error retrieving opportunities: ${escapeHtml(err.message)}</p>
-        <span class="sub-text">Check server connectivity on localhost:8000</span>
+        <span class="sub-text">${hostHint}</span>
       </div>`;
   } finally {
     if (activeJobsController === requestController) activeJobsController = null;

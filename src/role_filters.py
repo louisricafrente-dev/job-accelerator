@@ -244,14 +244,15 @@ def _role_predicate(role):
         ai_sql, ai_params = _raw_pattern_predicate("AI Development")
         return "((" + " OR ".join(sql for sql, _ in parts) + ") AND NOT " + ai_sql + ")", [p for _, params in parts for p in params] + ai_params
     if role == "Software Development":
-        parts = [
-            *(_raw_pattern_predicate(member) for member in SOFTWARE_DEV_DIRECT_SUBROLES),
-            *(_role_predicate(member) for member in ("Frontend", "Backend", "Full Stack", "Mobile", "AI Development")),
-        ]
+        members = (*SOFTWARE_DEV_DIRECT_SUBROLES, "Frontend", "Backend", "Full Stack", "Mobile", "AI Development")
+        parts = [_raw_pattern_predicate(member) for member in members]
+        seen_globs = {p for _, values in parts for p in values[1:]}
         extra_globs = [
-            "* software engineer *", "* software developer *", "* web developer *",
-            "* programmer *", "* developer *", "* software development *",
-            "* software engineering *", "* graduate engineer *", "* associate engineer *"
+            g for g in (
+                "* software engineer *", "* software developer *", "* web developer *",
+                "* programmer *", "* developer *", "* software development *",
+                "* software engineering *", "* graduate engineer *", "* associate engineer *"
+            ) if g not in seen_globs
         ]
         sql = "(" + " OR ".join(s for s, _ in parts) + "".join(f" OR {TITLE} GLOB ?" for _ in extra_globs) + ")"
         params = [p for _, values in parts for p in values] + extra_globs

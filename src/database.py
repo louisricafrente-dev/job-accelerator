@@ -798,25 +798,25 @@ def get_jobs(
                 params.extend([query_param, query_param, query_param, query_param, query_param, query_param])
 
         if date_filter and date_filter != "all":
-            # If querying applied jobs, filter by when the user actually applied (COALESCE(applied_at, updated_at, date_posted))
-            if status == "applied" or (status and "applied" in status):
-                effective_date = "date(COALESCE(applied_at, updated_at, date_posted), 'localtime')"
-                clauses.append("COALESCE(applied_at, updated_at, date_posted) IS NOT NULL")
-            else:
-                effective_date = "date(date_posted, 'localtime')"
-                clauses.append("date_posted GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'")
-
             df_lower = str(date_filter).lower().strip()
-            if df_lower in ("today", "1d"):
-                clauses.append(f"{effective_date} >= date('now', 'localtime')")
-            elif df_lower in ("3days", "3d"):
-                clauses.append(f"{effective_date} >= date('now', 'localtime', '-3 days')")
-            elif df_lower in ("7days", "7d"):
-                clauses.append(f"{effective_date} >= date('now', 'localtime', '-7 days')")
-            elif df_lower in ("14days", "14d"):
-                clauses.append(f"{effective_date} >= date('now', 'localtime', '-14 days')")
-            elif df_lower in ("15days", "15d"):
-                clauses.append(f"{effective_date} >= date('now', 'localtime', '-15 days')")
+            modifier_map = {
+                "today": None, "1d": None, "24h": None,
+                "3days": "-3 days", "3d": "-3 days",
+                "7days": "-7 days", "7d": "-7 days",
+                "14days": "-14 days", "14d": "-14 days",
+                "15days": "-15 days", "15d": "-15 days",
+            }
+            if df_lower in modifier_map:
+                modifier = modifier_map[df_lower]
+                date_bound = f"date('now', 'localtime', '{modifier}')" if modifier else "date('now', 'localtime')"
+                # If querying applied jobs, filter by when the user actually applied (COALESCE(applied_at, updated_at, date_posted))
+                if status == "applied" or (status and "applied" in status):
+                    clauses.append("COALESCE(applied_at, updated_at, date_posted) IS NOT NULL")
+                    clauses.append(f"date(COALESCE(applied_at, updated_at, date_posted), 'localtime') >= {date_bound}")
+                else:
+                    # Use direct index-range comparison on normalized ISO YYYY-MM-DD date_posted
+                    clauses.append(f"date_posted >= {date_bound}")
+                    clauses.append("date_posted GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'")
 
         if pipeline_stage and pipeline_stage != "All":
             p_stage = pipeline_stage.strip()
