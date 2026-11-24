@@ -4655,7 +4655,8 @@ const MONITORED_BOARDS = [
   { key: 'Reddit', label: 'Reddit Direct [Hiring]', domain: 'reddit.com', type: 'Direct Client Feed' },
   { key: 'Hacker News', label: 'HN Who is Hiring', domain: 'news.ycombinator.com', type: 'Direct Founder Feed' },
   { key: 'VueJobs', label: 'VueJobs', domain: 'vuejobs.com', type: 'Frontend & Vue Feed' },
-  { key: 'LaraJobs', label: 'LaraJobs', domain: 'larajobs.com', type: 'Laravel & PHP Feed' }
+  { key: 'LaraJobs', label: 'LaraJobs', domain: 'larajobs.com', type: 'Laravel & PHP Feed' },
+  { key: 'Facebook', label: 'Facebook Groups', domain: 'facebook.com', type: 'Joined FB Job Groups' }
 ];
 
 let telemetryTimer = null;
